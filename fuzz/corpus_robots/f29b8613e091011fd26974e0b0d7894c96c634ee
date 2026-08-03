@@ -1,0 +1,5 @@
+User-agentÿ *
+Disallow: /a
+Allow: /a/b
+Crawl-delay: 2
+Sitemap: https://h/s.xml

@@ -1,0 +1,18 @@
+# keep the docker build context small: exclude VCS, build outputs, the huge
+# test262 checkout (make test does not need it), and host binaries/artifacts.
+.git
+.obj
+test262
+test262o
+*.a
+*.o
+*.d
+*.so
+dynajs
+dynajsc
+dynajs-debug
+run-test262
+run-test262-debug
+host-dynajsc
+repl.c
+*.dSYM
