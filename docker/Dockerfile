@@ -23,13 +23,18 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       clang lld make libc6-dev ca-certificates curl python3 bash zip unzip lz4 \
+      libsqlite3-dev libssl-dev git \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 
 FROM alpine:3.21 AS base-musl
 # zip/unzip are TEST DEPENDENCIES: test_archive's foreign-archive check skips
 # itself without them, and a skip reads as a pass in the summary line.
-RUN apk add --no-cache clang lld make musl-dev compiler-rt bash zip unzip lz4 python3
+# sqlite/openssl dev headers are CONFIGURATION PARITY, not extras: without them
+# CONFIG_SQLITE and CONFIG_TLS auto-disable and the image silently gates a
+# SMALLER engine than ships -- README ex16 (dyna:net SQLite) failed exactly so.
+RUN apk add --no-cache clang lld make musl-dev compiler-rt bash zip unzip lz4 python3 \
+      sqlite-dev openssl-dev git
 WORKDIR /src
 
 # ------------------------------------------------------------- amd64 gate ---

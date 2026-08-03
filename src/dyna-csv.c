@@ -718,9 +718,18 @@ done:
 
 /* ============================ readRowRange ============================ */
 static JSValue js_csv_read_row_range(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv) {
-    (void)argc;
     char *path = csvfile_path(ctx, this_val);
     if (!path) return JS_EXCEPTION;
+    /* options are OPTIONAL here (readRowRange() means row 0), so need_obj is
+       too strict -- but a POSITIONAL call was silently ignored and returned
+       row 0. Refuse a given non-object; keep the documented no-arg form. */
+    if (argc >= 1 && !JS_IsUndefined(argv[0]) && !JS_IsObject(argv[0])) {
+        JS_ThrowTypeError(ctx, "csv.readRowRange: expected an options object "
+                               "like { start, end } -- positional arguments are "
+                               "not read");
+        free(path);
+        return JS_EXCEPTION;
+    }
     Table t;
     if (csv_load(ctx, path, &t)) { free(path); return JS_EXCEPTION; }
     JSValue ret = JS_EXCEPTION;

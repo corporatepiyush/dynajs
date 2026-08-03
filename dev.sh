@@ -37,7 +37,11 @@ SERIAL=${DEV_SERIAL:-0}
 BASELINE="${T262_BASELINE:-58/83744}"
 CONF=tools/test262.conf
 STAMP=.obj/.dev_cfg
-TREES=$ROOT/.dev/trees
+# Build trees live in /tmp, NOT in the repo: a scratch dir inside the working
+# tree gets copied into docker contexts, walked by codegraph, and picked up by
+# `git status`. /tmp/build<n> is reaped by the OS, so a killed run leaves no
+# residue anybody has to remember to clean.
+TREES=${DEV_TREES:-/tmp/build$$}
 
 die(){ echo "FAIL: $*" >&2; exit 1; }
 have(){ command -v "$1" >/dev/null 2>&1; }
@@ -68,7 +72,7 @@ _clone_probe(){
   [ -n "$CLONE" ]
 }
 
-# _tree NAME: a pristine build tree at .dev/trees/NAME. test262/ is 265 MB and
+# _tree NAME: a pristine build tree at $TREES/NAME. test262/ is 265 MB and
 # only the t262 stage reads it; .obj/ and .git/ are rebuilt or unused. Copy on
 # write, so a tree costs ~0.35 s of metadata rather than 69 MB of copying.
 _tree(){
@@ -77,7 +81,7 @@ _tree(){
   for e in "$ROOT"/* "$ROOT"/.[!.]*; do
     [ -e "$e" ] || continue
     b=${e##*/}
-    case "$b" in test262|.obj|.git|.dev) continue ;; esac
+    case "$b" in test262|.obj|.git) continue ;; esac
     $CLONE "$e" "$d/" || return 1
   done
   # The clone carries the last build's ./dynajs and ./libdynajs.a. Ask the
@@ -418,7 +422,7 @@ case "$cmd" in
             [ "$rc" = 0 ] || exit 1
             echo "gate: ok" ;;
 
-  clean)    make clean >/dev/null 2>&1; rm -rf "$ROOT/.dev"; rm -f "$STAMP"; echo "clean: ok" ;;
+  clean)    make clean >/dev/null 2>&1; rm -rf "$TREES" "$ROOT/.dev"; rm -f "$STAMP"; echo "clean: ok" ;;
 
   # internal: one gate stage / the test262 pass, each as its own process so
   # `timeout` can bound it. Not part of the command list.

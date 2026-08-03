@@ -94,7 +94,6 @@ vgcore.*
 # Gitignored on purpose -- the commit messages are the shared history; this is
 # the scratch that feeds them.
 CHANGELOG.local.md
-.dev/
 fuzz_stdlib
 fuzz_dyns
 fuzz_lz4
