@@ -4,10 +4,13 @@
 .obj
 test262
 test262o
-*.a
-*.o
-*.d
-*.so
+# **/ matters: a bare *.a matches the ROOT ONLY, so the host-built
+# third_party/openlibm/libopenlibm.a was copied in -- an arm64 archive that
+# cannot link in an amd64 image.
+**/*.a
+**/*.o
+**/*.d
+**/*.so
 dynajs
 dynajsc
 dynajs-debug
