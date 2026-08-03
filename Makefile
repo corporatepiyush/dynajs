@@ -1606,30 +1606,45 @@ test-repl:
 # Ordered cheapest-first so a broken build or a stale doc reference fails in
 # seconds rather than after the fuzz suites.
 prepush:
-	@echo "=== prepush 1/8: build (clean, CONFIG_NATIVE_MODULES=y)"
+	@echo "=== prepush 1/9: codegraph (source shape; parses source, no binary)"
+	@python3 bench/codegraph.py . --report > bench/codegraph_report.txt 2>&1 || { \
+	  echo "FAIL: codegraph exited non-zero."; tail -20 bench/codegraph_report.txt; exit 1; }
+	@# codegraph exits 0 on an empty root -- measured, 0 files and no error -- so
+	@# the COUNT is the check. A wrong root or a moved tree is the realistic
+	@# failure here, and it is invisible to the exit status.
+	@sum=`grep -E '^codegraph: [0-9]+ files / ' bench/codegraph_report.txt | head -1`; \
+	 nf=`printf '%s' "$$sum" | sed -E 's/^codegraph: ([0-9]+) files.*/\1/'`; \
+	 nfn=`printf '%s' "$$sum" | sed -E 's/.*\(([0-9]+) fn\).*/\1/'`; \
+	 case "$$nf$$nfn" in ''|*[!0-9]*) nf=0; nfn=0;; esac; \
+	 if [ "$$nf" -lt 1 ] || [ "$$nfn" -lt 1 ]; then \
+	   echo "FAIL: codegraph parsed $$nf files / $$nfn functions -- wrong root or moved tree."; \
+	   exit 1; fi; \
+	 echo "$$sum"; \
+	 echo "    34 queries -> bench/codegraph_report.txt (hypotheses, not verdicts)"
+	@echo "=== prepush 2/9: build (clean, CONFIG_NATIVE_MODULES=y)"
 	@$(MAKE) --no-print-directory clean >/dev/null
 	@$(MAKE) --no-print-directory CONFIG_NATIVE_MODULES=y
 	@./dynajs$(EXE) -e 'import("dyna:mathx")' >/dev/null 2>&1 || { \
 	  echo "FAIL: prepush built a binary that cannot load dyna:*. The suites"; \
 	  echo "      would have SKIPPED their dyna:* sections and reported green."; \
 	  exit 1; }
-	@echo "=== prepush 2/8: fuzz-audit (target list vs rules vs sources)"
+	@echo "=== prepush 3/9: fuzz-audit (target list vs rules vs sources)"
 	@$(MAKE) --no-print-directory fuzz-audit
-	@echo "=== prepush 3/8: check-imports (cosmetic wiring, tests nobody runs)"
+	@echo "=== prepush 4/9: check-imports (cosmetic wiring, tests nobody runs)"
 	@python3 tools/check-unused-imports.py tests
 	@python3 tools/check-orphan-tests.py
-	@echo "=== prepush 4/8: test"
+	@echo "=== prepush 5/9: test"
 	@$(MAKE) --no-print-directory test
-	@echo "=== prepush 5/8: test-native (+ examples, README, install, API docs)"
+	@echo "=== prepush 6/9: test-native (+ examples, README, install, API docs)"
 	@$(MAKE) --no-print-directory test-native
-	@echo "=== prepush 6/8: test-api (8 layers: surface params differential roundtrip vectors kernels properties fuzz)"
+	@echo "=== prepush 7/9: test-api (8 layers: surface params differential roundtrip vectors kernels properties fuzz)"
 	@$(MAKE) --no-print-directory test-api
-	@echo "=== prepush 7/8: test-security (pen tests)"
+	@echo "=== prepush 8/9: test-security (pen tests)"
 	@$(MAKE) --no-print-directory test-security
-	@echo "=== prepush 8/8: test-repl"
+	@echo "=== prepush 9/9: test-repl"
 	@$(MAKE) --no-print-directory test-repl
 	@echo ""
-	@echo "prepush: OK -- build, fuzz-audit, check-imports, test, test-native, test-api, test-security, test-repl"
+	@echo "prepush: OK -- codegraph, build, fuzz-audit, check-imports, test, test-native, test-api, test-security, test-repl"
 
 # Installs prepush as .git/hooks/pre-push. The hook is NOT tracked by git, so
 # a clone has no gate until somebody runs this -- which is why `make test`
