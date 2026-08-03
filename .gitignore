@@ -107,3 +107,7 @@ test-aio-tls
 __pycache__/
 fuzz_codec
 fuzz_csv
+
+# Plans, guides and reports are LOCAL. A plan in the repo rots against the
+# code and then reads as authoritative. The tracked tree states what IS.
+docs/

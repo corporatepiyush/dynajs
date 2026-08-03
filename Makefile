@@ -1751,8 +1751,12 @@ check-install:
 # duplicated section, functions from a deleted module, `path` documented as a
 # string where the code refuses one, and a section of classes filed under the
 # wrong module. Needs a CONFIG_NATIVE_MODULES=y build.
+# docs/ is gitignored and LOCAL, so a fresh clone has none. Skip loudly rather
+# than fail: a red gate everyone learns to ignore is worse than a stated gap.
 check-api:
-	@./tools/check-api-examples.sh docs/dynajs-guide/API.md ./dynajs$(EXE)
+	@if test -f docs/dynajs-guide/API.md; then \
+	  ./tools/check-api-examples.sh docs/dynajs-guide/API.md ./dynajs$(EXE); \
+	else echo "check-api: SKIPPED -- docs/ absent (it is gitignored and local)"; fi
 	@$(MAKE) --no-print-directory check-anchors
 	@$(MAKE) --no-print-directory check-error-ids
 
@@ -1767,8 +1771,11 @@ check-error-ids:
 # an anchor -- a checker that strips it reports `#io_uring-...` as broken and
 # invites a "fix" that breaks a working link.
 check-anchors:
-	@python3 tools/check-anchors.py README.md docs/dynajs-guide/*.md \
-	  && echo "check-anchors: every internal link resolves"
+	@if test -d docs/dynajs-guide; then \
+	  python3 tools/check-anchors.py README.md docs/dynajs-guide/*.md \
+	    && echo "check-anchors: every internal link resolves"; \
+	else python3 tools/check-anchors.py README.md \
+	    && echo "check-anchors: README only -- docs/ absent (gitignored, local)"; fi
 
 # The dyn_path_borrow fallback in dyna-nat.c lives behind
 # #ifndef CONFIG_NATIVE_MODULE_FILE, which NO ordinary build sets -- the flag is
