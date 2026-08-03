@@ -2747,6 +2747,12 @@ static JSValue dyn_fs_glob(JSContext *ctx, JSValueConst this_val, int argc,
             *p = '\0';
             p++;
         }
+        /* Collapse runs of '**': it means "zero or more directories", so a
+           second consecutive one adds nothing and costs a re-walk of the whole
+           subtree per extra segment -- a DoS on an untrusted pattern. */
+        if (nseg > 0 && strcmp(seg_start, "**") == 0 &&
+            strcmp(segs[nseg - 1], "**") == 0)
+            continue;
         segs[nseg++] = seg_start;
     }
 
