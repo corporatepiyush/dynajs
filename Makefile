@@ -1660,6 +1660,12 @@ prepush:
 # older version of this one) is a different program from the install path and
 # is the one that ships unrun. It rewrites ours in place and refuses only a
 # FOREIGN hook, so run this target twice -- the second run must not fail.
+# CycloneDX 1.6 for the CURRENT configuration. Half these components are
+# config-gated, so a committed static SBOM rots on the first flag change --
+# generate it at release time and attach it to the artifact instead.
+sbom:
+	@python3 tools/gen-sbom.py --timestamp "`date -u +%Y-%m-%dT%H:%M:%SZ`"
+
 install-hooks:
 	@test -d .git || { echo "FAIL: not a git working tree, no hooks to install"; exit 1; }
 	@mkdir -p .git/hooks

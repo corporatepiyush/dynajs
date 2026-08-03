@@ -30,13 +30,14 @@ run_octane
 run_sunspider_like
 libwinpthread*.dll
 
-# local analysis / planning docs (not for commit)
+# local analysis / planning docs (not for commit). Plans do not go in git: they
+# rot against the code and then read as authoritative. docs/ is LOCAL too.
 *.md
-# ...but DO commit the user-facing guide under docs/ and the root README
-# (overrides the *.md ignore above)
-!docs/
-!docs/**
+# The exceptions are the two documents that describe the project to an outsider
+# rather than planning its future. Both are anchored with a leading slash so
+# they match at the root only.
 !/README.md
+!/SECURITY.md
 # `bench/` is local reports and scratch -- EXCEPT the code graph, which
 # CLAUDE.md tells every session to run and which only existed on one machine.
 # `bench/` with a trailing slash excludes the directory, and a negation cannot
@@ -108,6 +109,4 @@ __pycache__/
 fuzz_codec
 fuzz_csv
 
-# Plans, guides and reports are LOCAL. A plan in the repo rots against the
-# code and then reads as authoritative. The tracked tree states what IS.
 docs/
