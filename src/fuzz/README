@@ -64,7 +64,7 @@ Running
 
   ./fuzz_stdlib                       # cold
   ./fuzz_stdlib corpus_dir/           # seeded -- ALWAYS prefer this
-  ./fuzz_eval -dict=fuzz/fuzz.dict    # with the dictionary
+  ./fuzz_eval -dict=src/fuzz/fuzz.dict    # with the dictionary
   ./fuzz_stdlib -max_total_time=60 -rss_limit_mb=4096
 
 SEED FROM A CORPUS. A fuzzer starting cold spends its budget rediscovering the

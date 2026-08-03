@@ -26,7 +26,7 @@ Three instruments were run to establish the baseline.
 |---|---|
 | `html`, `net` (incl. HTTP/App), plus `test_static_traversal.js` and `oracle_regexp_fuzz.js` | **the other 27 modules** |
 
-**Fuzz targets** — `ls fuzz/fuzz_*.c`: 12 targets (`eval`, `compile`, `regexp`, `regexp_compile`,
+**Fuzz targets** — `ls src/fuzz/fuzz_*.c`: 12 targets (`eval`, `compile`, `regexp`, `regexp_compile`,
 `json`, `bytecode`, `stdlib`, `module_export`, `dyns`, `lz4`, `scram`, `net`).
 
 **The frontier the fuzzers do not reach** — `python3 bench/codegraph.py . 27` ("parses attacker
@@ -72,12 +72,12 @@ Measured state instead:
 - **`CONFIG_ASAN=y` is strictly WEAKER than a plain `make` here.** An `ifndef CONFIG_ASAN` guard
   blanks `FUZZ_DEFAULT_SAN`, so the flag buys `address` and loses `undefined`. Measured:
   `fuzz_stdlib` built that way has 14234 asan symbols and **0** `__ubsan_handle_*`, against 9 for
-  every default-built target. `fuzz/README` currently recommends the weaker command — fix the README.
+  every default-built target. `src/fuzz/README` currently recommends the weaker command — fix the README.
 
 The gaps that are real:
 
-- **`fuzz/fuzz_regexp_compile.c` has no Makefile rule at all — never built, never executed.** `VPATH`
-  excludes `fuzz/`, so make's built-in `%: %.c` cannot reach it either. **There are 11 targets, not
+- **`src/fuzz/fuzz_regexp_compile.c` has no Makefile rule at all — never built, never executed.** `VPATH`
+  excludes `src/fuzz/`, so make's built-in `%: %.c` cannot reach it either. **There are 11 targets, not
   12.** It contains an uninitialised `char valid_flags[16]` that `strchr` scans on the first
   iteration, and it sets no memory limit and no interrupt handler, so gating it as-is buys a hang.
   Fix the source before adding the rule.

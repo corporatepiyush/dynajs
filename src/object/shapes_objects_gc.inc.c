@@ -3296,7 +3296,9 @@ int JS_IsInstanceOf(JSContext *ctx, JSValueConst val, JSValueConst obj)
 /* return the value associated to the autoinit property or an exception */
 typedef JSValue JSAutoInitFunc(JSContext *ctx, JSObject *p, JSAtom atom, void *opaque);
 
-static JSAutoInitFunc *js_autoinit_func_table[] = {
+/* const: read-only dispatch table, never written. Keeps a function-pointer
+   array out of writable memory and off the mutable-file-scope race surface. */
+static JSAutoInitFunc *const js_autoinit_func_table[] = {
     js_instantiate_prototype, /* JS_AUTOINIT_ID_PROTOTYPE */
     js_module_ns_autoinit, /* JS_AUTOINIT_ID_MODULE_NS */
     JS_InstantiateFunctionListItem2, /* JS_AUTOINIT_ID_PROP */

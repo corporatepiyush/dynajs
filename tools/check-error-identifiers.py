@@ -175,9 +175,12 @@ def main():
         print(__doc__)
         return 2
     dynajs = sys.argv[1]
+    # src/fuzz holds harnesses, not shipped code: their embedded JS uses
+    # placeholder tokens (FUZZ, FUZZB) that read as API names and are not.
     files = sys.argv[2:] or [
         os.path.join(d, f)
         for d, _, fs in os.walk("src")
+        if "fuzz" not in d.split(os.sep)
         for f in fs if f.endswith((".c", ".h"))
     ]
 

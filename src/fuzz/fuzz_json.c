@@ -11,7 +11,7 @@
 // NOTE: json_parse_value() is recursive and, unlike the bytecode reader
 // (JS_ReadObjectRec), has NO js_check_stack_overflow guard -- deeply nested
 // input recurses on the native C stack. Run this target with a bounded input
-// length (e.g. -dict=fuzz/fuzz.dict -max_len=4096, which is also libFuzzer's
+// length (e.g. -dict=src/fuzz/fuzz.dict -max_len=4096, which is also libFuzzer's
 // default) so a nesting bomb cannot exhaust the 8 MiB native stack. The memory
 // limit below caps pathological allocations so they fail cleanly instead of
 // being reported as OOM.

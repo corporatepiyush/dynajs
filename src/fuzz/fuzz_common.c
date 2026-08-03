@@ -15,7 +15,7 @@
 
 #include <string.h>
 
-#include "fuzz/fuzz_common.h"
+#include "src/fuzz/fuzz_common.h"
 
 // handle timeouts from infinite loops
 static int interrupt_handler(JSRuntime *rt, void *opaque)

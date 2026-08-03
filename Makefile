@@ -137,7 +137,7 @@ ifdef CONFIG_CLANG
   LIB_FUZZING_ENGINE ?= "-fsanitize=fuzzer"
 
 # A fuzz target with no sanitizer catches CRASHES only: a planted one-byte
-# overread survived 5229 executions unreported (fuzz/README).
+# overread survived 5229 executions unreported (src/fuzz/README).
 #
 # fuzz_dyns/lz4/net/scram already hardcode -fsanitize=address,undefined. The
 # seven that go through LIB_FUZZING_ENGINE did not, and they are the ones that
@@ -200,7 +200,7 @@ ifdef CONFIG_WIN32
 DEFINES+=-D__USE_MINGW_ANSI_STDIO # for standard snprintf behavior
 endif
 ifndef CONFIG_WIN32
-ifeq ($(shell $(CC) -o /dev/null compat/test-closefrom.c 2>/dev/null && echo 1),1)
+ifeq ($(shell $(CC) -o /dev/null src/compat/test-closefrom.c 2>/dev/null && echo 1),1)
 DEFINES+=-DHAVE_CLOSEFROM
 endif
 endif
@@ -750,7 +750,7 @@ fuzz_regexp_compile: $(OBJDIR)/fuzz_regexp_compile.o libdynajs.fuzz.a
 # base32 through the public codec entry points. Same shape as fuzz_net: core
 # only, no engine, and $(SIMD_SRCS) because dyn-codec.c dispatches through the
 # SIMD table -- see the simd_init() note in the target.
-fuzz_codec: fuzz/fuzz_codec.c src/core/dyn-codec.c $(SIMD_SRCS)
+fuzz_codec: src/fuzz/fuzz_codec.c src/core/dyn-codec.c $(SIMD_SRCS)
 	$(CC) -O1 -g -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
 	  -Isrc/core -Isrc -o fuzz_codec $^
 
@@ -760,7 +760,7 @@ fuzz_codec: fuzz/fuzz_codec.c src/core/dyn-codec.c $(SIMD_SRCS)
 # everything else comes from the engine archive. NOT the nat archive -- that
 # would duplicate every symbol the include already defines.
 ifdef CONFIG_NATIVE_MODULES
-fuzz_csv: fuzz/fuzz_csv.c src/dyna-nat.c libdynajs.fuzz.a
+fuzz_csv: src/fuzz/fuzz_csv.c src/dyna-nat.c libdynajs.fuzz.a
 	$(CC) -O1 -g -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
 	  -I. -Isrc -Isrc/core -DCONFIG_NATIVE_MODULES -DCONFIG_NATIVE_MODULE_CSV \
 	  -o fuzz_csv $^
@@ -802,7 +802,7 @@ fuzz_module_export: $(OBJDIR)/fuzz_module_export.o libdynajs.fuzz.a
 # class it defends against. The other targets use fuzzer-no-link objects, which
 # miss heap-OOB (CLAUDE.md section 7); this one is rebuilt from source every
 # time so that cannot happen to it.
-fuzz_dyns: fuzz/fuzz_dyns.c src/core/dyn-serial.c src/core/dyn-hash.c
+fuzz_dyns: src/fuzz/fuzz_dyns.c src/core/dyn-serial.c src/core/dyn-hash.c
 	$(CC) -O1 -g -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
 	  -Isrc/core -o fuzz_dyns $^
 
@@ -886,13 +886,13 @@ test-tls-conn: dynajs$(EXE)
 
 # Same reasoning for the LZ4 decoders: a raw block has no header to reject on,
 # so the bounds checks are the entire defence. Rebuilt from source every time.
-fuzz_lz4: fuzz/fuzz_lz4.c src/core/dyn-compress.c src/core/dyn-hash.c
+fuzz_lz4: src/fuzz/fuzz_lz4.c src/core/dyn-compress.c src/core/dyn-hash.c
 	$(CC) -O1 -g -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
 	  -Isrc/core -o fuzz_lz4 $^
 
 # Same source set as test-scram: dyn-codec pulls the SIMD dispatch table, so a
 # hand-written list here drifts the moment that dependency moves (Q31).
-fuzz_scram: fuzz/fuzz_scram.c src/core/dyn-scram.c src/core/dyn-hash.c \
+fuzz_scram: src/fuzz/fuzz_scram.c src/core/dyn-scram.c src/core/dyn-hash.c \
           src/core/dyn-codec.c src/core/dyn-prng.c $(SIMD_SRCS)
 	$(CC) -O1 -g -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
 	  -Isrc/core -Isrc -o fuzz_scram $^
@@ -909,7 +909,7 @@ fuzz_scram: fuzz/fuzz_scram.c src/core/dyn-scram.c src/core/dyn-hash.c \
 # locale-free float parse. A hand-written link line is correct until a
 # dependency changes -- this one broke the moment that call was added, which is
 # why the gate builds this target.
-fuzz_net: fuzz/fuzz_net.c src/core/dyn-resp.c src/core/dyn-dns.c \
+fuzz_net: src/fuzz/fuzz_net.c src/core/dyn-resp.c src/core/dyn-dns.c \
           src/core/dyn-scram.c src/core/dyn-hash.c src/core/dyn-codec.c \
           src/core/dyn-prng.c src/dtoa.c src/cutils.c $(SIMD_SRCS)
 	$(CC) -O1 -g -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
@@ -934,7 +934,7 @@ endif
 fuzz-audit:
 	@grep -oE '^fuzz_[a-z0-9_]+:' Makefile | tr -d ':' | sort -u > .fz_def.tmp; \
 	 printf '%s\n' $(FUZZ_TARGETS) fuzz_stdlib fuzz_csv | sort -u > .fz_gate.tmp; \
-	 ls fuzz/fuzz_*.c | sed 's|fuzz/||; s|\.c$$||' | grep -v '^fuzz_common$$' \
+	 ls src/fuzz/fuzz_*.c | sed 's|src/fuzz/||; s|\.c$$||' | grep -v '^fuzz_common$$' \
 	   | sort -u > .fz_src.tmp; \
 	 miss=`comm -23 .fz_def.tmp .fz_gate.tmp`; \
 	 orph=`comm -23 .fz_src.tmp .fz_def.tmp`; \
@@ -984,8 +984,8 @@ fuzz-smoke:
 	@rc=0; for t in $(FUZZ_TARGETS) fuzz_stdlib; do \
 	   test -x ./$$t || { echo "  SKIP $$t (not built -- run make fuzz-all)"; continue; }; \
 	   corp=""; \
-	   case $$t in fuzz_stdlib) corp=fuzz/corpus_robots ;; \
-	               fuzz_dyns)   corp=fuzz/corpus_ml ;; esac; \
+	   case $$t in fuzz_stdlib) corp=src/fuzz/corpus_robots ;; \
+	               fuzz_dyns)   corp=src/fuzz/corpus_ml ;; esac; \
 	   test -n "$$corp" && test -d "$$corp" || corp=""; \
 	   printf '  %-22s ' $$t; \
 	   ( cd /tmp/dyna-fuzzart && \
@@ -1072,7 +1072,7 @@ $(OBJDIR)/mimalloc.o: third_party/mimalloc/src/static.c | $(OBJDIR)
 	@mkdir -p $(@D)
 	$(CC) -O2 -DNDEBUG -Ithird_party/mimalloc/include -c -o $@ $<
 
-$(OBJDIR)/fuzz_%.o: fuzz/fuzz_%.c | $(OBJDIR)
+$(OBJDIR)/fuzz_%.o: src/fuzz/fuzz_%.c | $(OBJDIR)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS_OPT) -c -I. -o $@ $<
 
@@ -1628,8 +1628,14 @@ prepush:
 	  echo "FAIL: prepush built a binary that cannot load dyna:*. The suites"; \
 	  echo "      would have SKIPPED their dyna:* sections and reported green."; \
 	  exit 1; }
-	@echo "=== prepush 3/9: fuzz-audit (target list vs rules vs sources)"
+	@echo "=== prepush 3/9: fuzz-audit + link (names, then prove they still link)"
 	@$(MAKE) --no-print-directory fuzz-audit
+	@# Auditing NAMES cannot catch a hand-written link line that lost an object
+	@# when a shared source gained a dependency -- only linking catches that.
+	@# Measured 54s from clean on this host, against a ~5min gate.
+	@$(MAKE) --no-print-directory libfuzzer > $(OBJDIR)/fuzzlink.log 2>&1 || { \
+	  echo "FAIL: a fuzz target no longer links -- a hand-written rule lost an object."; \
+	  tail -25 $(OBJDIR)/fuzzlink.log; exit 1; }
 	@echo "=== prepush 4/9: check-imports (cosmetic wiring, tests nobody runs)"
 	@python3 tools/check-unused-imports.py tests
 	@python3 tools/check-orphan-tests.py

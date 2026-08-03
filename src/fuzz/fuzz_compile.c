@@ -16,7 +16,7 @@
 #include "dynajs.h"
 #include "dyna-libc.h"
 #include "cutils.h"
-#include "fuzz/fuzz_common.h"
+#include "src/fuzz/fuzz_common.h"
 
 #include <stdint.h>
 #include <stdio.h>

@@ -175,8 +175,13 @@ def module_of(rel: str) -> str:
         return "tests"
     if p.startswith("tools/"):
         return "tools"
-    if p.startswith("fuzz/"):
+    # src/fuzz and src/compat must be named BEFORE the generic src/ branch, or
+    # they become module "src/fuzz" and the kind rule below tags them engine --
+    # which puts harness code into every engine ranking.
+    if p.startswith("src/fuzz/"):
         return "fuzz"
+    if p.startswith("src/compat/"):
+        return "compat"
     if p.startswith("examples/"):
         return "examples"
     if p.startswith("docs/"):
@@ -1106,7 +1111,10 @@ def _discover_files(root: str, db: sqlite3.Connection) -> list[_FileInfo]:
         scan_root = root
 
     for dirpath, dirnames, filenames in os.walk(scan_root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        # corpus_* holds fuzz INPUTS, not source: 851 binary blobs that carry no
+        # symbols but add 851 junk rows and overstate the file count 6x.
+        dirnames[:] = [d for d in dirnames
+                       if d not in SKIP_DIRS and not d.startswith("corpus")]
         for fn in sorted(filenames):
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, root)
@@ -1131,7 +1139,7 @@ def _discover_files(root: str, db: sqlite3.Connection) -> list[_FileInfo]:
                  max((len(l) for l in lines), default=0),
                  hashlib.sha1(data).hexdigest(),
                  1 if ext in C_EXT else 0, 1 if ext == ".h" else 0,
-                 1 if rel.startswith(("tests/", "fuzz/")) else 0,
+                 1 if rel.startswith(("tests/", "src/fuzz/")) else 0,
                  1 if ("unicode_gen" in fn or "-gen" in fn or
                        "GENERATED" in text[:400]) else 0))
             fid = cur.lastrowid
