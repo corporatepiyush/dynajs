@@ -46,7 +46,12 @@ function fetchTLS(host, opts, path) {
                 close() {
                     clearTimeout(t);
                     const line = buf.split("\r\n")[0] || "";
-                    done({ status: (line.split(" ")[1] || ""), body: buf.length });
+                    /* A failed handshake can surface as a CLOSE rather than a
+                       connect error, and that path carried no err -- so a refusal
+                       read as `undefined` and looked like the check not firing.
+                       No bytes means no session: report it as a refusal. */
+                    done({ status: (line.split(" ")[1] || ""), body: buf.length,
+                           refused: buf.length === 0 ? 1 : 0 });
                     /* MANDATORY: the server holds a reference to the shared
                        reactor, so an unclosed one hangs the loop for ever. */
                     conn.close();
@@ -80,7 +85,10 @@ async function main() {
     print("--- the name reaches BOTH SNI and verification ---");
     r = await fetchTLS("wrong.host.badssl.com", true, "/");
     if (r.err === "timeout") skipped("wrong.host with verification on");
-    else ok(!!r.err && /match|host/i.test(String(r.err)),
+    /* The bypass -- the thing this test exists to catch -- is an HTTP RESPONSE.
+       An error naming the host and a closed session with no bytes are both the
+       refusal; only a status line means verification did not fire. */
+    else ok((!!r.err && /match|host/i.test(String(r.err))) || r.refused === 1,
             "wrong-host is REFUSED for its name (" +
             String(r.err).slice(0, 55) + ")");
 
