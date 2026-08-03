@@ -17,6 +17,7 @@
 #if defined(CONFIG_NATIVE_MODULES) && defined(CONFIG_IO_URING) && defined(__linux__)
 
 #include <errno.h>
+#include <stddef.h>   /* offsetof, for the sockaddr_un length */
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -27,6 +28,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
+#include <poll.h>     /* POLLIN for the offload pool's multishot poll */
 #include <sys/eventfd.h>
 #include <liburing.h>
 #include "core/dyn-pool.h"
@@ -72,6 +74,9 @@ typedef struct {
  * execute -- so this backend keeps a pool too, purely for that. Third
  * discriminator bit; carries no pointer, so the low bits are unused. */
 #define POOL_BIT (1ULL << 61)
+/* connect: the sockaddr must outlive the SQE, so it rides a heap context with
+ * its own tag, exactly like the disk and send ops. */
+#define CONN_BIT (1ULL << 60)
 typedef struct {
     dyn_aio_cb cb;
     void *udata;
@@ -84,6 +89,14 @@ typedef struct {
     dyn_aio_cb cb;
     void *udata;
 } uaio_send_t;
+typedef struct {
+    struct sockaddr_storage sa;  /* MUST outlive the SQE: the kernel reads it
+                                  * asynchronously, so a stack copy is a UAF */
+    socklen_t salen;
+    int fd;
+    dyn_aio_cb cb;
+    void *udata;
+} uaio_conn_t;
 
 struct dyn_aio {
     struct io_uring ring;
@@ -116,6 +129,12 @@ static int uaio_fd_ensure(dyn_aio_t *a, int fd)
     a->cap = nc;
     return 0;
 }
+
+/* Forward declarations: both are used above their definitions (249 and 366),
+ * and a static definition after an implicit use is an error under C99+. This
+ * file had never been compiled -- CONFIG_IO_URING is in no gate. */
+static int uaio_pool_ready(dyn_aio_t *a);
+static int uaio_arm_timer(dyn_aio_t *a);
 
 static struct io_uring_sqe *uaio_sqe(dyn_aio_t *a)
 {
@@ -311,6 +330,15 @@ static void uaio_dispatch(dyn_aio_t *a, struct io_uring_cqe *cqe)
         if (dc->cb) dc->cb(a, res, NULL, 0, dc->udata);
         free(dc->path);
         free(dc);
+        return;
+    }
+    if (ud & CONN_BIT) { /* a connect completion (heap context pointer) */
+        uaio_conn_t *cc = (uaio_conn_t *)(uintptr_t)(ud & ~CONN_BIT);
+        if (a->inflight) a->inflight--;
+        /* res is 0 or -errno. The fd is the caller's to close either way --
+         * the same contract the readiness backend documents. */
+        if (cc->cb) cc->cb(a, res, NULL, 0, cc->udata);
+        free(cc);
         return;
     }
     if (ud & SEND_BIT) { /* a send completion (heap context pointer) */
@@ -640,15 +668,64 @@ int dyn_aio_fsync(dyn_aio_t *a, int fd, int datasync, dyn_aio_cb cb, void *ud)
 /* Disk completions arrive on the ring itself here, so there is no separate fd
  * and nothing extra to drain -- dyn_aio_drain() already handles them. */
 int dyn_aio_disk_fd(const dyn_aio_t *a) { (void)a; return -1; }
+
+/* NULL on this backend: there is no dyn_evloop behind a ring. Its only caller
+ * is the file watcher's DYN_EV_VNODE registration, which must REFUSE rather
+ * than store the NULL -- it had no check, so this symbol being absent is what
+ * kept the whole backend from linking. */
+struct dyn_evloop *dyn_aio_evloop(dyn_aio_t *a) { (void)a; return NULL; }
 /* io_uring has IORING_OP_TIMEOUT, but a periodic wakeup here would need a
  * self-rearming SQE and its own completion tag. Not needed yet: the only caller
  * is the App's idle sweep and the App runs on the readiness backend. */
-/* io_uring has IORING_OP_CONNECT; wiring it needs a sockaddr that outlives the
- * SQE, so it shares the disk context's heap-and-tag shape. Not built yet -- the
- * only caller today is the App, which accepts rather than connects. */
+/* IORING_OP_CONNECT. The sockaddr rides a heap context (uaio_conn_t) because
+ * the kernel reads it after submit -- a stack copy would be a use-after-free.
+ * Returns the fd immediately like the readiness backend; the callback fires
+ * with 0 or -errno, and the fd is the caller's to close either way. */
+static int uaio_connect_sa(dyn_aio_t *a, const struct sockaddr_storage *sa,
+                           socklen_t salen, int fam,
+                           dyn_aio_cb cb, void *udata)
+{
+    struct io_uring_sqe *sqe;
+    uaio_conn_t *cc;
+    int fd;
+
+    fd = socket(fam, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    dyn_net_set_nonblock(fd);
+    if (fam != AF_UNIX) dyn_net_set_nodelay(fd);
+
+    cc = (uaio_conn_t *)malloc(sizeof(*cc));
+    if (!cc) { close(fd); return -1; }
+    memcpy(&cc->sa, sa, sizeof(*sa));
+    cc->salen = salen; cc->fd = fd; cc->cb = cb; cc->udata = udata;
+
+    a->inflight++;
+    sqe = uaio_sqe(a);
+    if (!sqe) { free(cc); a->inflight--; close(fd); return -1; }
+    io_uring_prep_connect(sqe, fd, (struct sockaddr *)&cc->sa, cc->salen);
+    io_uring_sqe_set_data64(sqe, (uint64_t)(uintptr_t)cc | CONN_BIT);
+    /* submit now: connect is issued from timer and promise callbacks too, not
+     * only from a drain -- the same reason dyn_aio_send submits eagerly. */
+    io_uring_submit(&a->ring);
+    return fd;
+}
+
 int dyn_aio_connect(dyn_aio_t *a, const char *host, uint16_t port,
                     dyn_aio_cb cb, void *udata)
-{ (void)a;(void)host;(void)port;(void)cb;(void)udata; errno = ENOSYS; return -1; }
+{
+    struct sockaddr_storage sa;
+    socklen_t salen = 0;
+    int fam = AF_INET;
+
+    if (!a || !host) { errno = EINVAL; return -1; }
+    /* Resolve BEFORE the socket: the family decides what to open. Shared with
+     * the readiness backend so the two cannot drift. */
+    if (dyn_aio_resolve(host, port, &sa, &salen, &fam) != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    return uaio_connect_sa(a, &sa, salen, fam, cb, udata);
+}
 
 /* THREE OF THESE NEED NO io_uring AT ALL and are implemented here rather than
  * stubbed: binding and listening are synchronous socket setup, and a datagram
@@ -687,8 +764,25 @@ int dyn_aio_unix_listen(dyn_aio_t *a, const char *path, int backlog)
     return fd;
 }
 
+/* Same SQE-lifetime shape as dyn_aio_connect, minus the resolution: a unix
+ * path IS the address. sun_path must be NUL-terminated within its bound, so an
+ * over-long path is refused here rather than silently truncated into a
+ * DIFFERENT path -- truncation is how a client connects to the wrong socket. */
 int dyn_aio_unix_connect(dyn_aio_t *a, const char *path, dyn_aio_cb cb, void *ud)
-{ (void)a;(void)path;(void)cb;(void)ud; errno = ENOSYS; return -1; }
+{
+    struct sockaddr_storage ss;
+    struct sockaddr_un *un = (struct sockaddr_un *)&ss;
+    size_t n;
+
+    if (!a || !path) { errno = EINVAL; return -1; }
+    n = strlen(path);
+    if (n >= sizeof(un->sun_path)) { errno = ENAMETOOLONG; return -1; }
+    memset(&ss, 0, sizeof(ss));
+    un->sun_family = AF_UNIX;
+    memcpy(un->sun_path, path, n + 1);
+    return uaio_connect_sa(a, &ss, (socklen_t)(offsetof(struct sockaddr_un, sun_path) + n + 1),
+                           AF_UNIX, cb, ud);
+}
 
 int dyn_aio_udp_bind(dyn_aio_t *a, const char *host, uint16_t port)
 {

@@ -742,29 +742,6 @@ int dyn_aio_sendto(dyn_aio_t *a, int fd, const void *buf, size_t len,
  * the same trade dyn_http_connect already makes -- which is acceptable because
  * connect() is invoked from a JS call rather than from inside a loop turn.
  * Moving it onto the pool is the next step and is noted at the declaration. */
-static int aio_resolve(const char *host, uint16_t port,
-                       struct sockaddr_storage *ss, socklen_t *slen, int *fam)
-{
-    struct addrinfo hints, *res = NULL;
-    char portstr[16];
-
-    snprintf(portstr, sizeof(portstr), "%u", (unsigned)port);
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_NUMERICHOST;
-    if (getaddrinfo(host, portstr, &hints, &res) != 0 || !res) {
-        if (res) { freeaddrinfo(res); res = NULL; }
-        hints.ai_flags = 0;                     /* not an address: resolve it */
-        if (getaddrinfo(host, portstr, &hints, &res) != 0 || !res)
-            return -1;
-    }
-    memcpy(ss, res->ai_addr, res->ai_addrlen);
-    *slen = (socklen_t)res->ai_addrlen;
-    *fam = res->ai_family;
-    freeaddrinfo(res);
-    return 0;
-}
 
 int dyn_aio_connect(dyn_aio_t *a, const char *host, uint16_t port,
                     dyn_aio_cb cb, void *udata)
@@ -780,7 +757,7 @@ int dyn_aio_connect(dyn_aio_t *a, const char *host, uint16_t port,
        inet_addr() turned any hostname into 255.255.255.255, so the caller was
        told "address family not supported" -- an errno naming the wrong cause
        entirely. */
-    if (aio_resolve(host, port, &sa, &salen, &fam) != 0) {
+    if (dyn_aio_resolve(host, port, &sa, &salen, &fam) != 0) {
         errno = EINVAL;
         return -1;
     }

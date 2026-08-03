@@ -473,7 +473,16 @@ static JSValue dyn_watch_ctor(JSContext *ctx, JSValueConst new_target,
         dyn_watch_dispose(w);
         return JS_ThrowInternalError(ctx, "no reactor");
     }
+    /* NULL on the io_uring backend: there is no dyn_evloop behind a ring, and
+       DYN_EV_VNODE has nowhere to register. Refuse here rather than store the
+       NULL and fault on the first start(). */
     w->lp = dyn_aio_evloop(w->aio);
+    if (!w->lp) {
+        dyn_watch_dispose(w);
+        return JS_ThrowInternalError(ctx,
+            "watch: not available on this build's reactor (io_uring has no "
+            "vnode interest); build without CONFIG_IO_URING to use it");
+    }
 
     res = dyn_res_wrap(ctx, dyn_watch_class_id, w, dyn_watch_dispose);
     return res;

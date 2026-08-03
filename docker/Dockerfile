@@ -18,6 +18,19 @@
 # the same job. A stage that shares its base with another cannot drift from it.
 
 # ---------------------------------------------------------------- bases -----
+# A CACHED deps image for docker/linux.sh. Every ad-hoc `docker run` that
+# apt-installs its own toolchain pays ~8 packages per run; this pays once.
+# Superset of base-deb: adds liburing (io_uring backend) and coreutils (stdbuf,
+# which is how a crash's last line survives a fully-buffered stdout).
+FROM debian:trixie-slim AS deps
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      clang lld make libc6-dev ca-certificates python3 bash zip unzip lz4 \
+      libsqlite3-dev libssl-dev liburing-dev git coreutils \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /work
+
 FROM debian:trixie-slim AS base-deb
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \

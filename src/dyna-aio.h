@@ -39,6 +39,9 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netdb.h>
+#include <stdio.h>
+#include <string.h>
 #include "dyna-io.h" /* dyn_iobuf_t */
 
 typedef struct dyn_aio dyn_aio_t;
@@ -114,12 +117,10 @@ int dyn_aio_listen(dyn_aio_t *aio, const char *host, uint16_t port, int backlog)
  * the life of the listener, until dyn_aio_cancel(). One submit, no re-arm. */
 int dyn_aio_accept(dyn_aio_t *aio, int listen_fd, dyn_aio_cb cb, void *udata);
 
-/* NOT ON THE io_uring BACKEND: ENOSYS. An asynchronous connect needs a sockaddr
- * that outlives its SQE, which is the heap-context-and-tag shape the disk ops
- * use and is not built yet. A build with CONFIG_IO_URING therefore has no
- * TCPServer.connect, no Redis, no PostgreSQL, and no TCPProxy or App.proxy --
- * both proxies reach their upstream through this call -- which is a fact about
- * that build and belongs here rather than in the .c nobody reads.
+/* Implemented on BOTH backends. On io_uring it is IORING_OP_CONNECT with the
+ * sockaddr on a heap context (the kernel reads it after submit, so a stack copy
+ * would be a use-after-free); resolution is shared via dyn_aio_resolve so the
+ * two cannot drift.
  *
  * Asynchronous connect. Returns the new socket fd immediately (>= 0) or -1; the
  * connection is NOT established yet. `cb` fires once with res == 0 on success or
@@ -217,8 +218,9 @@ int dyn_aio_udp_bind(dyn_aio_t *aio, const char *bind_host, uint16_t port);
  * why the DIRECTORY's permissions are the real access control. */
 int dyn_aio_unix_listen(dyn_aio_t *aio, const char *path, int backlog);
 
-/* NOT ON THE io_uring BACKEND: ENOSYS, for the same reason as dyn_aio_connect.
- * `dyn_aio_unix_listen` IS implemented on both -- binding is synchronous.
+/* Implemented on BOTH backends. A path over sizeof(sun_path) is REFUSED with
+ * ENAMETOOLONG rather than truncated: a silently shortened path is a connection
+ * to a DIFFERENT socket.
  *
  * Asynchronous connect to a unix path. Same contract as dyn_aio_connect: the
  * fd comes back immediately, `cb` fires with 0 or -errno. */
@@ -281,6 +283,39 @@ int dyn_aio_set_timer(dyn_aio_t *aio, unsigned period_ms);
 
 /* Cancel an outstanding multishot/op identified by its (cb,udata) cookie. */
 int dyn_aio_cancel(dyn_aio_t *aio, dyn_aio_cb cb, void *udata);
+
+/* ---- shared between the backends -------------------------------------- */
+
+/* Resolve host:port into a sockaddr. SHARED because the two backends are
+ * mutually exclusive at compile time: a copy in each is a copy that drifts,
+ * and this one carries a fix worth keeping -- inet_addr() turned any hostname
+ * into 255.255.255.255, so the caller got "address family not supported",
+ * an errno naming the wrong cause. Tries AI_NUMERICHOST first, then a real
+ * lookup. Returns 0, or -1 with the family/len untouched. */
+static inline int dyn_aio_resolve(const char *host, uint16_t port,
+                                  struct sockaddr_storage *ss, socklen_t *slen,
+                                  int *fam)
+{
+    struct addrinfo hints, *res = NULL;
+    char portstr[16];
+
+    snprintf(portstr, sizeof(portstr), "%u", (unsigned)port);
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_NUMERICHOST;
+    if (getaddrinfo(host, portstr, &hints, &res) != 0 || !res) {
+        if (res) { freeaddrinfo(res); res = NULL; }
+        hints.ai_flags = 0;                     /* not an address: resolve it */
+        if (getaddrinfo(host, portstr, &hints, &res) != 0 || !res)
+            return -1;
+    }
+    memcpy(ss, res->ai_addr, res->ai_addrlen);
+    *slen = (socklen_t)res->ai_addrlen;
+    *fam = res->ai_family;
+    freeaddrinfo(res);
+    return 0;
+}
 
 #endif /* CONFIG_NATIVE_MODULES */
 #endif /* DYNAJS_AIO_H */
