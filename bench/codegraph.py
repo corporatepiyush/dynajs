@@ -692,7 +692,11 @@ CREATE TABLE files(
     n_includes INT NOT NULL DEFAULT 0,
     n_globals INT NOT NULL DEFAULT 0,
     total_cyclo INT NOT NULL DEFAULT 0,
-    max_cyclo INT NOT NULL DEFAULT 0
+    max_cyclo INT NOT NULL DEFAULT 0,
+    -- per FILE, not per symbol: every _Static_assert here is at file scope, so
+    -- symbols.n_static_assert is 0 for all 8848 of them and any query summing
+    -- it silently filters nothing.
+    n_static_assert INT NOT NULL DEFAULT 0
 ) STRICT;
 
 CREATE TABLE symbols(
@@ -1131,8 +1135,8 @@ def _discover_files(root: str, db: sqlite3.Connection) -> list[_FileInfo]:
             cur = db.execute(
                 "INSERT INTO files(path,dir,basename,ext,lang,module_id,bytes,"
                 "lines,sloc,blank_lines,comment_lines,max_line_len,sha1,parsed,"
-                "is_header,is_test,is_generated) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "is_header,is_test,is_generated,n_static_assert) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (rel, os.path.dirname(rel) or ".", fn, ext,
                  LANG_BY_EXT.get(ext, "other"), mid, len(data), len(lines) + 1,
                  sum(1 for l in lines if l.strip()), blank_n, cmt,
@@ -1141,7 +1145,8 @@ def _discover_files(root: str, db: sqlite3.Connection) -> list[_FileInfo]:
                  1 if ext in C_EXT else 0, 1 if ext == ".h" else 0,
                  1 if rel.startswith(("tests/", "src/fuzz/")) else 0,
                  1 if ("unicode_gen" in fn or "-gen" in fn or
-                       "GENERATED" in text[:400]) else 0))
+                       "GENERATED" in text[:400]) else 0,
+                 len(re.findall(r'_Static_assert|static_assert', text))))
             fid = cur.lastrowid
             file_id[rel] = fid
             if ext in C_EXT and text:
@@ -2206,7 +2211,7 @@ QUERIES = [
     "MISLEADS most structs are ordinary and need nothing.",
     """SELECT sy.name, ss.total_size AS bytes, ss.n_lines_64 AS lines64,
         (SELECT COUNT(*) FROM fields WHERE symbol_id=sy.id) AS nfields,
-        (SELECT COALESCE(SUM(n_static_assert),0) FROM symbols WHERE file_id=sy.file_id) AS asserts,
+        (SELECT COALESCE(f2.n_static_assert,0) FROM files f2 WHERE f2.id=sy.file_id) AS asserts,
         ss.total_pad AS pad, ss.tail_pad AS tailpad,
         f.path || ':' || sy.line_start AS at
     FROM symbols sy JOIN struct_size ss ON ss.symbol_id=sy.id
