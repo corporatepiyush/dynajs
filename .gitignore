@@ -38,6 +38,7 @@ libwinpthread*.dll
 # they match at the root only.
 !/README.md
 !/SECURITY.md
+!/CONTRIBUTING.md
 # `bench/` is local reports and scratch -- EXCEPT the code graph, which
 # CLAUDE.md tells every session to run and which only existed on one machine.
 # `bench/` with a trailing slash excludes the directory, and a negation cannot

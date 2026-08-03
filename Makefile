@@ -320,7 +320,10 @@ $(error CONFIG_TLS=y needs OpenSSL >= 3.0. Install it (brew install openssl@3, \
   Note /usr/bin/openssl on macOS is LibreSSL and does not satisfy this.)
 endif
 CFLAGS+=-DCONFIG_TLS $(OPENSSL_CFLAGS)
-LDFLAGS+=$(OPENSSL_LIBS)
+# EXTRA_LIBS, not LDFLAGS: the link is `$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)`,
+# so a -l in LDFLAGS lands BEFORE the objects. GNU ld drops a library whose
+# symbols nothing has referenced yet; lld does not, so clang hid this.
+EXTRA_LIBS+=$(OPENSSL_LIBS)
 endif
 ifdef CONFIG_NATIVE_MODULES
 CFLAGS+=-DCONFIG_NATIVE_MODULES
@@ -345,7 +348,8 @@ SQLITE_CFLAGS:=$(shell PKG_CONFIG_PATH="$(SQLITE_PC):$$PKG_CONFIG_PATH" pkg-conf
 SQLITE_LIBS:=$(shell PKG_CONFIG_PATH="$(SQLITE_PC):$$PKG_CONFIG_PATH" pkg-config --libs sqlite3 2>/dev/null)
 ifneq ($(SQLITE_LIBS),)
 CFLAGS+=-DCONFIG_SQLITE $(SQLITE_CFLAGS)
-LDFLAGS+=$(SQLITE_LIBS)
+# after the objects -- see the OPENSSL_LIBS note above
+EXTRA_LIBS+=$(SQLITE_LIBS)
 endif
 ifneq ($(wildcard src/dyna-structures.c),)
 CFLAGS+=-DCONFIG_NATIVE_MODULE_STRUCTURES
@@ -1678,6 +1682,17 @@ endif
 # older version of this one) is a different program from the install path and
 # is the one that ships unrun. It rewrites ours in place and refuses only a
 # FOREIGN hook, so run this target twice -- the second run must not fail.
+# The conformance number, machine-readable, from the SAME baseline the gate pins
+# (dev.sh BASELINE) -- one source, so the published figure cannot drift from the
+# gated one. Prints failures/total and the pass rate; does NOT run test262 (that
+# is `./dev.sh t262`, which takes minutes).
+conformance:
+	@b=`sed -n 's/^BASELINE="\$${T262_BASELINE:-\([0-9]*\/[0-9]*\)}".*/\1/p' dev.sh`; \
+	 f=$${b%%/*}; t=$${b##*/}; \
+	 test -n "$$f" -a -n "$$t" || { echo "FAIL: no BASELINE in dev.sh"; exit 1; }; \
+	 printf 'test262: %s failures / %s tests (%.4f%% pass), pinned in dev.sh\n' \
+	   "$$f" "$$t" `awk "BEGIN{printf \"%.4f\", (1-$$f/$$t)*100}"`
+
 # CycloneDX 1.6 for the CURRENT configuration. Half these components are
 # config-gated, so a committed static SBOM rots on the first flag change --
 # generate it at release time and attach it to the artifact instead.

@@ -15087,6 +15087,9 @@ static void js_object_presize_analyze(JSContext *ctx, JSFunctionBytecode *b)
         {
             int p = pos + oplen, nf = 0;
             uint32_t off = (uint32_t)pos;
+            /* scratch: sites[nsites] is NOT a valid slot until the
+               bounds check below passes, so the scan cannot write there */
+            JSAtom fbuf[JS_PRESIZE_MAX_FIELDS];
 
             for (;;) {
                 int vop, vlen, p2;
@@ -15107,11 +15110,11 @@ static void js_object_presize_analyze(JSContext *ctx, JSFunctionBytecode *b)
                 if (__JS_AtomIsTaggedInt(atom))
                     break;              /* array-index key: different ordering */
                 for (j = 0; j < nf; j++)
-                    if (sites[nsites].f[j] == atom)
+                    if (fbuf[j] == atom)
                         goto site_done;  /* duplicate key: end the run here */
                 if (nf >= JS_PRESIZE_MAX_FIELDS)
                     break;
-                sites[nsites].f[nf++] = atom;
+                fbuf[nf++] = atom;
                 p = p2 + 5;
             }
         site_done:
@@ -15120,6 +15123,7 @@ static void js_object_presize_analyze(JSContext *ctx, JSFunctionBytecode *b)
             if (nf >= 2 && nsites < JS_PRESIZE_MAX_SITES) {
                 sites[nsites].off = off;
                 sites[nsites].nf = nf;
+                memcpy(sites[nsites].f, fbuf, sizeof(fbuf[0]) * (size_t)nf);
                 nsites++;
             }
             pos += oplen;

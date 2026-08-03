@@ -24,10 +24,25 @@
 # which is how a crash's last line survives a fully-buffered stdout).
 FROM debian:trixie-slim AS deps
 ENV DEBIAN_FRONTEND=noninteractive
+# The COMPLETE Linux toolchain for this project, built once and reused by
+# docker/linux.sh. Deliberately a superset of what any single build needs:
+#   BOTH compilers -- the Makefile defaults to gcc and takes clang via
+#     CONFIG_CLANG=y; a missing gcc fails with "gcc: No such file or directory",
+#     which reads as a broken Makefile rather than a missing package.
+#   libclang-rt-dev -- clang's SANITIZER RUNTIMES. Without it an ASan build
+#     fails at LINK, not at compile, so it looks like a code error.
+#   gdb/valgrind -- a crash with no symbols is otherwise undiagnosable here.
+#   liburing-dev  -- the io_uring backend exists only on Linux.
+#   zip/unzip     -- TEST dependencies: test_archive SKIPS itself without them,
+#                    and a skip reads as a pass in the summary line.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      clang lld make libc6-dev ca-certificates python3 bash zip unzip lz4 \
-      libsqlite3-dev libssl-dev liburing-dev git coreutils \
+      clang lld llvm libclang-rt-dev \
+      gcc g++ make libc6-dev pkg-config \
+      gdb valgrind binutils file \
+      libsqlite3-dev libssl-dev liburing-dev zlib1g-dev \
+      python3 bash coreutils git ca-certificates curl \
+      zip unzip lz4 xz-utils \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /work
 

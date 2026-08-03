@@ -42,7 +42,20 @@ docker image inspect dynajs:deps >/dev/null 2>&1 || {
 VOL="dynajs-obj-${PLATFORM#linux/}"
 docker volume inspect "$VOL" >/dev/null 2>&1 || docker volume create "$VOL" >/dev/null
 
-exec docker run --rm --platform "$PLATFORM" --security-opt seccomp=unconfined \
+# JOBS defaults to the container's visible CPU count, so a VM resize is picked up
+# without editing anything. --cpus caps rather than pins: pinning with --cpuset
+# would leave the host with nothing during a -j8 build.
+JOBS=${JOBS:-$(docker info --format '{{.NCPU}}' 2>/dev/null || echo 4)}
+
+# --init: a real PID 1 that reaps zombies. Without it a killed build leaves
+#   defunct clang processes that keep the container alive.
+# --pull=never: never silently re-fetch mid-run; the image is ours and pinned.
+# tmpfs /tmp: build scratch in RAM, not the VM's overlay fs, which is the slow
+#   layer here.
+exec docker run --rm --init --pull=never \
+    --platform "$PLATFORM" --security-opt seccomp=unconfined \
+    --cpus "$JOBS" --memory 12g --tmpfs /tmp:exec,size=2g \
+    -e "JOBS=$JOBS" -e MAKEFLAGS="-j$JOBS" \
     -v "$ROOT:/src:ro" -v "$VOL:/work/.obj" -w /work dynajs:deps sh -c '
         tar -C /src -cf - --exclude=./test262 --exclude=./.obj --exclude=./.git \
             --exclude=./third_party . 2>/dev/null | tar -C /work -xf -
