@@ -27,10 +27,14 @@ PLATFORM=linux/arm64
 [ "${1:-}" = "--amd64" ] && { PLATFORM=linux/amd64; shift; }
 [ $# -eq 0 ] && { echo "usage: $0 [--amd64] <command...>" >&2; exit 2; }
 
-docker image inspect dynajs:deps >/dev/null 2>&1 || {
-    echo "building dynajs:deps (once)..." >&2
+# The tag is PER-PLATFORM. `docker image inspect` does not check architecture,
+# so a single dynajs:deps tag makes an --amd64 run fail with "found but does not
+# provide the specified platform" -- the same keying the object volume needs.
+IMG="dynajs:deps-${PLATFORM#linux/}"
+docker image inspect "$IMG" >/dev/null 2>&1 || {
+    echo "building $IMG (once)..." >&2
     docker build --platform "$PLATFORM" --target deps -f "$ROOT/docker/Dockerfile" \
-        -t dynajs:deps "$ROOT" >/dev/null || exit 1
+        -t "$IMG" "$ROOT" >/dev/null || exit 1
 }
 
 # --exclude keeps the 265 MB test262 checkout and the host's object dir out of
@@ -56,7 +60,7 @@ exec docker run --rm --init --pull=never \
     --platform "$PLATFORM" --security-opt seccomp=unconfined \
     --cpus "$JOBS" --memory 12g --tmpfs /tmp:exec,size=2g \
     -e "JOBS=$JOBS" -e MAKEFLAGS="-j$JOBS" \
-    -v "$ROOT:/src:ro" -v "$VOL:/work/.obj" -w /work dynajs:deps sh -c '
+    -v "$ROOT:/src:ro" -v "$VOL:/work/.obj" -w /work "$IMG" sh -c '
         tar -C /src -cf - --exclude=./test262 --exclude=./.obj --exclude=./.git \
             --exclude=./third_party . 2>/dev/null | tar -C /work -xf -
         exec "$@"' sh "$@"
