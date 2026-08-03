@@ -1605,8 +1605,16 @@ test-repl:
 #
 # Ordered cheapest-first so a broken build or a stale doc reference fails in
 # seconds rather than after the fuzz suites.
+# The TLS stack was compiled by NO gate: dev.sh sets CONFIG_TLS nowhere and the
+# native build does not either, so dyna-tls.c, HTTPS and the AEAD ciphers were
+# never built, let alone run, while asan/ubsan reported ok. Detect OpenSSL the
+# same way the CONFIG_TLS block does and gate WITH it when present.
+PREPUSH_OPENSSL_PC:=$(shell brew --prefix openssl@3 2>/dev/null || brew --prefix openssl 2>/dev/null)/lib/pkgconfig
+PREPUSH_TLS:=$(shell PKG_CONFIG_PATH="$(PREPUSH_OPENSSL_PC):$$PKG_CONFIG_PATH" \
+  pkg-config --exists 'openssl >= 3.0' 2>/dev/null && echo y)
+
 prepush:
-	@echo "=== prepush 1/9: codegraph (source shape; parses source, no binary)"
+	@echo "=== prepush 1/10: codegraph (source shape; parses source, no binary)"
 	@python3 bench/codegraph.py . --report > bench/codegraph_report.txt 2>&1 || { \
 	  echo "FAIL: codegraph exited non-zero."; tail -20 bench/codegraph_report.txt; exit 1; }
 	@# codegraph exits 0 on an empty root -- measured, 0 files and no error -- so
@@ -1621,14 +1629,14 @@ prepush:
 	   exit 1; fi; \
 	 echo "$$sum"; \
 	 echo "    34 queries -> bench/codegraph_report.txt (hypotheses, not verdicts)"
-	@echo "=== prepush 2/9: build (clean, CONFIG_NATIVE_MODULES=y)"
+	@echo "=== prepush 2/10: build (clean, CONFIG_NATIVE_MODULES=y$(if $(PREPUSH_TLS), CONFIG_TLS=y))"
 	@$(MAKE) --no-print-directory clean >/dev/null
-	@$(MAKE) --no-print-directory CONFIG_NATIVE_MODULES=y
+	@$(MAKE) --no-print-directory CONFIG_NATIVE_MODULES=y $(if $(PREPUSH_TLS),CONFIG_TLS=y)
 	@./dynajs$(EXE) -e 'import("dyna:mathx")' >/dev/null 2>&1 || { \
 	  echo "FAIL: prepush built a binary that cannot load dyna:*. The suites"; \
 	  echo "      would have SKIPPED their dyna:* sections and reported green."; \
 	  exit 1; }
-	@echo "=== prepush 3/9: fuzz-audit + link (names, then prove they still link)"
+	@echo "=== prepush 3/10: fuzz-audit + link (names, then prove they still link)"
 	@$(MAKE) --no-print-directory fuzz-audit
 	@# Auditing NAMES cannot catch a hand-written link line that lost an object
 	@# when a shared source gained a dependency -- only linking catches that.
@@ -1636,21 +1644,30 @@ prepush:
 	@$(MAKE) --no-print-directory libfuzzer > $(OBJDIR)/fuzzlink.log 2>&1 || { \
 	  echo "FAIL: a fuzz target no longer links -- a hand-written rule lost an object."; \
 	  tail -25 $(OBJDIR)/fuzzlink.log; exit 1; }
-	@echo "=== prepush 4/9: check-imports (cosmetic wiring, tests nobody runs)"
+	@echo "=== prepush 4/10: check-imports (cosmetic wiring, tests nobody runs)"
 	@python3 tools/check-unused-imports.py tests
 	@python3 tools/check-orphan-tests.py
-	@echo "=== prepush 5/9: test"
+	@echo "=== prepush 5/10: test"
 	@$(MAKE) --no-print-directory test
-	@echo "=== prepush 6/9: test-native (+ examples, README, install, API docs)"
+	@echo "=== prepush 6/10: test-native (+ examples, README, install, API docs)"
 	@$(MAKE) --no-print-directory test-native
-	@echo "=== prepush 7/9: test-api (8 layers: surface params differential roundtrip vectors kernels properties fuzz)"
+	@echo "=== prepush 7/10: test-api (8 layers: surface params differential roundtrip vectors kernels properties fuzz)"
 	@$(MAKE) --no-print-directory test-api
-	@echo "=== prepush 8/9: test-security (pen tests)"
+	@echo "=== prepush 8/10: test-security (pen tests)"
 	@$(MAKE) --no-print-directory test-security
-	@echo "=== prepush 9/9: test-repl"
+	@echo "=== prepush 9/10: test-repl"
 	@$(MAKE) --no-print-directory test-repl
+	@echo "=== prepush 10/10: tls (built only when OpenSSL >= 3.0 is present)"
+ifeq ($(PREPUSH_TLS),y)
+	@$(MAKE) --no-print-directory CONFIG_NATIVE_MODULES=y CONFIG_TLS=y test-tls
+	@$(MAKE) --no-print-directory CONFIG_NATIVE_MODULES=y CONFIG_TLS=y test-tls-conn
+	@$(MAKE) --no-print-directory CONFIG_NATIVE_MODULES=y CONFIG_TLS=y test-crypto-aead
+else
+	@echo "    SKIPPED -- no OpenSSL >= 3.0. dyna-tls.c, HTTPS and the AEAD"
+	@echo "    ciphers were NOT COMPILED by this run, so no sanitizer covered them."
+endif
 	@echo ""
-	@echo "prepush: OK -- codegraph, build, fuzz-audit, check-imports, test, test-native, test-api, test-security, test-repl"
+	@echo "prepush: OK -- codegraph, build, tls, fuzz-audit, check-imports, test, test-native, test-api, test-security, test-repl"
 
 # Installs prepush as .git/hooks/pre-push. The hook is NOT tracked by git, so
 # a clone has no gate until somebody runs this -- which is why `make test`

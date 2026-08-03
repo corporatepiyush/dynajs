@@ -76,6 +76,13 @@ const SKIP = {
     monotonicNano: "returns the clock", nowUnixNano: "returns the clock",
     NanoIDAlphabet: "random",
     Random: "random", nextInt: "random", nextFloat: "random",
+    /* Key generation: a DETERMINISTIC keypair generator is the catastrophic
+       failure, not the passing case. The real property -- two calls differ --
+       is asserted in test_crypto_curve.js. These surface only in a
+       CONFIG_TLS=y build, which is why they were absent from this list until
+       prepush started gating TLS. */
+    Ed25519Generate: "generates a fresh keypair",
+    X25519Generate: "generates a fresh keypair",
 };
 
 /* Inputs chosen so a wrong answer is VISIBLE: values that differ from their
