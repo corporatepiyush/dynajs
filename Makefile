@@ -1524,7 +1524,8 @@ SECURITY_TESTS = tests/test_http_params.js \
                  tests/test_html_pentest.js \
                  tests/test_static_traversal.js \
                  tests/test_net_pentest.js \
-                 tests/test_http_pentest.js
+                 tests/test_http_pentest.js \
+                 tests/test_data_pentest.js
 
 # Same no-prerequisite rule as test-repl: rebuilding here would silently swap a
 # CONFIG_NATIVE_MODULES=y binary for a default one and the suites would still pass.
