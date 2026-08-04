@@ -492,13 +492,15 @@ static int dyn_sortby_cmp(const DynSortItem *a, const DynSortItem *b)
  * order in both directions). Returns 0, or -1 on OOM. */
 static int dyn_sortby_sort(JSContext *ctx, DynSortItem *items, int64_t n, int desc)
 {
-    DynSortItem *tmp;
+    DynSortItem *tmp, *src, *dst, *swap;
     int64_t width;
     if (n < 2)
         return 0;
     tmp = js_malloc(ctx, (size_t)n * sizeof(*tmp));
     if (!tmp)
         return -1;
+    src = items;
+    dst = tmp;
     for (width = 1; width < n; width *= 2) {
         int64_t i;
         for (i = 0; i < n; i += 2 * width) {
@@ -506,16 +508,20 @@ static int dyn_sortby_sort(JSContext *ctx, DynSortItem *items, int64_t n, int de
             int64_t hi = i + 2 * width < n ? i + 2 * width : n;
             int64_t l = i, r = mid, k = i;
             while (l < mid && r < hi) {
-                int c = dyn_sortby_cmp(&items[l], &items[r]);
+                int c = dyn_sortby_cmp(&src[l], &src[r]);
                 if (desc)
                     c = -c;
-                tmp[k++] = (c <= 0) ? items[l++] : items[r++]; /* stable: left on tie */
+                dst[k++] = (c <= 0) ? src[l++] : src[r++]; /* stable: left on tie */
             }
-            while (l < mid) tmp[k++] = items[l++];
-            while (r < hi)  tmp[k++] = items[r++];
+            while (l < mid) dst[k++] = src[l++];
+            while (r < hi)  dst[k++] = src[r++];
         }
-        memcpy(items, tmp, (size_t)n * sizeof(*tmp));
+        swap = src; src = dst; dst = swap;
     }
+    /* Every pass writes all of [0,n), so dst is never stale -- but an odd pass
+       count leaves the result in tmp, and the caller reads `items`. */
+    if (src != items)
+        memcpy(items, src, (size_t)n * sizeof(*items));
     js_free(ctx, tmp);
     return 0;
 }
@@ -1115,6 +1121,8 @@ static JSValue js_array_ext_zip(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
     JSValue obj, other, result, ret = JS_EXCEPTION;
+    JSValue *ap, *bp;
+    uint32_t acount, bcount;
     int64_t len, olen, n, i;
     obj = JS_ToObject(ctx, this_val);
     if (js_get_length64(ctx, &len, obj)) { JS_FreeValue(ctx, obj); return JS_EXCEPTION; }
@@ -1122,6 +1130,29 @@ static JSValue js_array_ext_zip(JSContext *ctx, JSValueConst this_val,
     if (JS_IsException(other)) { JS_FreeValue(ctx, obj); return JS_EXCEPTION; }
     if (js_get_length64(ctx, &olen, other)) goto done;
     n = len < olen ? len : olen;
+    /* Fast arm: js_array_ext_build_range's predicate on BOTH operands -- dense
+     * JS_CLASS_ARRAYs covering [0,n), so no getter, hole or proxy trap can run.
+     * count>=n is what stops a.length=5 over 2 slots reading past the buffer. */
+    if (js_get_fast_array(ctx, obj, &ap, &acount) && (int64_t)acount >= n &&
+        js_get_fast_array(ctx, other, &bp, &bcount) && (int64_t)bcount >= n) {
+        JSValue *dst;
+        result = js_allocate_fast_array(ctx, n);
+        if (JS_IsException(result)) goto done;
+        dst = JS_VALUE_GET_OBJ(result)->u.array.u.values;
+        /* ap/bp/dst survive the per-pair allocation: no JS runs, and the GC
+         * neither moves a live object nor shrinks its values array. */
+        for (i = 0; i < n; i++) {
+            JSValue pair = js_allocate_fast_array(ctx, 2);
+            JSValue *pv;
+            if (JS_IsException(pair)) { JS_FreeValue(ctx, result); goto done; }
+            pv = JS_VALUE_GET_OBJ(pair)->u.array.u.values;
+            pv[0] = JS_DupValue(ctx, ap[i]);   /* slots were JS_UNDEFINED */
+            pv[1] = JS_DupValue(ctx, bp[i]);
+            dst[i] = pair;                     /* ownership transferred */
+        }
+        ret = result;
+        goto done;
+    }
     result = JS_NewArray(ctx);
     if (JS_IsException(result)) goto done;
     for (i = 0; i < n; i++) {
@@ -1956,21 +1987,69 @@ static JSValue js_array_ext_frompairs(JSContext *ctx, JSValueConst this_val,
     return ret;
 }
 
+/* Fallback comparator for the depth-budget path below. Valid only because the
+ * buffer is NaN-free there: with a NaN present this returns 0 for every pair
+ * involving it, which is not an ordering and leaves qsort unspecified. */
 static int js_array_ext_cmp_double(const void *a, const void *b)
 {
     double x = *(const double *)a, y = *(const double *)b;
     return x < y ? -1 : (x > y ? 1 : 0);
 }
 
+/* Place the k-th smallest of a[0..n) at a[k], with a[0..k) <= a[k] <= a(k..n).
+ * REQUIRES a NaN-free buffer: a NaN pivot makes both compares false and the
+ * three-way split stops making progress. Ties among equal doubles are arbitrary. */
+static void js_array_ext_select_double(double *a, int64_t n, int64_t k)
+{
+    int64_t lo = 0, hi = n - 1, m;
+    int budget = 0;
+    for (m = n; m > 1; m >>= 1)
+        budget++;
+    budget = 2 * budget + 3;                /* introselect: bounds the bad case */
+    while (lo < hi) {
+        double p, t;
+        int64_t lt, i, gt, mid;
+        if (hi - lo < 12) {                 /* short range: sort it outright */
+            for (i = lo + 1; i <= hi; i++) {
+                int64_t j = i;
+                t = a[i];
+                while (j > lo && a[j - 1] > t) { a[j] = a[j - 1]; j--; }
+                a[j] = t;
+            }
+            return;
+        }
+        if (budget-- <= 0) {                /* O(n log n) worst case, not O(n^2) */
+            qsort(a + lo, (size_t)(hi - lo + 1), sizeof(double),
+                  js_array_ext_cmp_double);
+            return;
+        }
+        mid = lo + (hi - lo) / 2;           /* median-of-three: sorted input is linear */
+        if (a[mid] < a[lo])  { t = a[mid]; a[mid] = a[lo];  a[lo]  = t; }
+        if (a[hi]  < a[lo])  { t = a[hi];  a[hi]  = a[lo];  a[lo]  = t; }
+        if (a[hi]  < a[mid]) { t = a[hi];  a[hi]  = a[mid]; a[mid] = t; }
+        p = a[mid];
+        lt = lo; i = lo; gt = hi;           /* three-way split: all-equal is O(n) */
+        while (i <= gt) {
+            if (a[i] < p)      { t = a[lt]; a[lt] = a[i]; a[i] = t; lt++; i++; }
+            else if (a[i] > p) { t = a[gt]; a[gt] = a[i]; a[i] = t; gt--; }
+            else               { i++; }
+        }
+        if (k < lt)       hi = lt - 1;
+        else if (k <= gt) return;           /* a[k] == p: already in place */
+        else              lo = gt + 1;
+    }
+}
+
 /* _median() -> the median of the elements coerced to numbers; NaN if empty.
- * Coerces every element into a C buffer FIRST (valueOf may run JS), then sorts
- * and reduces purely in C. */
+ * Coerces every element into a C buffer FIRST (valueOf may run JS), then selects
+ * in C. NaN anywhere propagates, as _sum/_average/_product already do. */
 static JSValue js_array_ext_median(JSContext *ctx, JSValueConst this_val,
                                    int argc, JSValueConst *argv)
 {
     JSValue obj, ret = JS_EXCEPTION;
-    double *buf = NULL, med;
-    int64_t len, i;
+    double *buf = NULL, med, lmax;
+    int64_t len, i, k;
+    int has_nan = 0;
     (void)argc; (void)argv;
     obj = JS_ToObject(ctx, this_val);
     if (js_get_length64(ctx, &len, obj)) goto done;
@@ -1985,10 +2064,23 @@ static JSValue js_array_ext_median(JSContext *ctx, JSValueConst this_val,
         r = JS_ToFloat64(ctx, &d, v);
         JS_FreeValue(ctx, v);
         if (r) goto done;
+        has_nan |= (d != d);             /* IEEE: only NaN is != itself */
         buf[i] = d;
     }
-    qsort(buf, len, sizeof(double), js_array_ext_cmp_double);
-    med = (len & 1) ? buf[len / 2] : (buf[len / 2 - 1] + buf[len / 2]) / 2.0;
+    if (has_nan) { ret = JS_NewFloat64(ctx, NAN); goto done; }
+    k = len / 2;
+    js_array_ext_select_double(buf, len, k);
+    if (len & 1) {
+        med = buf[k];
+    } else {
+        /* select leaves buf[0..k) <= buf[k], so their max IS the (k-1)th order
+         * statistic. Sum-then-halve keeps the old overflow result (1e308 pair
+         * -> Infinity); x/2+y/2 would silently change it. */
+        lmax = buf[0];
+        for (i = 1; i < k; i++)
+            if (buf[i] > lmax) lmax = buf[i];
+        med = (lmax + buf[k]) / 2.0;
+    }
     ret = JS_NewFloat64(ctx, med);
  done:
     js_free(ctx, buf);
