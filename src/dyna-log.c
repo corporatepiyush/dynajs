@@ -685,7 +685,26 @@ static JSValue dyn_debug_write(JSContext *ctx, JSValueConst this_val,
     if (!ns)
         return JS_EXCEPTION;
     msg = (argc > 0) ? JS_ToCString(ctx, argv[0]) : NULL;
-    fprintf(stderr, "%s %s\n", ns, msg ? msg : "");
+    {
+        /* ONE write(2), like the Logger. fwrite gives no guarantee of a single
+           syscall, so a Debug line could interleave MID-LINE with a log line on
+           the same fd and corrupt both for any line-oriented consumer. */
+        dyn_line_t b;
+        b.p = NULL; b.n = 0; b.cap = 0; b.truncated = 0;
+        dyn_line_puts(&b, ns);
+        dyn_line_put(&b, " ", 1);
+        if (msg) dyn_line_puts(&b, msg);
+        dyn_line_put(&b, "\n", 1);
+        if (b.p) {
+            size_t off = 0;
+            while (off < b.n) {
+                ssize_t wr = write(STDERR_FILENO, b.p + off, b.n - off);
+                if (wr < 0) { if (errno == EINTR) continue; break; }
+                off += (size_t)wr;
+            }
+            free(b.p);
+        }
+    }
     if (msg) JS_FreeCString(ctx, msg);
     JS_FreeCString(ctx, ns);
     return JS_UNDEFINED;
