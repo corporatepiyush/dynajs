@@ -129,8 +129,15 @@ static void dyn_tcp_conn_finalizer(JSRuntime *rt, JSValue val)
     (void)rt;
     if (c) {
         c->jsobj = JS_UNDEFINED;   /* the object is going away, not the struct */
-        if (--c->refs == 0)
+        if (--c->refs == 0) {
+            /* Same teardown as tcp_conn_unref: dropping the last reference
+               HERE (which detach made the common case) must still free the TLS
+               engine, or every closed TLS connection leaks an SSL*. */
+#ifdef CONFIG_TLS
+            dyn_tls_conn_free(c->tls);   /* NULL-safe */
+#endif
             free(c);
+        }
     }
 }
 
