@@ -665,8 +665,15 @@ int JS_GetOwnFastProps(JSContext *ctx, JSValueConst obj, JSPropertyEnum *buf,
         JSAtom atom = prs->atom;
         if (atom == JS_ATOM_NULL || !(prs->flags & JS_PROP_ENUMERABLE))
             continue;
-        if (__JS_AtomIsTaggedInt(atom))
-            return -1;                  /* an integer key sorts first: refuse */
+        if (__JS_AtomIsTaggedInt(atom)) {
+            /* An integer key sorts first: refuse. Everything dup'd so far must
+               go back -- the caller cannot free a buffer it was told to
+               discard, so bailing without this pinned one atom per preceding
+               string key, permanently, on every call. */
+            while (n > 0)
+                JS_FreeAtom(ctx, buf[--n].atom);
+            return -1;
+        }
         if (JS_AtomGetKind(ctx, atom) != JS_ATOM_KIND_STRING)
             continue;                   /* a symbol is not a string key */
         buf[n].atom = JS_DupAtom(ctx, atom);
