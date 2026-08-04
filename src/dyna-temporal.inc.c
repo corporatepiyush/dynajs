@@ -420,9 +420,9 @@ static JSValue dyn_dur_tostring(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
     tp_dur_t *p = (tp_dur_t *)dyn_plain_get(ctx, this_val, dyn_dur_class_id);
-    /* Worst case is INT64_MIN in every component, printed by magnitude:
-       "-P768614336404564Y8M9223372036854775808DT2562047788H12M15.808S"
-       is about 66 chars; buf was 64 and off was never bounds-checked. */
+    /* Worst case, counted rather than guessed: sign 1 + 'P' 1 + Y 15+1 +
+       M 2+1 + D 19+1 + 'T' 1 + H 13+1 + M 2+1 + S 2+1+3+1 = 66, plus the NUL.
+       buf was 64 and off was never bounds-checked. 96 leaves real headroom. */
     char buf[96];
     int off = 0, neg = 0;
     int64_t mo, d, ms;
@@ -433,7 +433,16 @@ static JSValue dyn_dur_tostring(JSContext *ctx, JSValueConst this_val,
     if (!p->months && !p->days && !p->ms_part)
         return JS_NewString(ctx, "P0D");
     mo = p->months; d = p->days; ms = p->ms_part;
-    if (mo < 0 || (mo == 0 && d < 0) || (mo == 0 && d == 0 && ms < 0)) {
+    /* ISO-8601 puts ONE sign on the whole duration, so a mixed-sign value has
+       no representation. Taking the sign from the leading component emitted
+       "-P1M10D" for (months -1, days +10) -- valid ISO, and a different
+       duration. Refuse rather than hand a consumer a parseable wrong answer. */
+    if (((mo > 0) || (d > 0) || (ms > 0)) && ((mo < 0) || (d < 0) || (ms < 0)))
+        return JS_ThrowRangeError(ctx,
+            "Duration.toString: mixed-sign components (months %lld, days %lld, "
+            "ms %lld) have no ISO-8601 representation",
+            (long long)mo, (long long)d, (long long)ms);
+    if (mo < 0 || d < 0 || ms < 0) {
         buf[off++] = '-';
         neg = 1;
     }
