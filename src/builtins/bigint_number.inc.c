@@ -105,6 +105,54 @@ static JSValue js_bigint_valueOf(JSContext *ctx, JSValueConst this_val,
     return js_thisBigIntValue(ctx, this_val);
 }
 
+/* Limb i of `a`, sign-extended past its length. `a` is a short or a heap
+   BigInt; both are two's complement, so a negative value's limbs above its
+   length are all ones. */
+static js_limb_t js_bigint_limb_ext(JSValueConst a, uint64_t i)
+{
+    if (JS_VALUE_GET_TAG(a) == JS_TAG_SHORT_BIG_INT) {
+        js_slimb_t v = (js_slimb_t)JS_VALUE_GET_SHORT_BIG_INT(a);
+        return i == 0 ? (js_limb_t)v : (js_limb_t)(v >> (JS_LIMB_BITS - 1));
+    } else {
+        const JSBigInt *p = JS_VALUE_GET_PTR(a);
+        if (i < (uint64_t)p->len)
+            return p->tab[i];
+        return js_bigint_sign(p) ? (js_limb_t)-1 : 0;
+    }
+}
+
+/* BigInt.asUintN(bits, a) = a mod 2^bits, for ANY sign of `a`. The result is
+   non-negative by definition, so it needs one limb beyond `bits` to keep its
+   sign bit clear -- and that is the whole bug: both old paths could produce a
+   NEGATIVE BigInt, which asUintN can never yield. Returning the operand
+   unchanged made asUintN(64,-1n) be -1n, and the truncation path made
+   asUintN(64, 2n**63n) be -2^63 because the top bit of a one-limb result IS
+   the sign. Computing it here for every input is correct by construction
+   rather than by case analysis. */
+static JSValue js_bigint_as_uintn(JSContext *ctx, JSValueConst a,
+                                  uint64_t bits)
+{
+    uint64_t full = bits / JS_LIMB_BITS;
+    int rem = (int)(bits % JS_LIMB_BITS);
+    uint64_t len = full + 1;            /* the extra limb carries the 0 sign */
+    JSBigInt *r;
+    uint64_t i;
+
+    if (len > INT32_MAX)
+        return JS_ThrowRangeError(ctx, "BigInt.asUintN: bits too large");
+    r = js_bigint_new(ctx, (int)len);
+    if (!r)
+        return JS_EXCEPTION;
+    r->len = (int)len;
+    for (i = 0; i < full; i++)
+        r->tab[i] = js_bigint_limb_ext(a, i);
+    r->tab[full] = rem ? (js_bigint_limb_ext(a, full) &
+                          (((js_limb_t)1 << rem) - 1))
+                       : 0;
+    r = js_bigint_normalize(ctx, r);
+    return JS_CompactBigInt(ctx, r);
+}
+
 static JSValue js_bigint_asUintN(JSContext *ctx,
                                   JSValueConst this_val,
                                   int argc, JSValueConst *argv, int asIntN)
@@ -120,6 +168,9 @@ static JSValue js_bigint_asUintN(JSContext *ctx,
     if (bits == 0) {
         JS_FreeValue(ctx, a);
         res = __JS_NewShortBigInt(ctx, 0);
+    } else if (!asIntN) {
+        res = js_bigint_as_uintn(ctx, a, bits);
+        JS_FreeValue(ctx, a);
     } else if (JS_VALUE_GET_TAG(a) == JS_TAG_SHORT_BIG_INT) {
         /* fast case */
         if (bits >= JS_SHORT_BIG_INT_BITS) {
@@ -138,7 +189,7 @@ static JSValue js_bigint_asUintN(JSContext *ctx,
         }
     } else {
         JSBigInt *r, *p = JS_VALUE_GET_PTR(a);
-        if (bits >= p->len * JS_LIMB_BITS) {
+        if (bits >= (uint64_t)p->len * JS_LIMB_BITS) {
             res = a;
         } else {
             int len, shift, i;
