@@ -3928,16 +3928,19 @@ static no_inline void re_pf_build(REPrefilter *pf, const uint8_t *bc, size_t bc_
         pf->ch = 0;
         pf->set_len = 0;
 
+        /* The length gate comes FIRST, cache or no cache. Serving a hit below
+           it changes behaviour rather than just cost: a dense class on a short
+           remainder gets a prefilter it never had, re_pf_scan finds a
+           candidate immediately, and a /gi loop over 200-byte lines measured
+           18.4 -> 20.0 us. The cache removes the enumeration, not the gate. */
+        if (subject_len < RE_PF_CASE_MIN)
+            return;
+
         if (klen <= RE_PF_FOLD_KEY_MAX) {
             hash = re_pf_fold_hash(p, klen, is_unicode);
             if (re_pf_fold_cache_get(pf, p, klen, is_unicode, hash))
                 return;
         }
-        /* Gate the BUILD, not the use: the enumeration is ~128 binary searches
-           through case_conv_table1, a cache hit is one memcmp. A /g loop's
-           first call has the whole subject, so it fills the entry. */
-        if (subject_len < RE_PF_CASE_MIN)
-            return;
 
         if (op == REOP_char_i)
             re_pf_fold_char_to_bitmap(pf, get_u16(p + 1), is_unicode, &count);
