@@ -646,8 +646,11 @@ static void simd_sve_softmax(float *restrict out,
   i = 0;
   for (; i + (size_t)cnt <= n; i += cnt) {
     svfloat32_t vi = svsub_f32_z(pg, svld1_f32(pg, &in[i]), vmaxv);
-    svint32_t bits =
-        svcvt_s32_f32_z(pg, svmul_f32_z(pg, vi, svdup_f32(-12102203.0f)));
+    /* Schraudolph is (int)(12102203*x + 0x3F800000): the magic is POSITIVE and
+       the bias is not optional. This had a negated magic AND no bias, so it
+       computed exp(max-x) reinterpreted without an exponent offset. */
+    svint32_t bits = svcvt_s32_f32_z(pg,
+        svmla_f32_z(pg, svdup_f32(1065353216.0f), vi, svdup_f32(12102203.0f)));
     bits = svmax_s32_z(pg, bits, svdup_s32(0));
     bits = svmin_s32_z(pg, bits, svdup_s32(0x7F800000));
     svfloat32_t ve = svmax_f32_z(pg, vreinterpret_f32_s32(bits), vzero);
@@ -687,8 +690,9 @@ static void simd_sve_log_softmax(float *restrict out,
   i = 0;
   for (; i + (size_t)cnt <= n; i += cnt) {
     svfloat32_t vi = svsub_f32_z(pg, svld1_f32(pg, &in[i]), vmaxv);
-    svint32_t bits =
-        svcvt_s32_f32_z(pg, svmul_f32_z(pg, vi, svdup_f32(-12102203.0f)));
+    /* Same inverted magic and missing bias as softmax above. */
+    svint32_t bits = svcvt_s32_f32_z(pg,
+        svmla_f32_z(pg, svdup_f32(1065353216.0f), vi, svdup_f32(12102203.0f)));
     bits = svmax_s32_z(pg, bits, svdup_s32(0));
     bits = svmin_s32_z(pg, bits, svdup_s32(0x7F800000));
     svst1_f32(pg, &out[i], svmax_f32_z(pg, vreinterpret_f32_s32(bits), vzero));
