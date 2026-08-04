@@ -85,6 +85,9 @@ int dyn_scram_client_first(dyn_scram_t *s, char *out, size_t outcap)
 
     if (!s || !out)
         return DYN_SCRAM_E_SYNTAX;
+    /* Re-entry on a long-lived connection object: free the previous
+       handshake's parts before wiping, or each re-auth leaks them. */
+    scram_free_parts(s);
     memset(s, 0, sizeof(*s));
 
     dyn_os_entropy(raw, sizeof(raw));

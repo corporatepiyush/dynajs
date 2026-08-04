@@ -64,7 +64,10 @@ typedef struct {
 /* Start the exchange. Writes the client-first-message ("n,,n=,r=<nonce>") and
  * returns its length. The username is deliberately EMPTY: PostgreSQL ignores
  * the SCRAM username and uses the one from the startup packet, so sending it
- * twice only creates a way for the two to disagree. */
+ * twice only creates a way for the two to disagree.
+ * PRECONDITION: `*s` is ZEROED or holds a completed exchange -- re-entry frees
+ * the previous parts (a re-auth otherwise leaks them), so a garbage struct is
+ * a garbage free. */
 int dyn_scram_client_first(dyn_scram_t *s, char *out, size_t outcap);
 
 /* Consume the server-first-message and write the client-final-message. This is

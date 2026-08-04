@@ -162,6 +162,7 @@ static void fuzz_scram(const uint8_t *d, size_t n)
      * is still invisible, which is why fuzz_scram remains the primary target. */
     if (n == 0 || n > DYN_SCRAM_MAX_MSG - 1)
         return;
+    memset(&sc, 0, sizeof sc);  /* client_first frees the previous parts first */
     if (dyn_scram_client_first(&sc, cfirst, sizeof(cfirst)) < 0)
         return;
     srv = (char *)malloc(n + 1);
