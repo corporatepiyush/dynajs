@@ -425,5 +425,52 @@ const TMP = "/tmp/dynajs_optguide_test";
     eq(ValueHash(o), ValueHash({ a: "x", 0: 1 }), "the fallback path still hashes deterministically");
 }
 
+/* ===================================================================
+   10. Builtins found by the src-wide audit and verified against an
+   INDEPENDENT reference computed here in JS, not read back from the engine.
+   =================================================================== */
+{
+    /* asUintN(bits,a) = a mod 2^bits, always NON-NEGATIVE. Both old paths
+       could return a negative: the operand unchanged when bits covered its
+       width (asUintN(64,-1n) was -1n), and a one-limb truncation whose top
+       bit IS the sign (asUintN(64,2n**63n) was -2^63). */
+    const refU = (bits, a) => { const m = 1n << BigInt(bits); return ((a % m) + m) % m; };
+    const refI = (bits, a) => {
+        if (bits === 0) return 0n;
+        const m = 1n << BigInt(bits), h = 1n << BigInt(bits - 1);
+        const v = ((a % m) + m) % m;
+        return v >= h ? v - m : v;
+    };
+    const vals = [-1n, -2n, -12345678901234567890n, 0n, 1n, 255n,
+                  1n << 63n, -(1n << 63n), (1n << 64n) - 1n, -(1n << 64n),
+                  (1n << 200n) - 1n, -(1n << 200n) - 7n];
+    let wrongU = 0, wrongI = 0, neg = 0;
+    for (let bits = 0; bits <= 160; bits++) {
+        for (const a of vals) {
+            const u = BigInt.asUintN(bits, a);
+            if (u !== refU(bits, a)) wrongU++;
+            if (u < 0n) neg++;
+            if (BigInt.asIntN(bits, a) !== refI(bits, a)) wrongI++;
+        }
+    }
+    eq(wrongU, 0, "BigInt.asUintN matches a mod 2^bits over 160 widths");
+    eq(neg, 0, "BigInt.asUintN never returns a negative BigInt");
+    eq(wrongI, 0, "BigInt.asIntN is unchanged");
+
+    /* A group key is DEFINED, never Set: Set walks the prototype chain, so a
+       "__proto__" key retargeted the result and the group disappeared. */
+    if (typeof [].groupBy === "function") {
+        const r = [1, 2].groupBy(() => "__proto__");
+        ok(Object.getPrototypeOf(r) === Object.prototype,
+           "groupBy: a __proto__ key does not retarget the result's prototype");
+        ok(Array.isArray(r.__proto__ === Object.prototype ? r["__proto__"] : null) ||
+           Object.hasOwn(r, "__proto__"),
+           "groupBy: the __proto__ group is an own property of the result");
+        const g = [1, 2, 3].groupBy((x) => (x % 2 ? "odd" : "even"));
+        eqj(g.odd, [1, 3], "groupBy still groups normally");
+        eqj(g.even, [2], "groupBy even bucket");
+    }
+}
+
 print("test_optguide_regressions: " + pass + " passed, " + fail + " failed");
 if (fail) throw new Error(fail + " failures");
