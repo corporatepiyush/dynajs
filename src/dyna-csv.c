@@ -622,9 +622,11 @@ static JSValue js_csv_add_column(JSContext *ctx, JSValueConst this_val, int argc
     for (size_t r = 0; r < t.n; r++) {
         Row *row = &t.r[r];
         while (row->n < ncols) { if (row_push(row, NULL)) { free(def); JS_ThrowOutOfMemory(ctx); goto done; } }
-        char *v = (r == 0) ? tcell_dup(&t, col, strlen(col))
+        /* NULL is tcell_dup's SUCCESS value for an empty cell, so an empty
+           name must not be routed through it or it reads as an OOM. */
+        char *v = (r == 0) ? (*col ? tcell_dup(&t, col, strlen(col)) : NULL)
                            : (def && *def ? tcell_dup(&t, def, strlen(def)) : NULL);
-        if (r == 0 && !v) { free(def); JS_ThrowOutOfMemory(ctx); goto done; }
+        if (r == 0 && *col && !v) { free(def); JS_ThrowOutOfMemory(ctx); goto done; }
         if (row_push(row, v)) { free(def); JS_ThrowOutOfMemory(ctx); goto done; }
     }
     free(def);
@@ -678,8 +680,10 @@ static JSValue js_csv_rename_column(JSContext *ctx, JSValueConst this_val, int a
     if (oi < 0) { JS_ThrowTypeError(ctx, "csv.renameColumn: no such column '%s'", oldn); goto done; }
     if (strcmp(oldn, newn) != 0) {
         if (header_index(&t, newn) >= 0) { JS_ThrowTypeError(ctx, "csv.renameColumn: column '%s' already exists", newn); goto done; }
-        char *nv = tcell_dup(&t, newn, strlen(newn));
-        if (!nv) { JS_ThrowOutOfMemory(ctx); goto done; }
+        /* NULL means "empty cell", not "allocation failed": an empty newName
+           must not be reported as OOM. */
+        char *nv = *newn ? tcell_dup(&t, newn, strlen(newn)) : NULL;
+        if (*newn && !nv) { JS_ThrowOutOfMemory(ctx); goto done; }
         t.r[0].f[oi] = nv;              /* the old header cell is arena-owned */
         if (csv_store(ctx, path, &t)) goto done;
     }
