@@ -41,7 +41,13 @@ STAMP=.obj/.dev_cfg
 # tree gets copied into docker contexts, walked by codegraph, and picked up by
 # `git status`. /tmp/build<n> is reaped by the OS, so a killed run leaves no
 # residue anybody has to remember to clean.
+# EXPORTED, because a stage is a separate process (`bash "$0" __stage ...`) and
+# re-evaluates this line with its OWN $$ -- so every stage looked for the tree
+# under a directory the parent never created and died with `cd: no such file or
+# directory` before compiling a byte. That silently removed every sanitizer
+# stage from the gate while it still printed "build: ok".
 TREES=${DEV_TREES:-/tmp/build$$}
+export DEV_TREES="$TREES"
 
 die(){ echo "FAIL: $*" >&2; exit 1; }
 have(){ command -v "$1" >/dev/null 2>&1; }
