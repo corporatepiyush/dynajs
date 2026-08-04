@@ -860,9 +860,10 @@ static JSValue js_std_getenviron(JSContext *ctx, JSValueConst this_val,
     for(idx = 0; envp[idx] != NULL; idx++) {
         name = envp[idx];
         p = strchr(name, '=');
-        name_len = p - name;
         if (!p)
             continue;
+        /* p - name with p == NULL is UB; the check must come first. */
+        name_len = p - name;
         value = p + 1;
         atom = JS_NewAtomLen(ctx, name, name_len);
         if (atom == JS_ATOM_NULL)

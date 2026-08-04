@@ -649,9 +649,24 @@ static int dyn_key_less(JSContext *ctx, JSAtom ka, JSAtom kb)
     if (!JS_IsException(vb)) sb = JS_ToCStringLen(ctx, &nb, vb);
     if (sa && sb) {
         while (ia < na && ib < nb) {
-            uint32_t ua = dyn_u16_first(dyn_u8_next(sa, na, &ia));
-            uint32_t ub = dyn_u16_first(dyn_u8_next(sb, nb, &ib));
+            /* RFC 8785 orders by UTF-16 code UNITS: an astral code point is a
+               surrogate PAIR, so after the high surrogates tie, the LOW one
+               decides before the next code point is even looked at. */
+            uint32_t ca = dyn_u8_next(sa, na, &ia);
+            uint32_t cb = dyn_u8_next(sb, nb, &ib);
+            uint32_t ua = dyn_u16_first(ca), ub = dyn_u16_first(cb);
             if (ua != ub) { r = ua < ub; goto out; }
+            if (ca >= 0x10000 && cb >= 0x10000) {
+                uint32_t la = 0xDC00u + (ca & 0x3FF);
+                uint32_t lb = 0xDC00u + (cb & 0x3FF);
+                if (la != lb) { r = la < lb; goto out; }
+            } else if (ca != cb) {
+                /* Same first unit, different code points: only possible when
+                   one is astral and the other a BMP value in D800..DFFF --
+                   the BMP key is complete here, so it sorts first. */
+                r = ca < 0x10000;
+                goto out;
+            }
         }
         r = (ia >= na) && (ib < nb);          /* the shorter key sorts first */
     }

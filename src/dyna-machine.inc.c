@@ -45,10 +45,18 @@ static int dyn_mach_proc_key(const char *path, const char *key, double *out)
     if (!f)
         return -1;
     while (fgets(line, sizeof line, f)) {
-        if (strncmp(line, key, klen) == 0 && line[klen] == ':') {
-            *out = strtod(line + klen + 1, NULL);
-            fclose(f);
-            return 0;
+        if (strncmp(line, key, klen) == 0) {
+            /* /proc/cpuinfo pads with tabs: "cpu MHz\t\t: 2394.451" — skip
+               whitespace before the colon or the key never matches there
+               (meminfo needs none, so this is a no-op for it). */
+            const char *colon = line + klen;
+            while (*colon == ' ' || *colon == '\t')
+                colon++;
+            if (*colon == ':') {
+                *out = strtod(colon + 1, NULL);
+                fclose(f);
+                return 0;
+            }
         }
     }
     fclose(f);

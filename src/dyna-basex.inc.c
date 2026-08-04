@@ -13,7 +13,7 @@ static const char BX_B58[] =
    second occurrence is unreachable, so a value encodes one way and reads back
    as another. Rejecting it is the only honest option. */
 static int bx_index_table(JSContext *ctx, const char *alpha, size_t n,
-                          int8_t idx[256])
+                          int idx[256])
 {
     size_t i;
 
@@ -21,7 +21,7 @@ static int bx_index_table(JSContext *ctx, const char *alpha, size_t n,
         JS_ThrowRangeError(ctx, "BaseX: the alphabet is 2 to 255 characters");
         return -1;
     }
-    memset(idx, -1, 256);
+    memset(idx, -1, sizeof(int) * 256);
     for (i = 0; i < n; i++) {
         unsigned char c = (unsigned char)alpha[i];
         if (idx[c] >= 0) {
@@ -29,7 +29,9 @@ static int bx_index_table(JSContext *ctx, const char *alpha, size_t n,
                                     "which would corrupt decoding", c);
             return -1;
         }
-        idx[c] = (int8_t)i;
+        /* int, not int8_t: positions 128-254 wrapped negative, which rejected
+           valid characters and defeated the duplicate check above. */
+        idx[c] = (int)i;
     }
     return 0;
 }
@@ -85,7 +87,7 @@ static int bx_encode(const uint8_t *src, size_t n, const char *alpha,
     return 0;
 }
 
-static int bx_decode(const char *src, size_t n, const int8_t idx[256],
+static int bx_decode(const char *src, size_t n, const int idx[256],
                      uint32_t base, uint8_t **out, size_t *out_len)
 {
     size_t zeros = 0, size, i, j, len = 0;
@@ -129,7 +131,7 @@ static int bx_decode(const char *src, size_t n, const int8_t idx[256],
 static JSValue dyn_b58(JSContext *ctx, JSValueConst this_val,
                        int argc, JSValueConst *argv, int magic)
 {
-    int8_t idx[256];
+    int idx[256];
     uint8_t *out = NULL;
     size_t out_len = 0;
     JSValue result;
@@ -223,7 +225,7 @@ static JSValue dyn_b58(JSContext *ctx, JSValueConst this_val,
 static JSValue dyn_basex(JSContext *ctx, JSValueConst this_val,
                          int argc, JSValueConst *argv, int magic)
 {
-    int8_t idx[256];
+    int idx[256];
     const char *alpha;
     size_t alen;
     uint8_t *out = NULL;

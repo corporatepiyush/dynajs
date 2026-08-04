@@ -186,7 +186,6 @@ int dyn_resp_scan(const uint8_t *buf, size_t len, size_t maxbulk,
     int64_t want[DYN_RESP_MAX_DEPTH];
     int sp = 0, rc, type;
     size_t pos = 0;
-    int attr_seen = 0;
 
     if (!buf || !consumed)
         return DYN_RESP_E_SYNTAX;
@@ -206,9 +205,11 @@ int dyn_resp_scan(const uint8_t *buf, size_t len, size_t maxbulk,
             return rc;
         /* An attribute is metadata ATTACHED to the next reply, not a reply. A
          * scan that stopped here would hand the caller a value it never asked
-         * for and leave the real one in the buffer, one command out of step. */
-        if (type == DYN_RESP_ATTR && sp == 0 && !attr_seen) {
-            attr_seen = 1;
+         * for and leave the real one in the buffer, one command out of step.
+         * EVERY top-level attribute is skipped: a second consecutive one is
+         * legal and treating it as the reply swallows the value it attaches
+         * to. */
+        if (type == DYN_RESP_ATTR && sp == 0) {
             want[0] = 1;
         }
         if (n > 0) {

@@ -766,6 +766,12 @@ int dyn_aio_connect(dyn_aio_t *a, const char *host, uint16_t port,
         return -1;
     dyn_net_set_nonblock(fd);
     dyn_net_set_nodelay(fd);
+#ifdef SO_NOSIGPIPE
+    /* The accept path sets this (:352); a connect()'d socket without it kills
+       the process with SIGPIPE on the first send to an RST'd peer (macOS has
+       no MSG_NOSIGNAL, so AIO_SEND_FLAGS is 0 there). */
+    { int on = 1; setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on)); }
+#endif
     if (fd_ensure(a, fd) < 0) {
         close(fd);
         return -1;

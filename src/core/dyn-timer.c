@@ -7,6 +7,14 @@
 
 #if defined(__APPLE__)
 #include <mach/mach_time.h>
+#include <pthread.h>
+
+/* The timebase is process-constant but a syscall to learn: check-then-act on
+   a plain static here was a data race (a thread could read denom != 0 while
+   numer was still 0 and silently compute 0). */
+static mach_timebase_info_data_t dyn_tb;
+static void dyn_tb_init(void) { mach_timebase_info(&dyn_tb); }
+static pthread_once_t dyn_tb_once = PTHREAD_ONCE_INIT;
 #endif
 
 typedef struct {
@@ -38,10 +46,8 @@ struct dyn_timers {
 uint64_t dyn_timer_now_ms(void)
 {
 #if defined(__APPLE__)
-    static mach_timebase_info_data_t tb;
-    if (tb.denom == 0)
-        mach_timebase_info(&tb);
-    return (mach_absolute_time() * tb.numer / tb.denom) / 1000000ull;
+    pthread_once(&dyn_tb_once, dyn_tb_init);
+    return (mach_absolute_time() * dyn_tb.numer / dyn_tb.denom) / 1000000ull;
 #elif defined(CLOCK_MONOTONIC)
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);

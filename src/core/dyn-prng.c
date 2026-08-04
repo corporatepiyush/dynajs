@@ -88,7 +88,10 @@ double dyn_prng_next_double(dyn_prng_t *r)
 uint64_t dyn_prng_next_bounded(dyn_prng_t *r, uint64_t bound)
 {
     /* threshold = (2^64) mod bound, computed as (-bound) mod bound. */
-    uint64_t threshold = (0 - bound) % bound;
+    uint64_t threshold;
+    if (bound == 0)
+        return 0;                       /* the modulo below would divide by 0 */
+    threshold = (0 - bound) % bound;
     for (;;) {
         uint64_t v = dyn_prng_next(r);
         if (v >= threshold)

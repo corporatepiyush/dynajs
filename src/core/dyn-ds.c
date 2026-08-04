@@ -688,8 +688,18 @@ int dyn_bimap_put(dyn_bimap_t *b, const char *k, size_t kn,
         free(r->key.p);
         return -1;
     }
-    if (ix_insert(&b->fwd, kh, r->key.p, kn, b->len) < 0 ||
-        ix_insert(&b->rev, vh, r->val.p, vn, b->len) < 0) {
+    if (ix_insert(&b->fwd, kh, r->key.p, kn, b->len) < 0) {
+        free(r->key.p);
+        free(r->val.p);
+        return -1;
+    }
+    if (ix_insert(&b->rev, vh, r->val.p, vn, b->len) < 0) {
+        /* fwd already holds a BORROWED pointer to r->key.p: freeing the key
+           without erasing that entry leaves the index dangling into freed
+           memory. */
+        uint32_t fp = ix_find(&b->fwd, kh, r->key.p, kn);
+        if (fp != UINT32_MAX)
+            ix_erase(&b->fwd, fp);
         free(r->key.p);
         free(r->val.p);
         return -1;
