@@ -661,11 +661,25 @@ static int dyn_key_less(JSContext *ctx, JSAtom ka, JSAtom kb)
                 uint32_t lb = 0xDC00u + (cb & 0x3FF);
                 if (la != lb) { r = la < lb; goto out; }
             } else if (ca != cb) {
-                /* Same first unit, different code points: only possible when
-                   one is astral and the other a BMP value in D800..DFFF --
-                   the BMP key is complete here, so it sorts first. */
-                r = ca < 0x10000;
-                goto out;
+                /* Same first unit, one astral and one a lone surrogate in
+                   D800..DFFF. The BMP key is NOT necessarily complete: its
+                   NEXT unit decides against the astral key's low surrogate.
+                   Assuming it ended here ordered "\uD800￿" before
+                   "\u{10000}" (FFFF vs DC00), which is the wrong canonical
+                   byte order -- and JCS output is what gets signed. */
+                uint32_t la, lb;
+                size_t pk;
+                if (ca >= 0x10000) {
+                    la = 0xDC00u + (ca & 0x3FF);
+                    pk = ib;
+                    lb = ib < nb ? dyn_u16_first(dyn_u8_next(sb, nb, &pk)) : 0;
+                } else {
+                    pk = ia;
+                    la = ia < na ? dyn_u16_first(dyn_u8_next(sa, na, &pk)) : 0;
+                    lb = 0xDC00u + (cb & 0x3FF);
+                }
+                if (la != lb) { r = la < lb; goto out; }
+                /* both continue identically: fall through to the next unit */
             }
         }
         r = (ia >= na) && (ib < nb);          /* the shorter key sorts first */
