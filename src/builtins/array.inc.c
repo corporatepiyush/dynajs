@@ -755,13 +755,18 @@ static JSValue js_array_ext_groupby(JSContext *ctx, JSValueConst this_val,
         atom = JS_ValueToAtom(ctx, key);
         JS_FreeValue(ctx, key);
         if (atom == JS_ATOM_NULL) { JS_FreeValue(ctx, el); goto fail; }
+        /* DEFINE the bucket, never Set it: JS_SetProperty walks the prototype
+           chain, so a group key of "__proto__" retargeted the result object's
+           prototype instead of naming a bucket, and that group vanished from
+           the result. Define is also faster -- no chain walk per key. */
         bucket = JS_GetProperty(ctx, result, atom);
         if (JS_IsException(bucket)) { JS_FreeAtom(ctx, atom); JS_FreeValue(ctx, el); goto fail; }
         if (!JS_IsArray(ctx, bucket)) {
             JS_FreeValue(ctx, bucket);
             bucket = JS_NewArray(ctx);
             if (JS_IsException(bucket) ||
-                JS_SetProperty(ctx, result, atom, JS_DupValue(ctx, bucket)) < 0) {
+                JS_DefinePropertyValue(ctx, result, atom, JS_DupValue(ctx, bucket),
+                                       JS_PROP_C_W_E) < 0) {
                 JS_FreeValue(ctx, bucket); JS_FreeAtom(ctx, atom); JS_FreeValue(ctx, el); goto fail;
             }
         }
