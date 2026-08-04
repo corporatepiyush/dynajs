@@ -113,3 +113,9 @@ fuzz_codec
 fuzz_csv
 
 docs/
+
+# Session scratch: PoC scripts and audit artefacts. Neither tracked nor
+# ignored before, so `git status` showed residue a sweep could commit.
+tmp_audit/
+.opencode/
+.swarm/

@@ -1,8 +1,8 @@
-// Fuzz target for the RFC-4180 CSV parser (src/dyna-csv.c:96, csv_parse).
+// Fuzz target for the RFC-4180 CSV parser (src/dyna-csv.c, csv_parse).
 //
 // WHY THIS INCLUDES THE .c INSTEAD OF CALLING A PUBLIC ENTRY POINT -- do not
 // "fix" this into a link error: csv_parse() is `static`, and the only path to
-// it is csv_load(), which takes a FILE PATH (dyna-csv.c:279). Calling the JS
+// it is csv_load(), which takes a FILE PATH. Calling the JS
 // API would mean writing a temp file per execution, which is both slow and a
 // different test -- it would measure the loader, not the parser. Including the
 // translation unit puts the fuzzer's bytes straight into csv_parse with an
