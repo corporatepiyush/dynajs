@@ -848,14 +848,25 @@ void JS_FreeCString(JSContext *ctx, const char *ptr)
     JS_FreeValue(ctx, JS_MKPTR(JS_TAG_STRING, p));
 }
 
+/* PORTFOLIO, not one implementation. The chunked kernels below win from two
+   full chunks up (0.5x at 128) and lose under it, and the losing case is the
+   common one -- so the short-input strategy has to be INLINEABLE. Folding both
+   into one function cost 1.05-1.34x at every length below the chunk width,
+   because the short path paid the frame and the code size of a kernel it never
+   entered. The wrappers at the bottom are the dispatch. */
+
 /* Widen through a uint16_t array, never shifts: the chunk compare is then
    byte-order independent. memcpy because str16 is only 4-byte aligned, and
    js_string_rope_compare passes arbitrary offsets. */
-static int memcmp16_8(const uint16_t *src1, const uint8_t *src2, int len)
+static no_inline int memcmp16_8_chunked(const uint16_t *src1, const uint8_t *src2,
+                                        int len)
 {
     int c, i = 0, k;
 
-    for (; i + 8 <= len; i += 8) {
+    /* TWO full chunks minimum. With one, a difference inside the final chunk
+       means widening it and then re-scanning it element-wise: measured 1.32x
+       at len 8 and 1.15x at 16, against 0.53x at 128. */
+    for (; i + 16 <= len; i += 8) {
         uint16_t w[8];
         uint64_t a0, a1, b0, b1;
         for (k = 0; k < 8; k++)
@@ -877,11 +888,14 @@ static int memcmp16_8(const uint16_t *src1, const uint8_t *src2, int len)
 
 /* Chunks locate the first DIFFERING chunk; the element-wise tail resolves the
    ordering inside it, so no byte-order branch exists. memcpy: see above. */
-static int memcmp16(const uint16_t *src1, const uint16_t *src2, int len)
+static no_inline int memcmp16_chunked(const uint16_t *src1, const uint16_t *src2,
+                                      int len)
 {
     int c, i = 0;
 
-    for (; i + 8 <= len; i += 8) {
+    /* Two full chunks minimum, as in memcmp16_8: below that the chunk is set
+       up and then re-scanned by the tail, measured 1.07x slower at len <= 4. */
+    for (; i + 16 <= len; i += 8) {
         uint64_t a0, a1, b0, b1;
         memcpy(&a0, src1 + i,     8);
         memcpy(&a1, src1 + i + 4, 8);
@@ -890,14 +904,73 @@ static int memcmp16(const uint16_t *src1, const uint16_t *src2, int len)
         if ((a0 ^ b0) | (a1 ^ b1))
             break;
     }
-    for (; i + 4 <= len; i += 4) {
+    for (; i < len; i++) {
+        c = src1[i] - src2[i];
+        if (c != 0)
+            return c;
+    }
+    return 0;
+}
+
+/* ---- the portfolio and its selection ----------------------------------
+   Three strategies per element type, chosen by LENGTH. Each crossover is read
+   off the sweep in tests/bench_string_eq.js (1,2,4,7,8,9,12,15,16,17,24,...),
+   which is why the sweep straddles both boundaries rather than sampling.
+
+     len < 4    scalar, FULLY UNROLLED  -- no loop counter, no chunk setup, and
+                                           the branch predictor sees a fixed
+                                           shape. This is the modal key length.
+     4..15      one 64-bit compare per 4 elements -- pays for itself from the
+                                           first quad, too short to amortise
+                                           the 8-element kernel's prologue.
+     >= 16      the no_inline 8-element kernel -- two full chunks minimum, so a
+                                           difference in the final chunk cannot
+                                           make it widen-then-rescan.
+
+   The dispatch must stay INLINEABLE: at these sizes a call is the whole
+   budget, which is why only the >= 16 arm is a real function. */
+#define JS_STRCMP_QUAD_MIN  4
+#define JS_STRCMP_CHUNK_MIN 16
+
+static int memcmp16(const uint16_t *src1, const uint16_t *src2, int len)
+{
+    int c, i;
+
+    if (len < JS_STRCMP_QUAD_MIN) {
+        if (len > 0 && (c = src1[0] - src2[0]) != 0) return c;
+        if (len > 1 && (c = src1[1] - src2[1]) != 0) return c;
+        if (len > 2 && (c = src1[2] - src2[2]) != 0) return c;
+        return 0;
+    }
+    if (len >= JS_STRCMP_CHUNK_MIN)
+        return memcmp16_chunked(src1, src2, len);
+    for (i = 0; i + 4 <= len; i += 4) {     /* 4 elements per 64-bit compare */
         uint64_t a, b;
         memcpy(&a, src1 + i, 8);
         memcpy(&b, src2 + i, 8);
         if (a != b)
-            break;
+            break;                          /* the tail resolves the sign */
     }
     for (; i < len; i++) {
+        c = src1[i] - src2[i];
+        if (c != 0)
+            return c;
+    }
+    return 0;
+}
+
+/* TWO tiers here, not three: the TYPE decides. memcmp16's quad tier compares
+   uint16 against uint16, so the 64-bit load is a straight memcpy. This one
+   must WIDEN four bytes first -- about eight operations to replace four
+   compares -- and it measured 1.39x at len 8 for exactly that. The quad tier
+   pays for one member of the family and costs for the other. */
+static int memcmp16_8(const uint16_t *src1, const uint8_t *src2, int len)
+{
+    int c, i;
+
+    if (len >= JS_STRCMP_CHUNK_MIN)
+        return memcmp16_8_chunked(src1, src2, len);
+    for (i = 0; i < len; i++) {
         c = src1[i] - src2[i];
         if (c != 0)
             return c;
@@ -924,20 +997,45 @@ static int js_string_memcmp(const JSString *p1, int pos1, const JSString *p2,
     return res;
 }
 
+/* Where the memcmp call starts paying for itself, per the length sweep. */
+#define JS_STREQ_MEMCMP_MIN 8
+
 static BOOL js_string_eq(JSContext *ctx,
                          const JSString *p1, const JSString *p2)
 {
+    int i;
     if (p1->len != p2->len)
         return FALSE;
     if (p1 == p2)
         return TRUE;
-    /* Equality only, so libc memcmp over the raw units is legal and gets the
-       SIMD path; identical layouts make byte equality element equality. */
+    /* EQUALITY is a different problem from ordering and gets its own
+       selection: it needs no sign, so libc memcmp over the raw units is legal
+       for BOTH same-width cases (identical layouts make byte equality element
+       equality) and brings libc's SIMD with it. What it costs is a call, and
+       below ~8 units the call is the whole budget -- so each width also has a
+       short arm. The first-unit reject comes before either: a same-length key
+       MISS is the common Map case and paid a whole call to learn it, measured
+       1.35x at EVERY length. */
     if (likely(!p1->is_wide_char)) {
-        if (likely(!p2->is_wide_char))
-            return memcmp(p1->u.str8, p2->u.str8, p1->len) == 0;
+        if (likely(!p2->is_wide_char)) {
+            if (p1->len >= JS_STREQ_MEMCMP_MIN)
+                return memcmp(p1->u.str8, p2->u.str8, p1->len) == 0;
+            for (i = 0; i < (int)p1->len; i++)
+                if (p1->u.str8[i] != p2->u.str8[i])
+                    return FALSE;
+            return TRUE;
+        }
     } else if (p2->is_wide_char) {
-        return memcmp(p1->u.str16, p2->u.str16, (size_t)p1->len * 2) == 0;
+        if (p1->len == 0)
+            return TRUE;
+        if (p1->u.str16[0] != p2->u.str16[0])
+            return FALSE;
+        if (p1->len >= JS_STREQ_MEMCMP_MIN)
+            return memcmp(p1->u.str16, p2->u.str16, (size_t)p1->len * 2) == 0;
+        for (i = 1; i < (int)p1->len; i++)   /* element 0 already compared */
+            if (p1->u.str16[i] != p2->u.str16[i])
+                return FALSE;
+        return TRUE;
     }
     return js_string_memcmp(p1, 0, p2, 0, p1->len) == 0;
 }
