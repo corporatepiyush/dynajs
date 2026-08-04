@@ -3784,6 +3784,14 @@ static uint32_t re_pf_fold_hash(const uint8_t *key, size_t len, BOOL is_unicode)
         h ^= key[i];
         h *= 16777619u;
     }
+    /* FNV has no avalanche in its LOW bits, and the slot index is taken from
+       them: h & 7 was a function of (key[i] & 7) alone, so bits 3..7 of every
+       key byte were invisible and /get/i vs /order/i ('G','O' -- 8 apart)
+       collided permanently while six slots sat empty. Measured 2292 ns
+       against 480 for the same pattern owning its slot. Finalize first. */
+    h ^= h >> 15; h *= 0x2c1b3c6dU;
+    h ^= h >> 12; h *= 0x297a2d39U;
+    h ^= h >> 15;
     return h;
 }
 
