@@ -302,6 +302,38 @@ typedef struct JSAtomicsWaiter {
 } JSAtomicsWaiter;
 
 static pthread_mutex_t js_atomics_mutex = PTHREAD_MUTEX_INITIALIZER;
+/* Atomics.wait deadlines must survive a wall-clock step: an NTP jump while a
+   thread is parked otherwise fabricates "timed-out" or oversleeps. Darwin has
+   no condattr_setclock; its relative wait is monotonic already. */
+#if defined(__APPLE__)
+#define JS_ATOMICS_WAIT_RELATIVE 1
+#elif defined(CLOCK_MONOTONIC)
+#define JS_ATOMICS_DEADLINE_CLOCK CLOCK_MONOTONIC
+#endif
+#ifndef JS_ATOMICS_DEADLINE_CLOCK
+#define JS_ATOMICS_DEADLINE_CLOCK CLOCK_REALTIME
+#endif
+
+/* TRUE when the cond's deadline clock is CLOCK_MONOTONIC. The caller must read
+   its deadline from the SAME clock; a failure here is not silent, it selects
+   CLOCK_REALTIME for both sides. */
+static BOOL js_atomics_cond_init(pthread_cond_t *cond)
+{
+#if !defined(JS_ATOMICS_WAIT_RELATIVE) && defined(CLOCK_MONOTONIC)
+    pthread_condattr_t attr;
+    if (pthread_condattr_init(&attr) == 0) {
+        if (pthread_condattr_setclock(&attr, CLOCK_MONOTONIC) == 0 &&
+            pthread_cond_init(cond, &attr) == 0) {
+            pthread_condattr_destroy(&attr);
+            return TRUE;
+        }
+        pthread_condattr_destroy(&attr);
+    }
+#endif
+    pthread_cond_init(cond, NULL);
+    return FALSE;
+}
+
 static struct list_head js_atomics_waiter_list =
     LIST_HEAD_INIT(js_atomics_waiter_list);
 
@@ -359,6 +391,7 @@ static JSValue js_atomics_wait(JSContext *ctx,
     void *ptr;
     int64_t timeout;
     struct timespec ts;
+    BOOL mono;
     JSAtomicsWaiter waiter_s, *waiter;
     int ret, size_log2, res;
     double d;
@@ -408,7 +441,7 @@ static JSValue js_atomics_wait(JSContext *ctx,
 
     waiter = &waiter_s;
     waiter->ptr = ptr;
-    pthread_cond_init(&waiter->cond, NULL);
+    mono = js_atomics_cond_init(&waiter->cond);
     waiter->linked = TRUE;
     list_add_tail(&waiter->link, &js_atomics_waiter_list);
 
@@ -416,16 +449,30 @@ static JSValue js_atomics_wait(JSContext *ctx,
         pthread_cond_wait(&waiter->cond, &js_atomics_mutex);
         ret = 0;
     } else {
-        /* XXX: use clock monotonic */
-        clock_gettime(CLOCK_REALTIME, &ts);
-        ts.tv_sec += timeout / 1000;
-        ts.tv_nsec += (timeout % 1000) * 1000000;
+        /* A finite but absurd timeout must not overflow time_t: ~95 years is
+           indistinguishable from waiting, and signed overflow is UB. */
+        int64_t secs = timeout / 1000;
+        if (secs > 3000000000LL)
+            secs = 3000000000LL;
+#if defined(JS_ATOMICS_WAIT_RELATIVE)
+        (void)mono;                     /* the relative wait needs no clock */
+        ts.tv_sec = (time_t)secs;
+        ts.tv_nsec = (long)((timeout % 1000) * 1000000);
+        ret = pthread_cond_timedwait_relative_np(&waiter->cond,
+                                                 &js_atomics_mutex, &ts);
+#else
+        /* The deadline MUST come from the clock the cond was created with:
+           mixing them is wrong by the machine's uptime, and every finite wait
+           then returns instantly. */
+        clock_gettime(mono ? JS_ATOMICS_DEADLINE_CLOCK : CLOCK_REALTIME, &ts);
+        ts.tv_sec += (time_t)secs;
+        ts.tv_nsec += (long)((timeout % 1000) * 1000000);
         if (ts.tv_nsec >= 1000000000) {
             ts.tv_nsec -= 1000000000;
             ts.tv_sec++;
         }
-        ret = pthread_cond_timedwait(&waiter->cond, &js_atomics_mutex,
-                                     &ts);
+        ret = pthread_cond_timedwait(&waiter->cond, &js_atomics_mutex, &ts);
+#endif
     }
     if (waiter->linked)
         list_del(&waiter->link);
