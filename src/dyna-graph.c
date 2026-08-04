@@ -585,6 +585,8 @@ static JSValue dyn_graph_components(JSContext *ctx, JSValueConst this_val,
 }
 
 /* floydWarshall(): n x n distance matrix (Array of Arrays of doubles). */
+#define DYN_FLOYD_MAX_N 1024
+
 static JSValue dyn_graph_floyd(JSContext *ctx, JSValueConst this_val,
                                int argc, JSValueConst *argv)
 {
@@ -597,8 +599,14 @@ static JSValue dyn_graph_floyd(JSContext *ctx, JSValueConst this_val,
     if (!g)
         return JS_EXCEPTION;
     n = g->n;
-    if (n > 4096)
-        return JS_ThrowRangeError(ctx, "floydWarshall: graph too large (n > 4096)");
+    /* A LATENCY bound, not a memory one: the triple loop is n^3, so 4096 is
+       6.9e10 inner iterations (order a minute, on the loop thread) where 1024
+       is 1.1e9. The result also costs n^2 JSValues -- 268 MB at 4096 against
+       the 134 MB C matrix the old cap was sized for. */
+    if (n > DYN_FLOYD_MAX_N)
+        return JS_ThrowRangeError(ctx,
+            "floydWarshall: graph too large (n > %u); the algorithm is O(n^3)",
+            (unsigned)DYN_FLOYD_MAX_N);
     d = (double *)malloc((size_t)n * n * sizeof(double));
     if (n && !d)
         return JS_ThrowOutOfMemory(ctx);
