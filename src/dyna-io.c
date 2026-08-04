@@ -385,6 +385,39 @@ int dyn_io_read_buf(const char *path, dyn_iobuf_t *out, int flags)
     return 0;
 }
 
+#ifndef O_DIRECTORY
+#define O_DIRECTORY 0   /* hidden by glibc under strict ISO; O_RDONLY suffices */
+#endif
+
+/* fsync the directory holding `path`: the data is durable but the NAME is not
+   until the directory entry is, so a crash between the two loses the rename
+   and leaves the old contents. F_FULLFSYNC is not for dirfds, and a filesystem
+   that does not sync directories is not a failure. */
+static int dyn_io_sync_dir_of(const char *path)
+{
+    const char *slash = strrchr(path, '/');
+    char dir[PATH_MAX];
+    int fd, rc;
+
+    if (!slash) {
+        dir[0] = '.'; dir[1] = '\0';
+    } else {
+        size_t n = (size_t)(slash - path);
+        if (n == 0) n = 1;                      /* "/leaf" -> "/" */
+        if (n >= sizeof(dir)) { errno = ENAMETOOLONG; return -1; }
+        memcpy(dir, path, n);
+        dir[n] = '\0';
+    }
+    fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0)
+        return -1;
+    rc = fsync(fd);
+    if (rc < 0 && (errno == ENOTSUP || errno == EINVAL || errno == ENOTTY))
+        rc = 0;
+    close(fd);
+    return rc;
+}
+
 int dyn_io_write_whole_atomic(const char *path, const void *data, size_t len,
                               int durable)
 {
@@ -442,6 +475,12 @@ int dyn_io_write_whole_atomic(const char *path, const void *data, size_t len,
         werr = 1;
     if (werr || rename(tmp, path) < 0) {
         unlink(tmp);
+        free(tmp);
+        return -1;
+    }
+    /* -1 here means the durability asked for was not proven; it does not say
+       whether the rename landed. */
+    if (durable && dyn_io_sync_dir_of(path) < 0) {
         free(tmp);
         return -1;
     }

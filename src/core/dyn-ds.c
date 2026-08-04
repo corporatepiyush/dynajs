@@ -984,11 +984,17 @@ void dyn_table_free(dyn_table_t *t, dyn_cell_free_fn fn, void *ud)
 }
 
 /* Length-prefixed concatenation, so ("ab","c") and ("a","bc") differ. */
-static int table_pair(char **out, size_t *outn, const char *r, size_t rn,
-                      const char *c, size_t cn)
+/* A stack probe for the common case: get/remove malloc'd and freed a pair on
+   every call, and the hash and memcmp around it are already O(rn+cn), so the
+   allocation only shows above the noise while the keys are short. 184 bytes of
+   key text covers labels, ids and dates several times over. */
+#define TABLE_PAIR_INLINE 192
+
+static int table_pair_into(char *inl, char **out, size_t *outn, const char *r,
+                           size_t rn, const char *c, size_t cn)
 {
     size_t n = 8 + rn + cn;
-    char *p = (char *)malloc(n);
+    char *p = (inl && n <= TABLE_PAIR_INLINE) ? inl : (char *)malloc(n);
     int i;
     if (!p)
         return -1;
@@ -999,6 +1005,20 @@ static int table_pair(char **out, size_t *outn, const char *r, size_t rn,
     *out = p;
     *outn = n;
     return 0;
+}
+
+static int table_pair(char **out, size_t *outn, const char *r, size_t rn,
+                      const char *c, size_t cn)
+{
+    return table_pair_into(NULL, out, outn, r, rn, c, cn);
+}
+
+/* Free only what was heap-allocated: an inline pair points into the caller's
+   frame, and freeing that is not a leak, it is a crash. */
+static void table_pair_release(char *inl, char *p)
+{
+    if (p != inl)
+        free(p);
 }
 
 int dyn_table_put(dyn_table_t *t, const char *r, size_t rn,
@@ -1056,31 +1076,33 @@ int dyn_table_put(dyn_table_t *t, const char *r, size_t rn,
 const dyn_cell_t *dyn_table_get(const dyn_table_t *t, const char *r, size_t rn,
                                 const char *c, size_t cn)
 {
+    char pk_inl[TABLE_PAIR_INLINE];
     char *pk;
     size_t pn;
     uint32_t pos;
     const dyn_cell_t *out = NULL;
 
-    if (table_pair(&pk, &pn, r, rn, c, cn) < 0)
+    if (table_pair_into(pk_inl, &pk, &pn, r, rn, c, cn) < 0)
         return NULL;
     pos = ix_find(&t->ix, ix_hash(pk, pn), pk, pn);
     if (pos != UINT32_MAX)
         out = &t->rec[t->ix.slot[pos].idx].val;
-    free(pk);
+    table_pair_release(pk_inl, pk);
     return out;
 }
 
 int dyn_table_remove(dyn_table_t *t, const char *r, size_t rn,
                      const char *c, size_t cn, dyn_cell_t *out)
 {
+    char pk_inl[TABLE_PAIR_INLINE];
     char *pk;
     size_t pn;
     uint32_t pos, idx;
 
-    if (table_pair(&pk, &pn, r, rn, c, cn) < 0)
+    if (table_pair_into(pk_inl, &pk, &pn, r, rn, c, cn) < 0)
         return 0;
     pos = ix_find(&t->ix, ix_hash(pk, pn), pk, pn);
-    free(pk);
+    table_pair_release(pk_inl, pk);
     if (pos == UINT32_MAX)
         return 0;
     idx = t->ix.slot[pos].idx;

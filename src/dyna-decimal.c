@@ -17,6 +17,12 @@
 
 #define DEC_INLINE     40               /* digits held with no allocation */
 #define DEC_MAX_DIGITS 100000u          /* a bound, not a house style */
+/* LATENCY caps. DEC_MAX_DIGITS alone permits 2.5e9 multiply cells and 1.0e10
+   divide cells from a parsed string, and a divide cell is ~11 byte-operations.
+   Both figures assume 1 byte-op/ns; re-derive if the kernels are ever timed. */
+#define DEC_MAX_MUL_CELLS (1u << 26)    /* nd(a)*nd(b), ~67 ms worst case */
+#define DEC_MAX_DIV_CELLS (1u << 23)    /* an*bn,       ~92 ms worst case */
+#define DEC_E_TOOSLOW     (-3)          /* distinct from -1 (wide) and -2 (/0) */
 /* Rendered characters. Separate from DEC_MAX_DIGITS because the notation is
    positional: the exponent, not the significand, sets the length. */
 #define DEC_MAX_TEXT   1000000
@@ -224,6 +230,8 @@ static int dec_mul(dec_t *r, const dec_t *a, const dec_t *b)
         return 0;
     }
     n = a->nd + b->nd;
+    if ((uint64_t)a->nd * (uint64_t)b->nd > DEC_MAX_MUL_CELLS)
+        return DEC_E_TOOSLOW;
     if (n > DEC_MAX_DIGITS)
         return -1;
     /* DEFERRED CARRY. Normalising inside the inner loop costs an integer
@@ -823,6 +831,10 @@ static JSValue dyn_dec_arith(JSContext *ctx, JSValueConst this_val,
     default:     rc = dec_mod(r, a, &b); break;
     }
     dec_free(&b);
+    if (rc == DEC_E_TOOSLOW)
+        return JS_ThrowRangeError(ctx, "Decimal: operands too large for one "
+            "exact operation (multiply is limited to %u digit-pairs)",
+            (unsigned)DEC_MAX_MUL_CELLS);
     if (rc == -2) {
         dec_free(r); free(r);
         return JS_ThrowRangeError(ctx, "Decimal: division by zero");

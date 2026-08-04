@@ -3148,7 +3148,15 @@ static JSValue dyn_file_read_file_async(JSContext *ctx, JSValueConst this_val,
     j->path = strdup(path);
     /* stat IS the strategy predicate: it is one cheap syscall against a hop
      * that costs several, and a miss here only picks the slower arm. */
-    offload = (stat(path, &st) == 0 && st.st_size >= (off_t)DYN_FILE_ASYNC_READ_MIN);
+    /* A NON-REGULAR path offloads whatever its size: open(2) on a writer-less
+       FIFO never returns, and the inline arm opens on the LOOP thread, which
+       freezes the whole reactor. st_size of a FIFO is 0, so a size-only gate
+       always chose inline -- the slowest possible answer for the one case that
+       cannot afford it. A stat failure stays inline: the strict open then fails
+       at once, and ENOENT cannot block. */
+    offload = (stat(path, &st) == 0 &&
+               (!S_ISREG(st.st_mode) ||
+                st.st_size >= (off_t)DYN_FILE_ASYNC_READ_MIN));
     dyn_path_unborrow(ctx, path);
     if (!j->path) { file_job_free(j); return JS_ThrowOutOfMemory(ctx); }
     if (argc > 1 && JS_IsObject(argv[1])) {
