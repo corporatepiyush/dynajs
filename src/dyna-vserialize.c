@@ -925,13 +925,67 @@ static JSValue vs_value_hash(JSContext *ctx, JSValueConst this_val,
 
 /* ------------------------------------------------------- structuredClone */
 
+/* Below this the linear scan wins: the table costs a hash and a dependent
+   load, the scan is a few cache lines. Above it the scan is quadratic. */
+#define VCLONE_HASH_MIN 64
+
 typedef struct {
     JSContext *ctx;
     JSValue   *src, *dst;               /* the memo, so CYCLES survive */
+    uint32_t  *idx;                     /* open-addressed ptr -> slot + 1 */
+    uint32_t   imask;                   /* 0 = absent, use the linear scan */
     int        n, cap, depth;
 } vclone_t;
 
 static JSValue vclone(vclone_t *c, JSValueConst v);
+
+static uint32_t vclone_hash(const void *p)
+{
+    uint64_t h = (uint64_t)(uintptr_t)p;
+    h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 29;
+    return (uint32_t)h;
+}
+
+/* Rebuild at 2x the entry count. Failure is NOT fatal: imask 0 falls back to
+   the scan, which is correct at any size and merely slower. */
+static void vclone_reindex(vclone_t *c)
+{
+    uint32_t size = 128, i;
+
+    while (size < (uint32_t)c->n * 2)
+        size *= 2;
+    free(c->idx);
+    c->idx = (uint32_t *)calloc(size, sizeof *c->idx);
+    if (!c->idx) { c->imask = 0; return; }
+    c->imask = size - 1;
+    for (i = 0; i < (uint32_t)c->n; i++) {
+        uint32_t sl = vclone_hash(JS_VALUE_GET_PTR(c->src[i])) & c->imask;
+        while (c->idx[sl])
+            sl = (sl + 1) & c->imask;
+        c->idx[sl] = i + 1;
+    }
+}
+
+/* Index of the memo entry for v, or -1. */
+static int vclone_find(vclone_t *c, JSValueConst v)
+{
+    void *p = JS_VALUE_GET_PTR(v);
+    int i;
+
+    if (c->imask) {
+        uint32_t sl = vclone_hash(p) & c->imask;
+        while (c->idx[sl]) {
+            if (JS_VALUE_GET_PTR(c->src[c->idx[sl] - 1]) == p)
+                return (int)c->idx[sl] - 1;
+            sl = (sl + 1) & c->imask;
+        }
+        return -1;
+    }
+    for (i = 0; i < c->n; i++)
+        if (JS_VALUE_GET_PTR(c->src[i]) == p)
+            return i;
+    return -1;
+}
 
 static int vclone_memo(vclone_t *c, JSValueConst s, JSValueConst d)
 {
@@ -947,6 +1001,15 @@ static int vclone_memo(vclone_t *c, JSValueConst s, JSValueConst d)
     c->src[c->n] = (JSValue)s;
     c->dst[c->n] = (JSValue)d;
     c->n++;
+    /* Keep the index in step, or grow one once the scan stops being cheap. */
+    if (c->imask && (uint32_t)c->n * 2 <= c->imask + 1) {
+        uint32_t sl = vclone_hash(JS_VALUE_GET_PTR(s)) & c->imask;
+        while (c->idx[sl])
+            sl = (sl + 1) & c->imask;
+        c->idx[sl] = (uint32_t)c->n;        /* slot + 1 */
+    } else if (c->n >= VCLONE_HASH_MIN) {
+        vclone_reindex(c);
+    }
     return 0;
 }
 
@@ -980,9 +1043,9 @@ static JSValue vclone(vclone_t *c, JSValueConst v)
 
     if (!JS_IsObject(v))
         return JS_DupValue(c->ctx, v);
-    for (i = 0; i < c->n; i++)
-        if (JS_VALUE_GET_PTR(c->src[i]) == JS_VALUE_GET_PTR(v))
-            return JS_DupValue(c->ctx, c->dst[i]);   /* the cycle closes here */
+    i = vclone_find(c, v);
+    if (i >= 0)
+        return JS_DupValue(c->ctx, c->dst[i]);       /* the cycle closes here */
     if (c->depth >= VS_MAX_DEPTH)
         return JS_ThrowRangeError(c->ctx, "structuredClone: nesting exceeds %d",
                                   VS_MAX_DEPTH);
@@ -1030,6 +1093,7 @@ static JSValue vs_structured_clone(JSContext *ctx, JSValueConst this_val,
     out = vclone(&c, argv[0]);
     free(c.src);
     free(c.dst);
+    free(c.idx);
     return out;
 }
 
