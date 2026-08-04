@@ -84,7 +84,10 @@ fuzz-*.log
 *.profdata
 
 # Core dumps and OS crash reports
-core
+# Anchored: an unanchored `core` also matches the DIRECTORY src/core/, so every
+# new file added there was silently unaddable. core.* still catches numbered
+# dumps at any depth.
+/core
 core.*
 vgcore.*
 *.crash
