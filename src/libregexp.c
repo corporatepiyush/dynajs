@@ -3751,6 +3751,79 @@ static no_inline void re_pf_bitmap_to_best_kind(REPrefilter *pf, uint32_t count)
     /* count > 192: too dense to be worth skipping; leave RE_PF_NONE */
 }
 
+/* Cache for the case-fold enumeration below -- the only part of re_pf_build
+   that costs microseconds, on a function that runs once per lre_exec, so a
+   /gi matchAll or replace loop rebuilt it once per match. */
+#define RE_PF_FOLD_KEY_MAX  64      /* char_i is 3 bytes, range_i is 3+4n */
+#define RE_PF_FOLD_CACHE     8      /* direct-mapped, power of two */
+
+/* Keyed on the opcode bytes the fold reads, never on the bytecode pointer:
+   equal bytes give an identical derivation, so a freed regexp whose address
+   is reused cannot produce a stale hit. */
+typedef struct {
+    uint32_t hash;
+    uint16_t key_len;               /* 0: empty slot */
+    uint8_t is_unicode;
+    int kind;
+    uint32_t ch;
+    size_t set_len;
+    uint8_t key[RE_PF_FOLD_KEY_MAX];
+    uint8_t set[8];
+    uint8_t bitmap[32];
+} REPfFoldEntry;
+
+/* Per-thread: a JSRuntime never crosses threads, so a shared table would buy
+   nothing and cost real synchronisation. Zero-init static, no lazy write. */
+static _Thread_local REPfFoldEntry re_pf_fold_cache[RE_PF_FOLD_CACHE];
+
+static uint32_t re_pf_fold_hash(const uint8_t *key, size_t len, BOOL is_unicode)
+{
+    uint32_t h = 2166136261u ^ (uint32_t)(is_unicode != 0);
+    size_t i;
+    for (i = 0; i < len; i++) {
+        h ^= key[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+/* TRUE if the descriptor for these opcode bytes was already derived. Restores
+   only the fields the fold path can set; lit/lit16 are never reached by it. */
+static BOOL re_pf_fold_cache_get(REPrefilter *pf, const uint8_t *key, size_t len,
+                                 BOOL is_unicode, uint32_t hash)
+{
+    const REPfFoldEntry *e = &re_pf_fold_cache[hash & (RE_PF_FOLD_CACHE - 1)];
+
+    if (e->key_len != (uint16_t)len || e->hash != hash ||
+        e->is_unicode != (uint8_t)(is_unicode != 0) ||
+        memcmp(e->key, key, len) != 0)
+        return FALSE;
+    pf->kind = e->kind;
+    pf->ch = e->ch;
+    pf->set_len = e->set_len;
+    memcpy(pf->set, e->set, sizeof(pf->set));
+    memcpy(pf->bitmap, e->bitmap, sizeof(pf->bitmap));
+    return TRUE;
+}
+
+/* A derived RE_PF_NONE is cached too: the enumeration that concluded "too
+   dense to skip" costs exactly as much as one that found a set. */
+static no_inline void re_pf_fold_cache_put(const REPrefilter *pf, const uint8_t *key,
+                                           size_t len, BOOL is_unicode, uint32_t hash)
+{
+    REPfFoldEntry *e = &re_pf_fold_cache[hash & (RE_PF_FOLD_CACHE - 1)];
+
+    e->hash = hash;
+    e->key_len = (uint16_t)len;
+    e->is_unicode = (uint8_t)(is_unicode != 0);
+    e->kind = pf->kind;
+    e->ch = pf->ch;
+    e->set_len = pf->set_len;
+    memcpy(e->key, key, len);
+    memcpy(e->set, pf->set, sizeof(e->set));
+    memcpy(e->bitmap, pf->bitmap, sizeof(e->bitmap));
+}
+
 static no_inline void re_pf_build(REPrefilter *pf, const uint8_t *bc, size_t bc_len,
                         int cbuf_type, BOOL is_unicode, size_t subject_len)
 {
@@ -3829,20 +3902,43 @@ static no_inline void re_pf_build(REPrefilter *pf, const uint8_t *bc, size_t bc_
        length so dense-match /g loops on short remainders keep the old path.
        16-bit subjects stay unhandled: enumerating 65536 units per exec does
        not amortise. */
-    if ((op == REOP_char_i || op == REOP_range_i) && cbuf_type == 0 &&
-        subject_len >= RE_PF_CASE_MIN) {
-        uint32_t count;
+    if ((op == REOP_char_i || op == REOP_range_i) && cbuf_type == 0) {
+        uint32_t count, hash = 0;
+        size_t klen;
+        int n = 0;
+
         if (op == REOP_char_i) {
-            uint32_t c = get_u16(p + 1);
-            re_pf_fold_char_to_bitmap(pf, c, is_unicode, &count);
-            re_pf_bitmap_to_best_kind(pf, count);
+            klen = 3;
         } else {
-            int n = get_u16(p + 1);
-            if (n >= 1 && (size_t)(p - bc) + 3 + (size_t)n * 4 <= bc_len) {
-                re_pf_fold_range_to_bitmap(pf, p + 3, n, is_unicode, &count);
-                re_pf_bitmap_to_best_kind(pf, count);
-            }
+            n = get_u16(p + 1);
+            if (n < 1 || (size_t)(p - bc) + 3 + (size_t)n * 4 > bc_len)
+                return;
+            klen = 3 + (size_t)n * 4;
         }
+        /* best_kind writes ch only when count==0 and set_len only when <=8, so
+           without these the cache would store (and restore) indeterminate bytes. */
+        pf->ch = 0;
+        pf->set_len = 0;
+
+        if (klen <= RE_PF_FOLD_KEY_MAX) {
+            hash = re_pf_fold_hash(p, klen, is_unicode);
+            if (re_pf_fold_cache_get(pf, p, klen, is_unicode, hash))
+                return;
+        }
+        /* Gate the BUILD, not the use: the enumeration is ~128 binary searches
+           through case_conv_table1, a cache hit is one memcmp. A /g loop's
+           first call has the whole subject, so it fills the entry. */
+        if (subject_len < RE_PF_CASE_MIN)
+            return;
+
+        if (op == REOP_char_i)
+            re_pf_fold_char_to_bitmap(pf, get_u16(p + 1), is_unicode, &count);
+        else
+            re_pf_fold_range_to_bitmap(pf, p + 3, n, is_unicode, &count);
+        re_pf_bitmap_to_best_kind(pf, count);
+
+        if (klen <= RE_PF_FOLD_KEY_MAX)
+            re_pf_fold_cache_put(pf, p, klen, is_unicode, hash);
         return;
     }
 
