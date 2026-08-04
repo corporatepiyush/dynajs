@@ -157,8 +157,22 @@ const TMP = "/tmp/dynajs_optguide_test";
     const alt = (a, b) => { const t = performance.now();
         for (let i = 0; i < N; i++) { a.lastIndex = 0; a.exec(hay); b.lastIndex = 0; b.exec(hay); }
         return performance.now() - t; };
+    /* A RATIO OF WALL-CLOCK TIMES IS NOT PORTABLE ACROSS BUILDS. Under ASan the
+       same loop runs an order of magnitude slower and far noisier, and this
+       assertion read 2.19x on an engine where the uninstrumented build reads
+       0.99x -- a test failing for a reason that is not a bug. Calibrate first
+       and SAY SO when the environment cannot support the measurement, rather
+       than dropping the case silently or leaving it to flake. */
+    const calib = solo(/get/i);
+    const instrumented = calib > 150;   /* ms for N execs; ~15 uninstrumented */
+    if (instrumented) {
+        print("  (skipping the fold-cache timing ratio: this build takes " +
+              calib.toFixed(0) + "ms for " + N + " execs, ~10x the uninstrumented " +
+              "cost, so a ratio here measures the instrumentation)");
+    }
     for (const [nm, a, b] of [["get/order", /get/i, /order/i],
                               ["a/i", /a/i, /i/i], ["q/y", /q/i, /y/i]]) {
+        if (instrumented) continue;
         let s = Infinity, m = Infinity;
         for (let k = 0; k < 3; k++) { s = Math.min(s, solo(a) + solo(b)); m = Math.min(m, alt(a, b)); }
         ok(m / s < 1.6, "regexp fold cache: alternating " + nm + " must not thrash (" +
