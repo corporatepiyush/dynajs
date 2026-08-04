@@ -574,6 +574,13 @@ static JSValue JS_ReadFunctionTag(BCReaderState *s)
         goto fail;
     if (bc_get_leb128_int(s, &local_count))
         goto fail;
+    /* A negative count sign-extends into the uint64 function_size accumulator
+       below and SUBTRACTS: byte_code_len = -N shrinks the js_mallocz by N
+       bytes while the memcpy writes offsetof(debug) -- a heap overflow. */
+    if (bc.closure_var_count < 0 || bc.cpool_count < 0 || bc.byte_code_len < 0) {
+        JS_ThrowInternalError(ctx, "invalid function bytecode (negative count)");
+        goto fail;
+    }
     /* local_count sizes the vardefs array, but free_function_bytecode walks it
        over (arg_count + var_count); a malformed blob with a smaller local_count
        would overflow the array on the reader's own free path. Reject it here,

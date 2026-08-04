@@ -420,8 +420,11 @@ static JSValue dyn_dur_tostring(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
     tp_dur_t *p = (tp_dur_t *)dyn_plain_get(ctx, this_val, dyn_dur_class_id);
-    char buf[64];
-    int off = 0;
+    /* Worst case is INT64_MIN in every component, printed by magnitude:
+       "-P768614336404564Y8M9223372036854775808DT2562047788H12M15.808S"
+       is about 66 chars; buf was 64 and off was never bounds-checked. */
+    char buf[96];
+    int off = 0, neg = 0;
     int64_t mo, d, ms;
     (void)argc; (void)argv;
 
@@ -432,32 +435,51 @@ static JSValue dyn_dur_tostring(JSContext *ctx, JSValueConst this_val,
     mo = p->months; d = p->days; ms = p->ms_part;
     if (mo < 0 || (mo == 0 && d < 0) || (mo == 0 && d == 0 && ms < 0)) {
         buf[off++] = '-';
-        mo = -mo; d = -d; ms = -ms;
+        neg = 1;
     }
     buf[off++] = 'P';
-    if (mo / 12) off += snprintf(buf + off, sizeof buf - off, "%lldY",
-                                 (long long)(mo / 12));
-    if (mo % 12) off += snprintf(buf + off, sizeof buf - off, "%lldM",
-                                 (long long)(mo % 12));
-    if (d)       off += snprintf(buf + off, sizeof buf - off, "%lldD",
-                                 (long long)d);
+    /* Magnitude without the -INT64_MIN UB. */
+#define DUR_MAG(v) ((uint64_t)((v) < 0 ? (uint64_t)(-((v) + 1)) + 1 : (uint64_t)(v)))
+    /* With a leading '-', components print as magnitudes (the old code instead
+       negated everything, emitting invalid "-P5M-10D" for mixed signs and
+       hitting UB on INT64_MIN). Without one, components print signed, as
+       before. */
+#define DUR_COMP(v, div, suffix)                                               \
+    do {                                                                       \
+        if (neg)                                                               \
+            off += snprintf(buf + off, sizeof buf - off, "%llu" suffix,        \
+                            (unsigned long long)(DUR_MAG(v) / (div)));         \
+        else                                                                   \
+            off += snprintf(buf + off, sizeof buf - off, "%lld" suffix,        \
+                            (long long)((v) / (div)));                         \
+    } while (0)
+    if (mo / 12) DUR_COMP(mo, 12, "Y");
+    if (mo % 12) DUR_COMP(mo % 12, 1, "M");
+    if (d)       DUR_COMP(d, 1, "D");
     if (ms) {   /* ISO 8601 puts a T before any time component */
         int64_t h = ms / 3600000, mi = ms / 60000 % 60;
         int64_t sec = ms / 1000 % 60, mss = ms % 1000;
         buf[off++] = 'T';
-        if (h)  off += snprintf(buf + off, sizeof buf - off, "%lldH", (long long)h);
-        if (mi) off += snprintf(buf + off, sizeof buf - off, "%lldM", (long long)mi);
+        if (h)  DUR_COMP(h, 1, "H");
+        if (mi) DUR_COMP(mi, 1, "M");
         if (sec || mss) {
-            if (mss)
-                off += snprintf(buf + off, sizeof buf - off, "%lld.%03lldS",
-                                (long long)sec, (long long)mss);
-            else
-                off += snprintf(buf + off, sizeof buf - off, "%lldS",
-                                (long long)sec);
+            if (mss) {
+                if (neg)
+                    off += snprintf(buf + off, sizeof buf - off, "%llu.%03lluS",
+                                    (unsigned long long)DUR_MAG(sec),
+                                    (unsigned long long)(DUR_MAG(mss) % 1000));
+                else
+                    off += snprintf(buf + off, sizeof buf - off, "%lld.%03lldS",
+                                    (long long)sec, (long long)mss);
+            } else {
+                DUR_COMP(sec, 1, "S");
+            }
         }
     }
+#undef DUR_COMP
+#undef DUR_MAG
     buf[off] = '\0';
-    return JS_NewString(ctx, buf);
+    return JS_NewStringLen(ctx, buf, off);
 }
 
 static const JSCFunctionListEntry dyn_pdate_proto[] = {
