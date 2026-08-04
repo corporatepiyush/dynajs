@@ -77,6 +77,12 @@ struct dyn_tcp {
        would be uncollectable. */
     JSValue self_pending;
 
+    /* The connect's conn is NOT on `conns` yet -- tcp_conn_start links it only
+       from tcp_on_connect -- so tcp_detach_conns walks straight past it and a
+       close() mid-connect leaves an armed fd whose udata points at freed
+       memory. Detached separately. */
+    dyn_tcp_conn_t *pending_conn;
+
     /* ---- bounds. A peer that opens connections and holds them silently
        costs a descriptor, a calloc and a JS object each, and before this
        nothing capped the count or reclaimed an idle one (CWE-400). App has
@@ -347,6 +353,10 @@ static int tls_flush(dyn_tcp_conn_t *c)
 {
     uint8_t out[16384];
     int n;
+    /* Detached by dispose: no socket to flush to and no owner to read. Not an
+       error -- callers read -1 as a handshake failure. */
+    if (c->closed || !c->owner)
+        return 0;
     while ((n = dyn_tls_pull(c->tls, out, sizeof out)) > 0) {
         if (dyn_aio_send(c->owner->aio, c->fd, out, (unsigned)n, 0,
                          NULL, NULL) < 0)
@@ -487,7 +497,14 @@ static int tcp_setup_tls(JSContext *ctx, dyn_tcp_t *t, JSValueConst opts,
    apart between them. */
 static void tcp_deliver(dyn_tcp_conn_t *c, const uint8_t *buf, unsigned len)
 {
-    JSContext *ctx = c->owner->ctx;
+    JSContext *ctx;
+    /* A handler on this stack can have closed the server: the TLS record loop
+       re-enters here for the SECOND record after tcp_detach_conns nulled the
+       owner. A NULL deref here does not reliably fault -- it can re-execute
+       forever at 100% CPU with no signal. */
+    if (c->closed || !c->owner)
+        return;
+    ctx = c->owner->ctx;
     if (JS_IsFunction(ctx, c->owner->h_data) && !JS_IsUndefined(c->jsobj)) {
         /* A COPY, not a view: the adapter recycles its shared recv buffer as
          * soon as this returns, and a JS handler can retain what it is given.
@@ -689,9 +706,20 @@ static void tcp_on_connect(dyn_aio_t *aio, int res, const uint8_t *buf,
                            unsigned len, void *ud)
 {
     dyn_tcp_conn_t *c = (dyn_tcp_conn_t *)ud;
-    dyn_tcp_t *t = c->owner;
-    JSContext *ctx = t->ctx;
+    dyn_tcp_t *t;
+    JSContext *ctx;
     (void)aio; (void)buf; (void)len;
+
+    /* The server was disposed while this connect was in flight: dispose
+       detached us and closed the fd, so there is nothing to report to and
+       nobody left owning this struct. */
+    if (!c->owner) {
+        free(c);
+        return;
+    }
+    t = c->owner;
+    t->pending_conn = NULL;         /* the operation has landed */
+    ctx = t->ctx;
 
     /* Disarm FIRST and on every path: a deadline left armed past completion
      * makes the sweep tear down a healthy connection some time later. */
@@ -744,6 +772,18 @@ static void tcp_detach_conns(dyn_tcp_t *t)
     JSContext *ctx = t->ctx;
     dyn_tcp_conn_t *c = t->conns, *next;
 
+    /* The in-flight connect first: it is NOT on this list. Ownership passes to
+       the completion, which sees a NULL owner and frees the struct -- freeing
+       it here instead would hand the reactor freed memory. */
+    if (t->pending_conn) {
+        dyn_tcp_conn_t *pc = t->pending_conn;
+        t->pending_conn = NULL;
+        pc->closed = 1;
+        pc->owner = NULL;
+        if (t->aio && pc->fd >= 0)
+            dyn_aio_close(t->aio, pc->fd);
+        pc->fd = -1;
+    }
     t->conns = NULL;
     t->nconns = 0;
     while (c) {
@@ -1127,11 +1167,16 @@ static JSValue dyn_tcp_connect_method(JSContext *ctx, JSValueConst this_val,
         return JS_ThrowInternalError(ctx, "connect: %s", strerror(errno));
     }
     c->fd = fd;
+    t->pending_conn = c;        /* not on t->conns until tcp_on_connect */
     t->started = 1;
     /* Arm AFTER the connect is submitted: a deadline armed earlier could fire
      * against a socket that does not exist yet. */
     if (tcp_arm_sweep(t) < 0) {
-        free(c);
+        /* `c` is already the reactor's completion udata: freeing it here hands
+           tcp_on_connect freed memory on the next drain. Close the fd to
+           retire the operation and let dispose detach the struct. */
+        dyn_aio_close(t->aio, fd);
+        c->fd = -1;
         dyn_tcp_dispose(t);
         return JS_ThrowInternalError(ctx,
             "connect: the backend cannot arm a clock, so connectTimeoutMs "
