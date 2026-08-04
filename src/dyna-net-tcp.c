@@ -736,6 +736,33 @@ static void tcp_on_connect(dyn_aio_t *aio, int res, const uint8_t *buf,
 
 /* ---- TCPServer -------------------------------------------------------- */
 
+/* Detach every live connection from a server being freed. The reactor is
+   SHARED, so a connection left armed delivers its next event into a freed
+   dyn_tcp_t -- and conn.write() reaches the same freed pointer from JS. */
+static void tcp_detach_conns(dyn_tcp_t *t)
+{
+    JSContext *ctx = t->ctx;
+    dyn_tcp_conn_t *c = t->conns, *next;
+
+    t->conns = NULL;
+    t->nconns = 0;
+    while (c) {
+        next = c->lnext;                 /* read first: the unref can free c */
+        c->lnext = c->lprev = NULL;
+        if (!c->closed) {
+            c->closed = 1;               /* the guard every owner read sits behind */
+            if (t->aio && c->fd >= 0)
+                dyn_aio_close(t->aio, c->fd);
+            c->fd = -1;
+            c->owner = NULL;
+            tcp_conn_unref(ctx, c);      /* the live socket's own ref */
+        } else {
+            c->owner = NULL;
+        }
+        c = next;
+    }
+}
+
 static void dyn_tcp_dispose(void *native)
 {
     dyn_tcp_t *t = (dyn_tcp_t *)native;
@@ -751,6 +778,9 @@ static void dyn_tcp_dispose(void *native)
         dyn_net_off_drain(t);   /* keyed by udata; must go before the free */
         t->hooked = 0;
     }
+    /* BEFORE the reactor release: detaching needs t->aio, and a connection left
+       armed on the shared reactor is a use-after-free on its next event. */
+    tcp_detach_conns(t);
     if (t->aio) {
         if (t->listen_fd >= 0)
             dyn_aio_close(t->aio, t->listen_fd);
