@@ -225,21 +225,131 @@ static int venc_array(venc_t *e, JSValueConst v)
     return 0;
 }
 
-static int venc_atom_less(JSContext *ctx, JSAtom a, JSAtom b)
+typedef struct {
+    JSAtom      atom;               /* borrowed from the caller's table */
+    const char *s;
+    size_t      len;
+    uint32_t    idx;
+    int         owned;              /* s must reach JS_FreeCString */
+} venc_key_t;
+
+/* RFC 8949 4.2.1 for text keys: shorter first, then bytewise. The index is the
+   last term, so the order is TOTAL and qsort's instability cannot show. len is
+   the reported length, not strlen: a NUL-bearing key must not sort truncated. */
+static int venc_key_cmp(const void *pa, const void *pb)
 {
-    const char *sa = JS_AtomToCString(ctx, a), *sb = JS_AtomToCString(ctx, b);
-    int r = 0;
-    if (sa && sb) {
-        size_t la = strlen(sa), lb = strlen(sb);
-        /* RFC 8949 canonical order: shorter first, then bytewise. */
-        r = la != lb ? (la < lb) : (memcmp(sa, sb, la) < 0);
-    }
-    if (sa) JS_FreeCString(ctx, sa);
-    if (sb) JS_FreeCString(ctx, sb);
-    return r;
+    const venc_key_t *a = (const venc_key_t *)pa;
+    const venc_key_t *b = (const venc_key_t *)pb;
+    int c;
+
+    if (a->len != b->len)
+        return a->len < b->len ? -1 : 1;
+    c = a->len ? memcmp(a->s, b->s, a->len) : 0;
+    if (c != 0)
+        return c;
+    return a->idx < b->idx ? -1 : (a->idx > b->idx);
+}
+
+/* Atom -> bytes ONCE per key, and the same bytes the emit loop writes. The
+   borrowed form points into the atom, which the caller keeps a reference to. */
+static int venc_key_bytes(JSContext *ctx, JSAtom atom, uint32_t idx,
+                          venc_key_t *k)
+{
+    k->atom  = atom;
+    k->idx   = idx;
+    k->owned = 0;
+    k->len   = 0;
+    k->s = JS_AtomBorrowASCII(ctx, &k->len, atom);
+    if (k->s)
+        return 0;
+    k->s = JS_AtomToCStringLen(ctx, &k->len, atom);
+    if (!k->s)
+        return -1;
+    k->owned = 1;
+    return 0;
+}
+
+static void venc_keys_free(JSContext *ctx, venc_key_t *ks, uint32_t built)
+{
+    uint32_t i;
+    for (i = 0; i < built; i++)
+        if (ks[i].owned)
+            JS_FreeCString(ctx, ks[i].s);
+    free(ks);
 }
 
 #define VENC_FAST_KEYS 128       /* on the stack; beyond it, the general path */
+
+/* One pair. The key bytes are materialized by the caller, never here. */
+static int venc_kv(venc_t *e, JSValueConst v, const char *ks, size_t klen,
+                   JSAtom atom)
+{
+    JSValue val;
+    int rc;
+
+    venc_len(e, 0, klen);
+    vb_write(&e->b, ks, klen);
+    val = JS_GetProperty(e->ctx, v, atom);
+    if (JS_IsException(val))
+        return -1;
+    rc = venc_value(e, val);
+    JS_FreeValue(e->ctx, val);
+    return rc;
+}
+
+/* Canonical form. Materializing once and sorting bytes replaces an insertion
+   sort whose every comparison built and freed two heap strings. */
+static int venc_map_sorted(venc_t *e, JSValueConst v, JSPropertyEnum *tab,
+                           uint32_t len)
+{
+    venc_key_t *keys;
+    uint32_t built = 0, k;
+    int rc = 0;
+
+    keys = (venc_key_t *)malloc((len ? len : 1) * sizeof *keys);
+    if (!keys) {
+        JS_ThrowOutOfMemory(e->ctx);
+        return -1;
+    }
+    for (built = 0; built < len; built++)
+        if (venc_key_bytes(e->ctx, tab[built].atom, built, &keys[built]) < 0) {
+            rc = -1;
+            break;
+        }
+    if (rc == 0) {
+        qsort(keys, len, sizeof *keys, venc_key_cmp);
+        venc_len(e, 3, len);
+        for (k = 0; k < len && rc == 0; k++)
+            rc = venc_kv(e, v, keys[k].s, keys[k].len, keys[k].atom);
+    }
+    venc_keys_free(e->ctx, keys, built);
+    return rc;
+}
+
+/* Unsorted form: borrow per key inside the loop, nothing held across keys. */
+static int venc_map_plain(venc_t *e, JSValueConst v, JSPropertyEnum *tab,
+                          uint32_t len)
+{
+    uint32_t k;
+    int rc = 0;
+
+    venc_len(e, 3, len);
+    for (k = 0; k < len && rc == 0; k++) {
+        size_t klen;
+        const char *owned = NULL;
+        const char *ks = JS_AtomBorrowASCII(e->ctx, &klen, tab[k].atom);
+        if (!ks) {          /* not already UTF-8: convert, and pay for it */
+            owned = JS_AtomToCStringLen(e->ctx, &klen, tab[k].atom);
+            ks = owned;
+        }
+        if (!ks)
+            return -1;
+        rc = venc_kv(e, v, ks, klen, tab[k].atom);
+        if (owned)
+            JS_FreeCString(e->ctx, owned);
+    }
+    return rc;
+}
 
 static int venc_object(venc_t *e, JSValueConst v)
 {
@@ -266,40 +376,8 @@ static int venc_object(venc_t *e, JSValueConst v)
                                    JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY) < 0)
             return -1;
     }
-    rc = 0;
-    if (e->sorted) {                    /* canonical form: insertion sort, n is
-                                           small and this must be stable */
-        uint32_t i, j;
-        for (i = 1; i < len; i++) {
-            JSPropertyEnum t = tab[i];
-            for (j = i; j > 0 && venc_atom_less(e->ctx, t.atom, tab[j - 1].atom); j--)
-                tab[j] = tab[j - 1];
-            tab[j] = t;
-        }
-    }
-    venc_len(e, 3, len);
-    for (k = 0; k < len && rc == 0; k++) {
-        /* Atom -> bytes in ONE step. Going through JS_AtomToString allocates a
-           JSString whose only purpose is to be converted and freed, which is a
-           heap round trip per key on the hot path. */
-        size_t klen;
-        const char *owned = NULL;
-        const char *ks = JS_AtomBorrowASCII(e->ctx, &klen, tab[k].atom);
-        JSValue val;
-        if (!ks) {          /* not already UTF-8: convert, and pay for it */
-            owned = JS_AtomToCStringLen(e->ctx, &klen, tab[k].atom);
-            ks = owned;
-        }
-        if (!ks) { rc = -1; break; }
-        venc_len(e, 0, klen);
-        vb_write(&e->b, ks, klen);
-        if (owned)
-            JS_FreeCString(e->ctx, owned);
-        val = JS_GetProperty(e->ctx, v, tab[k].atom);
-        if (JS_IsException(val)) { rc = -1; break; }
-        rc = venc_value(e, val);
-        JS_FreeValue(e->ctx, val);
-    }
+    rc = e->sorted ? venc_map_sorted(e, v, tab, len)
+                   : venc_map_plain(e, v, tab, len);
     if (owns_tab == 1) {
         JS_FreePropertyEnum(e->ctx, tab, len);
     } else {
