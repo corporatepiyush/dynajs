@@ -1267,6 +1267,7 @@ NATIVE_TESTS=tests/test_algo_blackbox.js tests/test_http_security.js tests/test_
   tests/test_net_rss.js \
   tests/test_crypto.js tests/test_crypto_reuse.js tests/test_hash_split.js tests/test_csv.js tests/test_dataframe.js \
   tests/test_optguide_regressions.js \
+  tests/test_http_async_bounds.js \
   tests/test_encoding.js \
   tests/test_file.js tests/test_file_handle.js tests/test_file_async.js \
   tests/test_matcher.js tests/test_approx_match.js tests/test_diff.js \

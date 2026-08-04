@@ -1927,8 +1927,11 @@ static JSClassID dyn_http_async_class_id;
 
 typedef struct dyn_http_async dyn_http_async_t;
 
+#define DYN_ACONN_IDLE_MS_DEFAULT   30000  /* matches App's idleTimeoutMs */
+#define DYN_ACONN_MAX_CONNS_DEFAULT 8192   /* 0 = unbounded, opt-out only */
+
 /* Per-connection non-blocking state machine. Owns its two buffers. */
-typedef struct {
+typedef struct dyn_aconn_s {
     dyn_http_async_t *srv;
     int fd;
     dyn_bytes_t in;   /* accumulated request bytes (may hold pipelined extras) */
@@ -1937,6 +1940,12 @@ typedef struct {
     size_t hdr_scan_from; /* where the CRLFCRLF search resumes (see the pump) */
     int closing;      /* close once `out` is fully flushed */
     int nreq;
+    /* Stamped when a request is CONSUMED, never on byte arrival: a slowloris
+       delivers bytes forever without completing anything, so a read-callback
+       stamp makes the attacker look permanently active and the timeout inert
+       while appearing implemented. */
+    uint64_t last_ms;
+    struct dyn_aconn_s *lnext, *lprev;   /* server live list, reactor thread */
 } dyn_aconn_t;
 
 struct dyn_http_async {
@@ -1946,6 +1955,16 @@ struct dyn_http_async {
 
     dyn_route_t *routes; /* immutable after start */
     size_t n_routes;
+
+    /* Both immutable after start: written by the ctor on the JS thread, read
+       only by the reactor thread. 0 disables either defence. A security
+       default that is opt-in protects nobody, so both default ON. */
+    uint64_t idle_ms;
+    int max_conns;
+    dyn_aconn_t *live;       /* reactor-thread only */
+    int nconns;
+    uint64_t last_sweep_ms;
+    atomic_ullong n_refused; /* dropped by max_conns, observable from JS */
 
     dyn_evloop_t *loop;      /* created on the reactor thread (readiness path) */
     void *uring;             /* dyn_uring_ctx* when the io_uring reactor is live */
@@ -1993,11 +2012,51 @@ static void dyn_aconn_free(dyn_aconn_t *c)
 }
 
 /* Drop a connection: unregister, close, free. */
+/* Intrusive live list, reactor thread only. Unlink is idempotent. */
+static void dyn_aconn_link(dyn_http_async_t *s, dyn_aconn_t *c)
+{
+    c->lnext = s->live;
+    if (s->live)
+        s->live->lprev = c;
+    s->live = c;
+    s->nconns++;
+}
+
+static void dyn_aconn_unlink(dyn_http_async_t *s, dyn_aconn_t *c)
+{
+    if (c->lprev)
+        c->lprev->lnext = c->lnext;
+    else if (s->live == c)
+        s->live = c->lnext;
+    else
+        return;                          /* never linked */
+    if (c->lnext)
+        c->lnext->lprev = c->lprev;
+    c->lprev = c->lnext = NULL;
+    if (s->nconns > 0)
+        s->nconns--;
+}
+
 static void dyn_aconn_close(dyn_evloop_t *lp, dyn_aconn_t *c)
 {
+    dyn_aconn_unlink(c->srv, c);
     dyn_evloop_del(lp, c->fd);
     close(c->fd);
     dyn_aconn_free(c);
+}
+
+/* Close every connection idle past idle_ms. Driven by the reactor's own 200 ms
+   poll tick, never by traffic: a peer that connects and then sends nothing
+   generates no event, and it is exactly the one that must be swept. */
+static void dyn_aconn_sweep(dyn_evloop_t *lp, dyn_http_async_t *s, uint64_t now)
+{
+    dyn_aconn_t *c = s->live, *next;
+    while (c) {
+        next = c->lnext;                 /* close frees c */
+        if (now - c->last_ms >= s->idle_ms)
+            dyn_aconn_close(lp, c);
+        c = next;
+    }
 }
 
 /* Parse as many complete pipelined requests as `c->in` holds, appending a
@@ -2099,8 +2158,15 @@ static int dyn_http_pump(dyn_bytes_t *in, dyn_bytes_t *out, int *pnreq,
 
 static int dyn_aconn_process(dyn_aconn_t *c)
 {
-    return dyn_http_pump(&c->in, &c->out, &c->nreq, &c->hdr_scan_from,
-                         c->srv->routes, c->srv->n_routes);
+    size_t before = c->in.len;
+    int close_after = dyn_http_pump(&c->in, &c->out, &c->nreq,
+                                    &c->hdr_scan_from,
+                                    c->srv->routes, c->srv->n_routes);
+    /* The pump consumes only WHOLE requests, so a shrinking `in` is the one
+       unambiguous signal that the peer made protocol progress. */
+    if (c->in.len < before)
+        c->last_ms = dyn_timer_now_ms();
+    return close_after;
 }
 
 /* Attempt to flush `c->out`; on full drain either close or resume reading.
@@ -2196,6 +2262,14 @@ static void dyn_alisten_cb(dyn_evloop_t *lp, int fd, int events, void *udata)
                 continue;
             break; /* EAGAIN: no more pending connections */
         }
+        /* Refuse BEFORE allocating: the cap exists so a peer cannot make the
+           process spend an fd and a buffer pair per connection. Accept-then-
+           close is the refusal; leaving it queued spins a level-triggered fd. */
+        if (s->max_conns && s->nconns >= s->max_conns) {
+            atomic_fetch_add_explicit(&s->n_refused, 1, memory_order_relaxed);
+            close(cfd);
+            continue;
+        }
         if (dyn_set_nonblock(cfd) < 0) {
             close(cfd);
             continue;
@@ -2208,10 +2282,13 @@ static void dyn_alisten_cb(dyn_evloop_t *lp, int fd, int events, void *udata)
         }
         c->srv = s;
         c->fd = cfd;
+        c->last_ms = dyn_timer_now_ms();
         if (dyn_evloop_add(lp, cfd, DYN_EV_READ, dyn_aconn_cb, c) < 0) {
             close(cfd);
             dyn_aconn_free(c);
+            continue;
         }
+        dyn_aconn_link(s, c);
     }
 }
 
@@ -2572,6 +2649,15 @@ static void *dyn_http_async_reactor(void *arg)
     atomic_store_explicit(&s->spawn_ok, 1, memory_order_release);
 
     while (!atomic_load_explicit(&s->stop_flag, memory_order_relaxed)) {
+        {   /* The 200 ms tick is unconditional, so the sweep runs on a clock
+               rather than on traffic -- the quiet server that needs it most is
+               exactly the one that generates no events. 1 Hz: it is O(live). */
+            uint64_t now = dyn_timer_now_ms();
+            if (s->idle_ms && now - s->last_sweep_ms >= 1000) {
+                s->last_sweep_ms = now;
+                dyn_aconn_sweep(s->loop, s, now);
+            }
+        }
         if (dyn_evloop_poll(s->loop, 200) < 0) /* tick to observe stop_flag */
             break;
     }
@@ -2617,7 +2703,8 @@ static JSValue dyn_http_async_ctor(JSContext *ctx, JSValueConst new_target,
     JSValue opts, routes_val = JS_UNDEFINED;
     const char *host_c = NULL;
     char *host_dup = NULL;
-    int32_t port = 0, backlog = 0;
+    int32_t port = 0, backlog = 0, max_conns = DYN_ACONN_MAX_CONNS_DEFAULT;
+    int64_t idle_ms = DYN_ACONN_IDLE_MS_DEFAULT;
     JSPropertyEnum *tab = NULL;
     uint32_t n_routes = 0, i;
     int listen_fd = -1;
@@ -2652,6 +2739,25 @@ static JSValue dyn_http_async_ctor(JSContext *ctx, JSValueConst new_target,
             JS_FreeCString(ctx, host_c);
         }
         JS_FreeValue(ctx, v);
+        /* Both default ON: the insecure behaviour was the incumbent, and a
+           defence shipped behind a flag that defaults off changes nothing for
+           every existing caller. 0 is the explicit opt-out. */
+        v = JS_GetPropertyStr(ctx, opts, "idleTimeoutMs");
+        if (!JS_IsUndefined(v) && !JS_IsNull(v) && JS_ToInt64(ctx, &idle_ms, v)) {
+            JS_FreeValue(ctx, v);
+            free(host_dup);
+            return JS_EXCEPTION;
+        }
+        JS_FreeValue(ctx, v);
+        if (idle_ms < 0) idle_ms = 0;
+        v = JS_GetPropertyStr(ctx, opts, "maxConns");
+        if (!JS_IsUndefined(v) && !JS_IsNull(v) && JS_ToInt32(ctx, &max_conns, v)) {
+            JS_FreeValue(ctx, v);
+            free(host_dup);
+            return JS_EXCEPTION;
+        }
+        JS_FreeValue(ctx, v);
+        if (max_conns < 0) max_conns = 0;
         routes_val = JS_GetPropertyStr(ctx, opts, "routes");
         if (JS_IsException(routes_val)) {
             free(host_dup);
@@ -2677,6 +2783,9 @@ static JSValue dyn_http_async_ctor(JSContext *ctx, JSValueConst new_target,
     s->backlog = backlog;
     atomic_init(&s->stop_flag, 0);
     atomic_init(&s->spawn_ok, 0);
+    atomic_init(&s->n_refused, 0);
+    s->idle_ms = (uint64_t)idle_ms;
+    s->max_conns = max_conns;
 
     if (JS_IsObject(routes_val)) {
         if (JS_GetOwnPropertyNames(ctx, &tab, &n_routes, routes_val,
