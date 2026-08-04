@@ -848,10 +848,26 @@ void JS_FreeCString(JSContext *ctx, const char *ptr)
     JS_FreeValue(ctx, JS_MKPTR(JS_TAG_STRING, p));
 }
 
+/* Widen through a uint16_t array, never shifts: the chunk compare is then
+   byte-order independent. memcpy because str16 is only 4-byte aligned, and
+   js_string_rope_compare passes arbitrary offsets. */
 static int memcmp16_8(const uint16_t *src1, const uint8_t *src2, int len)
 {
-    int c, i;
-    for(i = 0; i < len; i++) {
+    int c, i = 0, k;
+
+    for (; i + 8 <= len; i += 8) {
+        uint16_t w[8];
+        uint64_t a0, a1, b0, b1;
+        for (k = 0; k < 8; k++)
+            w[k] = src2[i + k];
+        memcpy(&a0, src1 + i,     8);
+        memcpy(&a1, src1 + i + 4, 8);
+        memcpy(&b0, w,     8);
+        memcpy(&b1, w + 4, 8);
+        if ((a0 ^ b0) | (a1 ^ b1))
+            break;
+    }
+    for (; i < len; i++) {
         c = src1[i] - src2[i];
         if (c != 0)
             return c;
@@ -859,10 +875,29 @@ static int memcmp16_8(const uint16_t *src1, const uint8_t *src2, int len)
     return 0;
 }
 
+/* Chunks locate the first DIFFERING chunk; the element-wise tail resolves the
+   ordering inside it, so no byte-order branch exists. memcpy: see above. */
 static int memcmp16(const uint16_t *src1, const uint16_t *src2, int len)
 {
-    int c, i;
-    for(i = 0; i < len; i++) {
+    int c, i = 0;
+
+    for (; i + 8 <= len; i += 8) {
+        uint64_t a0, a1, b0, b1;
+        memcpy(&a0, src1 + i,     8);
+        memcpy(&a1, src1 + i + 4, 8);
+        memcpy(&b0, src2 + i,     8);
+        memcpy(&b1, src2 + i + 4, 8);
+        if ((a0 ^ b0) | (a1 ^ b1))
+            break;
+    }
+    for (; i + 4 <= len; i += 4) {
+        uint64_t a, b;
+        memcpy(&a, src1 + i, 8);
+        memcpy(&b, src2 + i, 8);
+        if (a != b)
+            break;
+    }
+    for (; i < len; i++) {
         c = src1[i] - src2[i];
         if (c != 0)
             return c;
@@ -896,6 +931,14 @@ static BOOL js_string_eq(JSContext *ctx,
         return FALSE;
     if (p1 == p2)
         return TRUE;
+    /* Equality only, so libc memcmp over the raw units is legal and gets the
+       SIMD path; identical layouts make byte equality element equality. */
+    if (likely(!p1->is_wide_char)) {
+        if (likely(!p2->is_wide_char))
+            return memcmp(p1->u.str8, p2->u.str8, p1->len) == 0;
+    } else if (p2->is_wide_char) {
+        return memcmp(p1->u.str16, p2->u.str16, (size_t)p1->len * 2) == 0;
+    }
     return js_string_memcmp(p1, 0, p2, 0, p1->len) == 0;
 }
 
