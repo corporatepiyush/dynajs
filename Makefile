@@ -1804,7 +1804,7 @@ check-api:
 # example can reach. `Serializer.decode(...)` survived the class being deleted
 # because every sweep looked at docs and tests, not at throw sites.
 check-error-ids:
-	@python3 tools/check-error-identifiers.py ./dynajs$(EXE)
+	@OBJDIR=$(OBJDIR) python3 tools/check-error-identifiers.py ./dynajs$(EXE)
 
 # Every `](#...)` in the docs must resolve to a heading in the same file. A
 # rename silently breaks them, and so does a heading edit. GitHub keeps `_` in

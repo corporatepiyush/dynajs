@@ -154,12 +154,37 @@ SIG_KEYS = {
 }
 
 
+def config_sig_path():
+    """Where this build's signature lives. A VARIANT build has its own object
+    directory -- OBJDIR is .obj/ubsan, .obj/asan, .obj/tsan -- so the hardcoded
+    .obj/.config-sig was absent under every sanitizer, built_configs returned
+    None, and "skip nothing" reported every CONFIG-gated name as rot. That is a
+    warning which appears ALWAYS in those builds, i.e. indistinguishable from a
+    real one, which is the exact failure this file's own comments warn about."""
+    env = os.environ.get("OBJDIR")
+    cands = ([os.path.join(env, ".config-sig")] if env else []) + [".obj/.config-sig"]
+    for c in cands:
+        if os.path.exists(c):
+            return c
+    # Last resort: the newest signature under .obj, so an out-of-tree caller
+    # still gets an answer rather than a false report.
+    found = []
+    for root, _dirs, files in os.walk(".obj"):
+        if ".config-sig" in files:
+            p = os.path.join(root, ".config-sig")
+            found.append((os.path.getmtime(p), p))
+    return max(found)[1] if found else None
+
+
 def built_configs():
     """The CONFIG_* this binary was built with, or None if unknowable."""
-    try:
-        sig = open(".obj/.config-sig").read()
-    except OSError:
+    path = config_sig_path()
+    if path is None:
         return None                     # unknown: skip nothing
+    try:
+        sig = open(path).read()
+    except OSError:
+        return None
     out = set()
     for key, val in re.findall(r"(\w+)=(\S*)", sig):
         if val and key in SIG_KEYS:
@@ -239,6 +264,10 @@ def main():
         print("check-error-identifiers: not in this build, skipped: %s"
               % ", ".join(sorted(missing_modules)))
 
+    if bad and built is None:
+        print("check-error-identifiers: NO BUILD SIGNATURE FOUND -- every "
+              "CONFIG-gated name below is reported because the build's config "
+              "is unknown, not because it rotted. Set OBJDIR or build first.")
     if bad:
         print("check-error-identifiers: %d message(s) name a non-existent API"
               % len(bad))
