@@ -540,8 +540,10 @@ simd_avx2_silu(float *restrict out, const float *restrict in,
     __m256 neg_x = _mm256_sub_ps(_mm256_setzero_ps(), x);
     __m256 exp_neg_x;
     /* Use fast exp approximation inline */
+    /* The magic is POSITIVE: a negative one double-negates against neg_x and
+       silently computes silu(-x) (see sse42/neon, which had this bug). */
     __m256i bits =
-        _mm256_cvtps_epi32(_mm256_mul_ps(neg_x, _mm256_set1_ps(-12102203.0f)));
+        _mm256_cvtps_epi32(_mm256_mul_ps(neg_x, _mm256_set1_ps(12102203.0f)));
     bits = _mm256_add_epi32(bits, _mm256_castps_si256(_mm256_set1_ps(1.0f)));
     bits = _mm256_max_epi32(bits, _mm256_setzero_si256());
     bits = _mm256_min_epi32(bits, _mm256_set1_epi32(0x7F800000));

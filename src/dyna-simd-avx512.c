@@ -521,8 +521,9 @@ simd_avx512_silu(float *restrict out, const float *restrict in,
   for (; i + 16 <= n; i += 16) {
     __m512 x = _mm512_loadu_ps(&in[i]);
     __m512 neg_x = _mm512_sub_ps(_mm512_setzero_ps(), x);
+    /* The magic is POSITIVE (see avx2/sse42 note): negative computes silu(-x). */
     __m512i bits =
-        _mm512_cvtps_epi32(_mm512_mul_ps(neg_x, _mm512_set1_ps(-12102203.0f)));
+        _mm512_cvtps_epi32(_mm512_mul_ps(neg_x, _mm512_set1_ps(12102203.0f)));
     bits = _mm512_add_epi32(bits, _mm512_castps_si512(_mm512_set1_ps(1.0f)));
     bits = _mm512_max_epi32(bits, _mm512_setzero_si512());
     bits = _mm512_min_epi32(bits, _mm512_set1_epi32(0x7F800000));

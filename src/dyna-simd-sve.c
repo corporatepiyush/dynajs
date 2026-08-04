@@ -525,7 +525,9 @@ static void simd_sve_silu(float *restrict out,
                                  const float *restrict in, size_t n) {
   svbool_t pg = svptrue_b32();
   svfloat32_t one = svdup_f32(1.0f);
-  svfloat32_t magic = svdup_f32(-12102203.0f);
+  /* POSITIVE: the multiplicand below is neg_x, so a negative magic
+     double-negates and silently computes silu(-x) (see neon/sse42). */
+  svfloat32_t magic = svdup_f32(12102203.0f);
   svfloat32_t bias = svdup_f32(1.0f);
   svint32_t zero_i = svdup_s32(0);
   svint32_t top_i = svdup_s32(0x7F800000);
