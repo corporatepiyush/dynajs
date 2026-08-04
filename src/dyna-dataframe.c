@@ -5417,6 +5417,13 @@ static int dfg_roll_extreme(const DFBound *b, const uint8_t *mask, double *dst,
    association their pinned values use. -1 means the generic macro runs. */
 #define DFG_ROLL_UNROLL 8u
 
+/* Above this window size the O(n*w) re-sum loses to an O(n) sliding sum, whose
+   association (and therefore last-ULP values) differs: small windows keep the
+   exact path so their pinned values hold, and any NON-FINITE input forces it
+   too -- a NaN rides the accumulator forever, and an Inf leaving the window
+   subtracts to NaN where the re-sum gives a finite answer. */
+#define DFG_ROLL_SLIDE_MIN 256u
+
 static int dfg_roll_sum(const DFBound *b, double *dst, uint32_t span,
                         uint32_t w, int want_mean)
 {
@@ -5433,6 +5440,26 @@ static int dfg_roll_sum(const DFBound *b, double *dst, uint32_t span,
         if (!own)
             return -1;
         df_widen(b, own, span);
+    }
+    if (w >= DFG_ROLL_SLIDE_MIN) {
+        uint32_t j;
+        int nonfinite = 0;
+        double acc = 0;
+        for (j = 0; j < span; j++)
+            nonfinite |= !isfinite(x[j]);
+        if (!nonfinite) {
+            for (i = 0; i + 1 < w; i++)
+                dst[i] = NAN;
+            for (j = 0; j < w; j++)
+                acc += x[j];
+            dst[w - 1] = want_mean ? acc / (double)w : acc;
+            for (i = w; i < span; i++) {
+                acc += x[i] - x[i - w];
+                dst[i] = want_mean ? acc / (double)w : acc;
+            }
+            free(own);
+            return 0;
+        }
     }
     for (i = 0; i + 1 < w; i++)
         dst[i] = NAN;
@@ -7603,7 +7630,7 @@ static JSValue dyn_df_group_array_v(JSContext *ctx, JSValueConst this_val,
     DataFrame *df;
     DFBound kb, vb;
     const uint8_t *mask;
-    uint32_t *cnt = NULL, *off = NULL, *gk = NULL, *fill = NULL;
+    uint32_t *cnt = NULL, *off = NULL, *gk = NULL, *fill = NULL, *head = NULL;
     double *flat = NULL, kd = 0.0;
     int ki, vi, ok;
     uint32_t i, g, n, nkeys, ngroups, cap, total = 0;
@@ -7644,8 +7671,9 @@ static JSValue dyn_df_group_array_v(JSContext *ctx, JSValueConst this_val,
     cnt = calloc(ngroups, sizeof(*cnt));
     off = calloc(ngroups + 1, sizeof(*off));
     fill = calloc(ngroups, sizeof(*fill));
-    if (!cnt || !off || !fill) {
-        free(cnt); free(off); free(fill);
+    head = calloc(ngroups, sizeof(*head));
+    if (!cnt || !off || !fill || !head) {
+        free(cnt); free(off); free(fill); free(head);
         return JS_ThrowOutOfMemory(ctx);
     }
     n = kb.n < vb.n ? kb.n : vb.n;
@@ -7665,7 +7693,7 @@ static JSValue dyn_df_group_array_v(JSContext *ctx, JSValueConst this_val,
     total = off[ngroups];
     flat = df_out_alloc(ctx, total ? total : 1, sizeof(double));
     if (!flat) {
-        free(cnt); free(off); free(fill); free(gk);
+        free(cnt); free(off); free(fill); free(head); free(gk);
         return JS_EXCEPTION;
     }
 
@@ -7681,9 +7709,10 @@ static JSValue dyn_df_group_array_v(JSContext *ctx, JSValueConst this_val,
         base = off[g];
         have = fill[g];
         if (magic == DFZ_LAST && have == cnt[g] && cnt[g]) {
-            memmove(&flat[base], &flat[base + 1],
-                    (size_t)(cnt[g] - 1) * sizeof(double));
-            flat[base + cnt[g] - 1] = v;
+            /* Circular window: the oldest slot is overwritten and the head
+               advances -- a memmove of the whole window per row was O(n*k). */
+            flat[base + head[g]] = v;
+            head[g] = (head[g] + 1) % cnt[g];
             continue;
         }
         if (have < cnt[g]) {
@@ -7701,7 +7730,7 @@ static JSValue dyn_df_group_array_v(JSContext *ctx, JSValueConst this_val,
 
     values = JS_NewArray(ctx);
     if (JS_IsException(values)) {
-        free(cnt); free(off); free(fill); free(flat);
+        free(cnt); free(off); free(fill); free(head); free(flat);
         return JS_EXCEPTION;
     }
     for (g = 0; g < nkeys; g++) {
@@ -7709,20 +7738,27 @@ static JSValue dyn_df_group_array_v(JSContext *ctx, JSValueConst this_val,
         JSValue ta;
         if (!chunk) {
             JS_FreeValue(ctx, values);
-            free(cnt); free(off); free(fill); free(flat);
+            free(cnt); free(off); free(fill); free(head); free(flat);
             return JS_EXCEPTION;
         }
-        memcpy(chunk, &flat[off[g]], (size_t)cnt[g] * sizeof(double));
+        if (magic == DFZ_LAST && head[g]) {
+            /* unwrap the circular window into arrival order */
+            uint32_t j;
+            for (j = 0; j < cnt[g]; j++)
+                chunk[j] = flat[off[g] + (head[g] + j) % cnt[g]];
+        } else {
+            memcpy(chunk, &flat[off[g]], (size_t)cnt[g] * sizeof(double));
+        }
         ta = df_to_typed_array(ctx, chunk, (size_t)cnt[g] * sizeof(double),
                                JS_TYPED_ARRAY_FLOAT64);
         if (JS_IsException(ta) ||
             JS_DefinePropertyValueUint32(ctx, values, g, ta, JS_PROP_C_W_E) < 0) {
             JS_FreeValue(ctx, values);
-            free(cnt); free(off); free(fill); free(flat);
+            free(cnt); free(off); free(fill); free(head); free(flat);
             return JS_EXCEPTION;
         }
     }
-    free(cnt); free(off); free(fill); free(flat);
+    free(cnt); free(off); free(fill); free(head); free(flat);
 
     keys = JS_NewArray(ctx);
     if (JS_IsException(keys)) {
