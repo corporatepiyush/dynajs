@@ -117,4 +117,41 @@ row("i32 _sum(SIMD)",
     () => i32.sum(),
     () => { let s = 0; for (let i = 0; i < i32.length; i++) s += i32[i]; return s; });
 
+/* --- zip: presized fast arm vs the generic property-define arm ---
+ * ZN is a tenth of N because zip allocates one pair array PER ELEMENT; at 1e6
+ * the row measures the allocator and the collector, not the change. */
+const ZN = N / 10;
+const zipA = nums.slice(0, ZN);
+const zipB = new Array(ZN);
+for (let i = 0; i < ZN; i++) zipB[i] = ZN - i;
+row("zip",
+    () => zipA.zip(zipB),
+    () => { const r = new Array(ZN); for (let i = 0; i < ZN; i++) r[i] = [zipA[i], zipB[i]]; return r; });
+
+/* CONTROL, bypass-never-fires: a hole makes the receiver a non-fast array, so
+ * this MUST take the generic arm and MUST NOT move. If it moves, the generic
+ * path was not preserved byte-for-byte and the fast arm is swallowing it. */
+const zipHoled = zipA.slice(); delete zipHoled[ZN >> 1];
+row("zip(generic)",
+    () => zipHoled.zip(zipB),
+    () => { const r = new Array(ZN); for (let i = 0; i < ZN; i++) r[i] = [zipHoled[i], zipB[i]]; return r; });
+
+/* --- median: quickselect O(n) vs the full sort it replaced ---
+ * The JS baseline is a full sort, which is what the native code USED to do, so
+ * the ratio is directly the algorithmic change. `nums` holds only 100k distinct
+ * values across 1e6 slots, so the three-way partition's equal band is well
+ * exercised rather than being a degenerate all-distinct case. */
+row("median",
+    () => nums.median(),
+    () => { const c = nums.slice().sort((a, b) => a - b); return (c[c.length / 2 - 1] + c[c.length / 2]) / 2; });
+
+/* The row where quickselect can LOSE: at n=64 the insertion-sort cutoff and the
+ * median-of-three setup are pure overhead against libc qsort on 64 doubles.
+ * Publish it either way -- reporting only the winning size is how a regression
+ * ships. */
+const small = nums.slice(0, 64);
+row("median(n=64)",
+    () => { let s = 0; for (let i = 0; i < 20000; i++) s += small.median(); return s; },
+    () => { let s = 0; for (let i = 0; i < 20000; i++) { const c = small.slice().sort((a, b) => a - b); s += (c[31] + c[32]) / 2; } return s; });
+
 print("done");
