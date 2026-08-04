@@ -978,12 +978,31 @@ static JSValue js_Date_parse(JSContext *ctx, JSValueConst this_val,
         return JS_EXCEPTION;
 
     sp = JS_VALUE_GET_STRING(s);
-    /* convert the string as a byte array */
-    for (i = 0; i < sp->len && i < (int)countof(buf) - 1; i++) {
-        c = string_get(sp, i);
-        if (c > 255)
-            c = (c == 0x2212) ? '-' : 'x';
-        buf[i] = c;
+    /* Convert the string as a byte array. Leading whitespace is skipped HERE,
+       not left for the parsers: the buffer is fixed, and silently truncating a
+       long input made Date.parse return a WRONG timestamp rather than NaN --
+       120 spaces before a valid date parsed the remains as a different day.
+       An input that still does not fit is refused, because a prefix of a date
+       is a date. */
+    {
+        uint32_t start = 0;
+        while (start < sp->len) {
+            c = string_get(sp, start);
+            if (c != ' ' && c != '\t' && c != '\n' && c != '\r' &&
+                c != '\f' && c != '\v' && c != 0xA0 && c != 0xFEFF)
+                break;
+            start++;
+        }
+        if (sp->len - start > (uint32_t)countof(buf) - 1) {
+            JS_FreeValue(ctx, s);
+            return JS_NAN;
+        }
+        for (i = 0; start + (uint32_t)i < sp->len; i++) {
+            c = string_get(sp, start + i);
+            if (c > 255)
+                c = (c == 0x2212) ? '-' : 'x';
+            buf[i] = c;
+        }
     }
     buf[i] = '\0';
     if (js_date_parse_isostring(buf, fields, &is_local)

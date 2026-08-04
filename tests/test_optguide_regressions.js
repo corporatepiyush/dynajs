@@ -472,5 +472,31 @@ const TMP = "/tmp/dynajs_optguide_test";
     }
 }
 
+/* ===================================================================
+   11. Date.parse -- a fixed buffer silently truncated a long input and
+   parsed the remains, returning a WRONG timestamp instead of NaN.
+   =================================================================== */
+{
+    const base = "Thu, 01 Jan 1970 00:00:00 GMT";
+    eq(Date.parse(base), 0, "the plain form parses to the epoch");
+    for (const pad of [1, 50, 120, 500, 5000]) {
+        eq(Date.parse(" ".repeat(pad) + base), 0,
+           "leading whitespace x" + pad + " does not change the timestamp");
+    }
+    eq(Date.parse("\t\n\r\f\v " + base), 0, "every whitespace form is skipped");
+    /* An input too long to hold is NaN, never a different date. A prefix of a
+       date is a date, which is why truncation was silent. */
+    ok(Number.isNaN(Date.parse(base + "x".repeat(500))), "an over-long input is NaN");
+    ok(Number.isNaN(Date.parse("x".repeat(500))), "long garbage is NaN");
+    /* ECMA-262 21.4.1.15: the boundaries of the time value range. */
+    eq(new Date(8.64e15).toISOString(), "+275760-09-13T00:00:00.000Z", "max Date");
+    eq(new Date(-8.64e15).toISOString(), "-271821-04-20T00:00:00.000Z", "min Date");
+    ok(Number.isNaN(new Date(8.64e15 + 1).getTime()), "one past the range is not a Date");
+    /* round trip through the two string forms */
+    for (const t of [0, 1, -1, 1e12, -1e12, 8.64e15, -8.64e15]) {
+        eq(Date.parse(new Date(t).toISOString()), t, "toISOString round-trips at " + t);
+    }
+}
+
 print("test_optguide_regressions: " + pass + " passed, " + fail + " failed");
 if (fail) throw new Error(fail + " failures");
