@@ -1934,6 +1934,7 @@ typedef struct {
     dyn_bytes_t in;   /* accumulated request bytes (may hold pipelined extras) */
     dyn_bytes_t out;  /* queued response bytes */
     size_t out_off;   /* bytes of `out` already sent */
+    size_t hdr_scan_from; /* where the CRLFCRLF search resumes (see the pump) */
     int closing;      /* close once `out` is fully flushed */
     int nreq;
 } dyn_aconn_t;
@@ -2008,6 +2009,7 @@ static void dyn_aconn_close(dyn_evloop_t *lp, dyn_aconn_t *c)
  * requests served on this connection (keep-alive cap). Returns 1 if the
  * connection should close once `out` drains, else 0. */
 static int dyn_http_pump(dyn_bytes_t *in, dyn_bytes_t *out, int *pnreq,
+                         size_t *pscan,
                          const dyn_route_t *routes, size_t n_routes)
 {
     char path[2048];
@@ -2015,13 +2017,19 @@ static int dyn_http_pump(dyn_bytes_t *in, dyn_bytes_t *out, int *pnreq,
     for (;;) {
         const char *base = in->data;
         size_t avail = in->len;
-        const char *hdr_end = dyn_memfind(base, avail, "\r\n\r\n", 4);
+        /* Resume where the last search stopped, backing up 3 bytes so a
+           terminator straddling the chunk boundary is still found. Scanning
+           from 0 on every recv was O(n^2) over dribbled headers (the App
+           path's hdr_scan_from at :4161 exists for exactly this). */
+        size_t from = *pscan < avail ? *pscan : avail;
+        const char *hdr_end = dyn_memfind(base + from, avail - from, "\r\n\r\n", 4);
         size_t head_len, body_len = 0, req_total, clv_len = 0, connv_len = 0;
         const char *cl, *conn;
         int http11, keep_alive;
         const dyn_route_t *route;
 
         if (!hdr_end) {
+            *pscan = avail >= 3 ? avail - 3 : 0;
             if (avail > DYN_ACONN_MAX_REQ)
                 return 1; /* header block too large: drop */
             return 0;     /* need more bytes */
@@ -2083,6 +2091,7 @@ static int dyn_http_pump(dyn_bytes_t *in, dyn_bytes_t *out, int *pnreq,
         /* drop the consumed request; keep any pipelined trailing bytes */
         memmove(in->data, in->data + req_total, in->len - req_total);
         in->len -= req_total;
+        *pscan = 0;   /* the next request starts its own scan */
         if (!keep_alive)
             return 1;
     }
@@ -2090,8 +2099,8 @@ static int dyn_http_pump(dyn_bytes_t *in, dyn_bytes_t *out, int *pnreq,
 
 static int dyn_aconn_process(dyn_aconn_t *c)
 {
-    return dyn_http_pump(&c->in, &c->out, &c->nreq, c->srv->routes,
-                         c->srv->n_routes);
+    return dyn_http_pump(&c->in, &c->out, &c->nreq, &c->hdr_scan_from,
+                         c->srv->routes, c->srv->n_routes);
 }
 
 /* Attempt to flush `c->out`; on full drain either close or resume reading.
@@ -2237,6 +2246,7 @@ typedef struct dyn_uconn {
     dyn_bytes_t in;   /* accumulated request bytes (copied out of pool buffers) */
     dyn_bytes_t out;  /* response bytes pending send (immutable while sending) */
     size_t out_off;
+    size_t hdr_scan_from; /* where the CRLFCRLF search resumes (see the pump) */
     int nreq;
     unsigned recv_armed : 1;
     unsigned send_inflight : 1;
@@ -2390,7 +2400,8 @@ static void dyn_ur_on_recv(dyn_uring_ctx *u, dyn_http_async_t *s,
             c->closing = 1;
         } else if (!c->send_inflight) {
             /* only touch `out` when no send references it (no realloc-under-send) */
-            if (dyn_http_pump(&c->in, &c->out, &c->nreq, s->routes, s->n_routes))
+            if (dyn_http_pump(&c->in, &c->out, &c->nreq, &c->hdr_scan_from,
+                              s->routes, s->n_routes))
                 c->closing = 1;
             if (c->out.len > c->out_off)
                 dyn_ur_submit_send(u, c);
@@ -2405,7 +2416,8 @@ static void dyn_ur_on_recv(dyn_uring_ctx *u, dyn_http_async_t *s,
                 dyn_ur_arm_recv(u, c);
         } else { /* EOF (0) or hard error: flush what we have, then close */
             if (!c->send_inflight) {
-                dyn_http_pump(&c->in, &c->out, &c->nreq, s->routes, s->n_routes);
+                dyn_http_pump(&c->in, &c->out, &c->nreq, &c->hdr_scan_from,
+                              s->routes, s->n_routes);
                 if (c->out.len > c->out_off)
                     dyn_ur_submit_send(u, c);
             }
@@ -2430,7 +2442,8 @@ static void dyn_ur_on_send(dyn_uring_ctx *u, dyn_http_async_t *s,
             if (!c->closing) {
                 /* response flushed; drain any pipelined requests buffered while
                  * the send held `out` */
-                if (dyn_http_pump(&c->in, &c->out, &c->nreq, s->routes,
+                if (dyn_http_pump(&c->in, &c->out, &c->nreq,
+                                  &c->hdr_scan_from, s->routes,
                                   s->n_routes))
                     c->closing = 1;
                 if (c->out.len > c->out_off)
