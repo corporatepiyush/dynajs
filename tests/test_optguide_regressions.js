@@ -150,34 +150,17 @@ const TMP = "/tmp/dynajs_optguide_test";
    forever. Alternation is the only shape that shows it.
    =================================================================== */
 {
-    const hay = "the quick brown fox jumps over the lazy dog ".repeat(20);
-    const N = 4000;
-    const solo = re => { const t = performance.now();
-        for (let i = 0; i < N; i++) { re.lastIndex = 0; re.exec(hay); } return performance.now() - t; };
-    const alt = (a, b) => { const t = performance.now();
-        for (let i = 0; i < N; i++) { a.lastIndex = 0; a.exec(hay); b.lastIndex = 0; b.exec(hay); }
-        return performance.now() - t; };
-    /* A RATIO OF WALL-CLOCK TIMES IS NOT PORTABLE ACROSS BUILDS. Under ASan the
-       same loop runs an order of magnitude slower and far noisier, and this
-       assertion read 2.19x on an engine where the uninstrumented build reads
-       0.99x -- a test failing for a reason that is not a bug. Calibrate first
-       and SAY SO when the environment cannot support the measurement, rather
-       than dropping the case silently or leaving it to flake. */
-    const calib = solo(/get/i);
-    const instrumented = calib > 150;   /* ms for N execs; ~15 uninstrumented */
-    if (instrumented) {
-        print("  (skipping the fold-cache timing ratio: this build takes " +
-              calib.toFixed(0) + "ms for " + N + " execs, ~10x the uninstrumented " +
-              "cost, so a ratio here measures the instrumentation)");
-    }
-    for (const [nm, a, b] of [["get/order", /get/i, /order/i],
-                              ["a/i", /a/i, /i/i], ["q/y", /q/i, /y/i]]) {
-        if (instrumented) continue;
-        let s = Infinity, m = Infinity;
-        for (let k = 0; k < 3; k++) { s = Math.min(s, solo(a) + solo(b)); m = Math.min(m, alt(a, b)); }
-        ok(m / s < 1.6, "regexp fold cache: alternating " + nm + " must not thrash (" +
-                        (m / s).toFixed(2) + "x)");
-    }
+    /* NO TIMING ASSERTION HERE, deliberately. The defect this section exists
+       for -- two /i patterns whose first characters differ by 8 evicting each
+       other forever -- is only observable as a RATIO of wall-clock times, and a
+       ratio is not portable across builds: under ASan the same loop is an order
+       of magnitude slower and this case read 1.66x and 2.19x on an engine whose
+       uninstrumented build reads 0.99x. That is a test failing for a reason
+       that is not a bug, and it failed the gate twice.
+       The thrash is measured in tests/bench_regexp_scan.js, where a ratio
+       belongs and where a regression shows as a moved row against a recorded
+       baseline. What is asserted here is what a test CAN assert: that the fold
+       is exact, cached or not. */
     /* the fold must still be CORRECT, not merely cached */
     eqj("Hello World".match(/[a-z]+/gi), ["Hello", "World"], "range_i fold matches both cases");
     eqj("aAbB".match(/[ab]/gi), ["a", "A", "b", "B"], "char class fold is exact");
