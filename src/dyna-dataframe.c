@@ -5442,21 +5442,41 @@ static int dfg_roll_sum(const DFBound *b, double *dst, uint32_t span,
         df_widen(b, own, span);
     }
     if (w >= DFG_ROLL_SLIDE_MIN) {
-        uint32_t j;
-        int nonfinite = 0;
-        double acc = 0;
-        for (j = 0; j < span; j++)
-            nonfinite |= !isfinite(x[j]);
-        if (!nonfinite) {
+        /* Block decomposition, NOT a subtractive running sum. Each window is
+           suffix(previous block) + prefix(current), so every element is added
+           exactly twice and nothing is ever subtracted -- O(n) with the
+           numerics of two contiguous sums. `acc += x[i] - x[i-w]` is O(n) too
+           and silently wrong: when 1e308 leaves a window of 1s the running sum
+           cancels to 0, which is FINITE, so no overflow check can catch it.
+           Non-finite input needs no special case here either: a window holding
+           an Inf reports Inf, and one that does not is unaffected. */
+        double *suf = malloc((size_t)w * sizeof(double));
+        if (suf) {
+            uint32_t s;
             for (i = 0; i + 1 < w; i++)
                 dst[i] = NAN;
-            for (j = 0; j < w; j++)
-                acc += x[j];
-            dst[w - 1] = want_mean ? acc / (double)w : acc;
-            for (i = w; i < span; i++) {
-                acc += x[i] - x[i - w];
-                dst[i] = want_mean ? acc / (double)w : acc;
+            for (s = 0; s < span; s += w) {
+                uint32_t end = (s + w < span) ? s + w : span;
+                uint32_t k, lo, hi;
+                double run = 0, pre = 0;
+                for (k = end; k-- > s; ) {       /* suffix sums of this block */
+                    run += x[k];
+                    suf[k - s] = run;
+                }
+                lo = s + w - 1;
+                hi = s + 2 * w - 2;
+                if (hi >= span)
+                    hi = span - 1;
+                for (k = lo; k <= hi; k++) {
+                    uint32_t st = k + 1 - w;     /* window is [st, k] */
+                    double v;
+                    if (k >= end)
+                        pre += x[k];
+                    v = (st < end ? suf[st - s] : 0.0) + pre;
+                    dst[k] = want_mean ? v / (double)w : v;
+                }
             }
+            free(suf);
             free(own);
             return 0;
         }
