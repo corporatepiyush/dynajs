@@ -1206,6 +1206,7 @@ test: dynajs$(EXE)
 	$(WINE) ./dynajs$(EXE) tests/test_optimizer.js
 	$(WINE) ./dynajs$(EXE) tests/test_loop.js
 	$(WINE) ./dynajs$(EXE) tests/test_bigint.js
+	$(WINE) ./dynajs$(EXE) tests/test_bigint_asuintn.js
 	$(WINE) ./dynajs$(EXE) tests/test_textcodec.js
 	$(WINE) ./dynajs$(EXE) tests/test_string_hash.js
 	$(WINE) ./dynajs$(EXE) tests/test_cyclic_import.js
