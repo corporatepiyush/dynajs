@@ -47,10 +47,34 @@ static int buf_putc(Buf *b, char c) {
 static void buf_free(Buf *b) { free(b->p); b->p = NULL; b->len = b->cap = 0; }
 
 /* ============================ CSV table (jagged) ============================ */
-/* Row 0 is the header. A cell is a nul-terminated string owned by the table; a
- * NULL cell pointer denotes the empty string (never allocated). */
+/* Row 0 is the header. A cell is a nul-terminated string owned by the table's
+ * ARENA, not individually: parsing allocated one malloc per cell (10M for a
+ * 1M x 10 file), which dominated ingest. Cells are carved from a block chain;
+ * replaced/removed cells stay in the arena until table_free, so mutations
+ * must NOT free() them. A NULL cell pointer denotes the empty string. */
+typedef struct csv_ablock {
+    struct csv_ablock *next;
+    size_t off, cap;
+    char data[];
+} csv_ablock;
 typedef struct { char **f; size_t n, cap; } Row;
-typedef struct { Row *r; size_t n, cap; } Table;
+typedef struct { Row *r; size_t n, cap; csv_ablock *arena; } Table;
+
+/* Carve a nul-terminated copy of s[0..n) from the arena; NULL for n == 0. */
+static char *tcell_dup(Table *t, const char *s, size_t n) {
+    if (n == 0) return NULL;
+    if (!t->arena || t->arena->off + n + 1 > t->arena->cap) {
+        size_t cap = n + 1 > 65536 ? n + 1 : 65536;
+        csv_ablock *b = (csv_ablock *)malloc(sizeof(*b) + cap);
+        if (!b) return NULL;
+        b->next = t->arena; b->off = 0; b->cap = cap;
+        t->arena = b;
+    }
+    char *d = t->arena->data + t->arena->off;
+    memcpy(d, s, n); d[n] = 0;
+    t->arena->off += n + 1;
+    return d;
+}
 
 static int row_push(Row *row, char *s) {
     if (row->n == row->cap) {
@@ -71,11 +95,9 @@ static int table_push(Table *t, Row row) {
     t->r[t->n++] = row; return 0;
 }
 static void table_free(Table *t) {
-    for (size_t i = 0; i < t->n; i++) {
-        for (size_t j = 0; j < t->r[i].n; j++) free(t->r[i].f[j]);
-        free(t->r[i].f);
-    }
+    for (size_t i = 0; i < t->n; i++) free(t->r[i].f);   /* the row arrays, not the cells */
     free(t->r);
+    while (t->arena) { csv_ablock *b = t->arena; t->arena = b->next; free(b); }
     t->r = NULL; t->n = t->cap = 0;
 }
 /* header column count */
@@ -84,11 +106,6 @@ static size_t table_ncols(const Table *t) { return t->n ? t->r[0].n : 0; }
 static const char *cell(const Table *t, size_t r, size_t c) {
     if (r >= t->n || c >= t->r[r].n || !t->r[r].f[c]) return "";
     return t->r[r].f[c];
-}
-static char *dupn(const char *s, size_t n) {
-    char *d = (char *)malloc(n + 1);
-    if (!d) return NULL;
-    memcpy(d, s, n); d[n] = 0; return d;
 }
 
 /* ============================ RFC-4180 parser (SIMD) ============================ */
@@ -130,8 +147,8 @@ static int csv_parse(const uint8_t *buf, size_t len, Table *t) {
         /* commit the field (NULL for empty to avoid tiny allocs) */
         {
             char *s = NULL;
-            if (fld.len) { s = dupn(fld.p, fld.len); if (!s) goto oom; }
-            if (row_push(&row, s)) { free(s); goto oom; }
+            if (fld.len) { s = tcell_dup(t, fld.p, fld.len); if (!s) goto oom; }
+            if (row_push(&row, s)) goto oom;
         }
         /* --- delimiter / record end / EOF --- */
         if (i >= len) { if (table_push(t, row)) goto oom; memset(&row, 0, sizeof(row)); break; }
@@ -149,8 +166,7 @@ static int csv_parse(const uint8_t *buf, size_t len, Table *t) {
     return 0;
 oom:
     buf_free(&fld);
-    for (size_t j = 0; j < row.n; j++) free(row.f[j]);
-    free(row.f);
+    free(row.f);            /* cells are arena-owned: table_free covers them */
     table_free(t);
     return -1;
 }
@@ -490,24 +506,24 @@ static JSValue js_csv_add_row(JSContext *ctx, JSValueConst this_val, int argc, J
             uint32_t rc = 0; JSValue rl = JS_GetPropertyStr(ctx, rv, "length"); JS_ToUint32(ctx, &rc, rl); JS_FreeValue(ctx, rl);
             for (size_t c = 0; c < ncols; c++) {
                 char *s = NULL;
-                if (c < rc) { JSValue cv = JS_GetPropertyUint32(ctx, rv, (uint32_t)c); const char *cs = JS_ToCString(ctx, cv); JS_FreeValue(ctx, cv); if (cs) { s = strdup(cs); JS_FreeCString(ctx, cs); } }
-                if (row_push(&row, s)) { free(s); }
+                if (c < rc) { JSValue cv = JS_GetPropertyUint32(ctx, rv, (uint32_t)c); const char *cs = JS_ToCString(ctx, cv); JS_FreeValue(ctx, cv); if (cs) { s = tcell_dup(&t, cs, strlen(cs)); JS_FreeCString(ctx, cs); } }
+                row_push(&row, s);      /* cells are arena-owned; never free one */
             }
         } else if (JS_IsObject(rv)) {              /* named: map by header */
             for (size_t c = 0; c < ncols; c++) {
                 JSValue cv = JS_GetPropertyStr(ctx, rv, cell(&t, 0, c));
                 char *s = NULL;
-                if (!JS_IsUndefined(cv) && !JS_IsNull(cv)) { const char *cs = JS_ToCString(ctx, cv); if (cs) { s = strdup(cs); JS_FreeCString(ctx, cs); } }
+                if (!JS_IsUndefined(cv) && !JS_IsNull(cv)) { const char *cs = JS_ToCString(ctx, cv); if (cs) { s = tcell_dup(&t, cs, strlen(cs)); JS_FreeCString(ctx, cs); } }
                 JS_FreeValue(ctx, cv);
-                if (row_push(&row, s)) free(s);
+                row_push(&row, s);
             }
         } else {
             JS_FreeValue(ctx, rv); JS_FreeValue(ctx, rows);
-            for (size_t j = 0; j < row.n; j++) free(row.f[j]); free(row.f);
+            free(row.f);
             JS_ThrowTypeError(ctx, "csv.addRow: each row must be an array or an object"); goto done;
         }
         JS_FreeValue(ctx, rv);
-        if (table_push(&t, row)) { for (size_t j = 0; j < row.n; j++) free(row.f[j]); free(row.f); JS_FreeValue(ctx, rows); JS_ThrowOutOfMemory(ctx); goto done; }
+        if (table_push(&t, row)) { free(row.f); JS_FreeValue(ctx, rows); JS_ThrowOutOfMemory(ctx); goto done; }
     }
     JS_FreeValue(ctx, rows);
     if (csv_store(ctx, path, &t)) goto done;
@@ -550,9 +566,10 @@ static JSValue js_csv_update_cell(JSContext *ctx, JSValueConst this_val, int arg
 
     Row *row = &t.r[(size_t)rowi + 1];
     while (row->n <= (size_t)ci) { if (row_push(row, NULL)) { free(value); JS_ThrowOutOfMemory(ctx); goto done; } }  /* pad short rows */
-    free(row->f[ci]);
-    row->f[ci] = (value && *value) ? value : (free(value), NULL);
-    if (value && !*value) value = NULL;             /* consumed or freed above */
+    /* the old cell is arena-owned: dropping the pointer is the whole removal */
+    row->f[ci] = (value && *value) ? tcell_dup(&t, value, strlen(value)) : NULL;
+    if (value && *value && !row->f[ci]) { free(value); JS_ThrowOutOfMemory(ctx); goto done; }
+    free(value);
 
     if (csv_store(ctx, path, &t)) goto done;
     ret = JS_NewObject(ctx);
@@ -576,8 +593,7 @@ static JSValue js_csv_remove_row(JSContext *ctx, JSValueConst this_val, int argc
     if (opt_int(ctx, OPTS, "row", 0, &rowi, &hasr) || !hasr) { if (!JS_HasException(ctx)) JS_ThrowTypeError(ctx, "csv.removeRow: 'row' is required"); goto done; }
     if (rowi < 0 || (size_t)rowi >= t.n - 1) { JS_ThrowRangeError(ctx, "csv.removeRow: row %lld out of range", (long long)rowi); goto done; }
     size_t r = (size_t)rowi + 1;
-    for (size_t j = 0; j < t.r[r].n; j++) free(t.r[r].f[j]);
-    free(t.r[r].f);
+    free(t.r[r].f);                     /* the row array; cells are arena-owned */
     memmove(&t.r[r], &t.r[r + 1], (t.n - r - 1) * sizeof(Row));
     t.n--;
     if (csv_store(ctx, path, &t)) goto done;
@@ -606,9 +622,10 @@ static JSValue js_csv_add_column(JSContext *ctx, JSValueConst this_val, int argc
     for (size_t r = 0; r < t.n; r++) {
         Row *row = &t.r[r];
         while (row->n < ncols) { if (row_push(row, NULL)) { free(def); JS_ThrowOutOfMemory(ctx); goto done; } }
-        char *v = (r == 0) ? strdup(col) : (def && *def ? strdup(def) : NULL);
+        char *v = (r == 0) ? tcell_dup(&t, col, strlen(col))
+                           : (def && *def ? tcell_dup(&t, def, strlen(def)) : NULL);
         if (r == 0 && !v) { free(def); JS_ThrowOutOfMemory(ctx); goto done; }
-        if (row_push(row, v)) { free(v); free(def); JS_ThrowOutOfMemory(ctx); goto done; }
+        if (row_push(row, v)) { free(def); JS_ThrowOutOfMemory(ctx); goto done; }
     }
     free(def);
     if (csv_store(ctx, path, &t)) goto done;
@@ -633,7 +650,7 @@ static JSValue js_csv_remove_column(JSContext *ctx, JSValueConst this_val, int a
     for (size_t r = 0; r < t.n; r++) {
         Row *row = &t.r[r];
         if ((size_t)ci >= row->n) continue;
-        free(row->f[ci]);
+        /* the dropped cell stays in the arena until table_free */
         memmove(&row->f[ci], &row->f[ci + 1], (row->n - ci - 1) * sizeof(char *));
         row->n--;
     }
@@ -661,8 +678,9 @@ static JSValue js_csv_rename_column(JSContext *ctx, JSValueConst this_val, int a
     if (oi < 0) { JS_ThrowTypeError(ctx, "csv.renameColumn: no such column '%s'", oldn); goto done; }
     if (strcmp(oldn, newn) != 0) {
         if (header_index(&t, newn) >= 0) { JS_ThrowTypeError(ctx, "csv.renameColumn: column '%s' already exists", newn); goto done; }
-        char *nv = strdup(newn); if (!nv) { JS_ThrowOutOfMemory(ctx); goto done; }
-        free(t.r[0].f[oi]); t.r[0].f[oi] = nv;
+        char *nv = tcell_dup(&t, newn, strlen(newn));
+        if (!nv) { JS_ThrowOutOfMemory(ctx); goto done; }
+        t.r[0].f[oi] = nv;              /* the old header cell is arena-owned */
         if (csv_store(ctx, path, &t)) goto done;
     }
     ret = JS_NewObject(ctx);
