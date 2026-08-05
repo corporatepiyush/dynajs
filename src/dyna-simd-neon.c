@@ -687,7 +687,11 @@ static void simd_neon_vexp(float *restrict out,
   for (; i + 4 <= n; i += 4) {
     float32x4_t vi = vld1q_f32(&in[i]);
     int32x4_t bits = vcvtq_s32_f32(vmulq_f32(vi, magic));
-    bits = vaddq_s32(bits, vreinterpretq_s32_f32(bias));
+    /* SATURATING add: the bias pushed the product past INT32_MAX for x above
+       ~88, wrapped negative, and the max-with-0 below clamped it to zero -- so
+       vexp(100) was 0 where the scalar gives 2.7e43. Saturation lands on the
+       +Inf exponent, which is what the scalar tail returns. */
+    bits = vqaddq_s32(bits, vreinterpretq_s32_f32(bias));
     bits = vmaxq_s32(bits, vreinterpretq_s32_u32(vdupq_n_u32(0)));
     bits = vminq_s32(bits, vreinterpretq_s32_u32(top));
     float32x4_t ve = vreinterpretq_f32_s32(bits);
@@ -724,7 +728,10 @@ static void simd_neon_vsqrt(float *restrict out,
   size_t i = 0;
   for (; i + 4 <= n; i += 4) {
     float32x4_t vi = vld1q_f32(&in[i]);
-    uint32x4_t mask = vcgeq_f32(vi, vzero);
+    /* STRICTLY greater: vrsqrte(0) is +Inf and the result is x*(1/sqrt x), so
+       zero took the arithmetic branch and produced 0*Inf = NaN. The scalar tail
+       already agrees on both edges; only the vector path disagreed. */
+    uint32x4_t mask = vcgtq_f32(vi, vzero);
     float32x4_t vs = vrsqrteq_f32(vi);
     /* Newton-Raphson refinement: 1/sqrt(x) */
     vs = vmulq_f32(vrsqrtsq_f32(vmulq_f32(vi, vs), vs), vs);

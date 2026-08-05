@@ -741,7 +741,12 @@ simd_avx2_vexp(float *restrict out, const float *restrict in,
   size_t i = 0;
   for (; i + 8 <= n; i += 8) {
     __m256 vi = _mm256_loadu_ps(&in[i]);
-    __m256i bits = _mm256_cvtps_epi32(_mm256_mul_ps(vi, magic));
+    /* Clamp the PRODUCT so the bias add cannot overflow int32: it wrapped
+       negative for x above ~88 and the max-with-0 below then clamped it to
+       zero, so vexp(100) was 0 where the scalar gives 2.7e43. INT32_MAX minus
+       the bias; the min against 0x7F800000 below then lands on +Inf. */
+    __m256i bits = _mm256_cvtps_epi32(_mm256_min_ps(_mm256_mul_ps(vi, magic),
+                                                    _mm256_set1_ps(1082130431.0f)));
     bits = _mm256_add_epi32(bits, _mm256_castps_si256(bias));
     bits = _mm256_max_epi32(bits, _mm256_setzero_si256());
     bits = _mm256_min_epi32(bits, _mm256_set1_epi32(0x7F800000));

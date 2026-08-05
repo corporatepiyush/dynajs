@@ -696,7 +696,12 @@ simd_sse42_vexp(float *restrict out, const float *restrict in,
   size_t i = 0;
   for (; i + 4 <= n; i += 4) {
     __m128 vi = _mm_loadu_ps(&in[i]);
-    __m128i bits = _mm_cvtps_epi32(_mm_mul_ps(vi, magic));
+    /* Clamp the PRODUCT so the bias add cannot overflow int32: it wrapped
+       negative for x above ~88 and the max-with-0 below then clamped it to
+       zero, so vexp(100) was 0 where the scalar gives 2.7e43. INT32_MAX minus
+       the bias; the min against 0x7F800000 below then lands on +Inf. */
+    __m128i bits = _mm_cvtps_epi32(_mm_min_ps(_mm_mul_ps(vi, magic),
+                                              _mm_set1_ps(1082130431.0f)));
     bits = _mm_add_epi32(bits, _mm_castps_si128(bias));
     bits = _mm_max_epi32(bits, _mm_setzero_si128());
     bits = _mm_min_epi32(bits, _mm_set1_epi32(0x7F800000));

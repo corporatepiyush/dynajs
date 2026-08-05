@@ -711,7 +711,12 @@ simd_avx512_vexp(float *restrict out, const float *restrict in,
   size_t i = 0;
   for (; i + 16 <= n; i += 16) {
     __m512 vi = _mm512_loadu_ps(&in[i]);
-    __m512i bits = _mm512_cvtps_epi32(_mm512_mul_ps(vi, magic));
+    /* Clamp the PRODUCT so the bias add cannot overflow int32: it wrapped
+       negative for x above ~88 and the max-with-0 below then clamped it to
+       zero, so vexp(100) was 0 where the scalar gives 2.7e43. INT32_MAX minus
+       the bias; the min against 0x7F800000 below then lands on +Inf. */
+    __m512i bits = _mm512_cvtps_epi32(_mm512_min_ps(_mm512_mul_ps(vi, magic),
+                                                    _mm512_set1_ps(1082130431.0f)));
     bits = _mm512_add_epi32(bits, _mm512_castps_si512(bias));
     bits = _mm512_max_epi32(bits, _mm512_setzero_si512());
     bits = _mm512_min_epi32(bits, _mm512_set1_epi32(0x7F800000));

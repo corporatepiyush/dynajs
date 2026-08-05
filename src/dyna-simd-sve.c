@@ -724,7 +724,12 @@ static void simd_sve_vexp(float *restrict out,
   int cnt = sve_f32_cnt();
   for (; i + (size_t)cnt <= n; i += cnt) {
     svfloat32_t vi = svld1_f32(pg, &in[i]);
-    svint32_t bits = svcvt_s32_f32_z(pg, svmul_f32_z(pg, vi, magic));
+    /* Clamp the PRODUCT so the bias add cannot overflow int32: it wrapped
+       negative for x above ~88 and the max-with-0 below then clamped it to
+       zero, so vexp(100) was 0 where the scalar gives 2.7e43. INT32_MAX minus
+       the bias; the min against 0x7F800000 below then lands on +Inf. */
+    svint32_t bits = svcvt_s32_f32_z(pg,
+        svmin_f32_z(pg, svmul_f32_z(pg, vi, magic), svdup_f32(1082130431.0f)));
     bits = svadd_s32_z(pg, bits, vreinterpret_s32_f32(bias));
     bits = svmax_s32_z(pg, bits, zero_i);
     bits = svmin_s32_z(pg, bits, top_i);
