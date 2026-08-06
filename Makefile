@@ -473,12 +473,17 @@ CONFIG_SIG_FILE:=$(OBJDIR)/.config-sig
 # Only when make is actually going to BUILD. A test or lint target is invoked
 # without the CONFIG_* the binary was built with, so wiping there destroys the
 # very binary the target is about to run.
-CFG_BUILD_GOALS:=all $(PROGS) libdynajs.a
+# The archives are NOT in $(PROGS) yet -- `PROGS+=libdynajs.a` runs further
+# down and both wipes below are `:=`, so naming them here is what makes a
+# variant switch drop them. Without it a sanitizer archive poisons the next
+# plain link, which surfaces as undefined __asan_* in an unrelated example.
+ARCHIVES:=libdynajs.a libdynajs.lto.a libdynajs.fuzz.a
+CFG_BUILD_GOALS:=all $(PROGS) $(ARCHIVES)
 CFG_CHECK:=$(if $(MAKECMDGOALS),$(filter $(CFG_BUILD_GOALS),$(MAKECMDGOALS)),yes)
 IGNORE_CFG:=$(if $(CFG_CHECK),$(shell \
   if [ ! -f "$(CONFIG_SIG_FILE)" ] || \
      [ "`cat "$(CONFIG_SIG_FILE)" 2>/dev/null`" != "$(CONFIG_SIG)" ]; then \
-    rm -rf "$(OBJDIR)" $(PROGS) >/dev/null 2>&1; \
+    rm -rf "$(OBJDIR)" $(PROGS) $(ARCHIVES) >/dev/null 2>&1; \
     mkdir -p "$(OBJDIR)" && printf '%s' '$(CONFIG_SIG)' > "$(CONFIG_SIG_FILE)"; \
   fi))
 
@@ -492,7 +497,7 @@ VARIANT_SIG:=objdir=$(OBJDIR)
 VARIANT_SIG_FILE:=.build-variant
 IGNORE_VARIANT:=$(if $(CFG_CHECK),$(shell \
   if [ "`cat "$(VARIANT_SIG_FILE)" 2>/dev/null`" != "$(VARIANT_SIG)" ]; then \
-    rm -f $(PROGS) >/dev/null 2>&1; \
+    rm -f $(PROGS) $(ARCHIVES) >/dev/null 2>&1; \
     printf '%s' '$(VARIANT_SIG)' > "$(VARIANT_SIG_FILE)"; \
   fi))
 
