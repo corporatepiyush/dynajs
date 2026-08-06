@@ -110,6 +110,30 @@ const arr = (a) => Array.from(a);
 const touched = new Set();
 function mark(...names) { for (const n of names) touched.add(n); }
 
+/* `touched` records that somebody TYPED a name. It cannot tell a tested method
+   from a gutted one: deleting a method's assertions while leaving its mark()
+   still reports it covered -- measured, 158/158 with the body removed. So the
+   prototype is wrapped here and `invoked` records what was actually CALLED.
+   Both are asserted at the bottom; they answer different questions. */
+const invoked = new Set();
+{
+    const proto = Object.getPrototypeOf(new DataFrame({ _p: new Float64Array(1) }));
+    for (const k of Object.getOwnPropertyNames(proto)) {
+        if (k === "constructor") continue;
+        const d = Object.getOwnPropertyDescriptor(proto, k);
+        if (!d || d.get || typeof d.value !== "function" || !d.writable) continue;
+        const orig = d.value, arity = orig.length;
+        const wrap = function () {
+            invoked.add(k);
+            return orig.apply(this, arguments);
+        };
+        /* keep .length: the arity sweep below reads it, and a wrapper's is 0 */
+        Object.defineProperty(wrap, "length", { value: arity, configurable: true });
+        Object.defineProperty(wrap, "name", { value: k, configurable: true });
+        Object.defineProperty(proto, k, { ...d, value: wrap });
+    }
+}
+
 /* ------------------------------------------------------- dtype/value tables */
 
 /* Every numeric column type the module accepts, discovered from DF_FLOAT_TYPES
@@ -4724,6 +4748,14 @@ S("coverage");
     ok(missing.length === 0,
        "every method on DataFrame.prototype is exercised above",
        "NOT COVERED: " + missing.join(", "));
+    /* The stronger axis: actually CALLED, recorded by the prototype wrapper, so
+       it cannot be satisfied by typing a name in a mark() list. */
+    const never = methods.filter((m) => !invoked.has(m));
+    ok(never.length === 0,
+       "every method on DataFrame.prototype was actually INVOKED",
+       "NEVER CALLED: " + never.join(", "));
+    ok(invoked.size > 0, "the invocation wrapper is live at all",
+       "invoked " + invoked.size + " distinct methods");
     ok(methods.length > 0, "the prototype enumeration found methods at all",
        "found " + methods.length);
     console.log("  " + methods.length + " methods on the prototype, " +

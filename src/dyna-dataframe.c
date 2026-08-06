@@ -7496,7 +7496,7 @@ static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
         for (j = i; j < nc; j++) {
             DFBound bx, by;
             DFMoments mo;
-            double r, den;
+            double r;
             uint32_t n;
             if (df_bind_numeric(ctx, df, idx[i], &bx, op) ||
                 df_bind_numeric(ctx, df, idx[j], &by, op)) {
@@ -7510,7 +7510,6 @@ static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
             /* dfm_corr, not a local formula: sqrt(a*b) and sqrt(a)*sqrt(b) round
                differently, so an inline copy makes a cell disagree with CORR by
                a ULP -- which the doc promises it cannot. */
-            (void)den;
             /* On the diagonal dfm_corr computes S/(sqrt(S)*sqrt(S)), which is
                not exactly 1 for every S — so pin 1.0 where a variance exists
                and let the NaN through where it does not. */
