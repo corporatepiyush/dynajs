@@ -7636,6 +7636,7 @@ static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
     const uint8_t *mask;
     JSValue arr = JS_UNDEFINED, lenv, cols = JS_UNDEFINED, mv, res;
     int *idx = NULL, ok;
+    uint32_t *first = NULL;
     double *m = NULL;
     uint32_t nc = 0, i, j;
 
@@ -7685,16 +7686,38 @@ static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
     }
 
     m = df_out_alloc(ctx, nc * nc, sizeof(double));
-    if (!m) {
+    first = df_out_alloc(ctx, nc, sizeof(uint32_t));
+    if (!m || !first) {
         JS_FreeValue(ctx, arr);
         free(idx);
+        free(m);
+        free(first);
         return JS_EXCEPTION;
     }
+    /* First position naming each column. A name repeated 1024 times over a
+       2-column frame is 524288 computations of the SAME pair -- measured 128 s.
+       Duplicates copy from their first occurrence instead. */
+    for (i = 0; i < nc; i++) {
+        first[i] = i;
+        for (j = 0; j < i; j++)
+            if (idx[j] == idx[i]) {
+                first[i] = j;
+                break;
+            }
+    }
+
     /* Both loops start ON the diagonal. CORR's used to be a literal 1.0, which
-       disagreed with CORR(c,c) = NaN for a zero-variance column — the one cell
+       disagreed with CORR(c,c) = NaN for a zero-variance column -- the one cell
        that never went through the moments the rest are computed from. */
     for (i = 0; i < nc; i++) {
         for (j = i; j < nc; j++) {
+            /* first[x] <= x, so the source cell is always already written. */
+            if (first[i] != i || first[j] != j) {
+                double dup = m[first[i] * nc + first[j]];
+                m[i * nc + j] = dup;
+                m[j * nc + i] = dup;
+                continue;
+            }
             DFBound bx, by;
             DFMoments mo;
             double r;
@@ -7704,6 +7727,7 @@ static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
                 JS_FreeValue(ctx, arr);
                 free(idx);
                 free(m);
+                free(first);
                 return JS_EXCEPTION;
             }
             n = bx.n < by.n ? bx.n : by.n;
@@ -7733,6 +7757,7 @@ static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
     }
     JS_FreeValue(ctx, arr);
     free(idx);
+    free(first);
     mv = df_to_typed_array(ctx, m, (size_t)nc * nc * sizeof(double),
                            JS_TYPED_ARRAY_FLOAT64);
     res = JS_NewObject(ctx);
@@ -9043,18 +9068,32 @@ static JSValue dyn_df_bounding_ratio(JSContext *ctx, JSValueConst this_val,
     return JS_NewFloat64(ctx, (yhi - ylo) / (xhi - xlo));
 }
 
-/* Mean weighted by exp(-(tMax - t) / tau). Taken relative to the LATEST
-   selected time, which keeps the exponent non-positive and the sum finite
-   however large the timestamps are. */
+enum { DFE_AVG, DFE_SUM, DFE_COUNT, DFE_MAX };
+
+static const char *dfe_name(int magic)
+{
+    switch (magic) {
+    case DFE_SUM:   return "EXPONENTIAL_TIME_DECAYED_SUM";
+    case DFE_COUNT: return "EXPONENTIAL_TIME_DECAYED_COUNT";
+    case DFE_MAX:   return "EXPONENTIAL_TIME_DECAYED_MAX";
+    default:        return "EXPONENTIAL_TIME_DECAYED_AVG";
+    }
+}
+
+/* All four weight by w = exp(-(tMax - t) / tau): AVG is num/den, SUM is num,
+   COUNT is den (the decayed row count, which is why it ignores the value), and
+   MAX is the largest weighted value. Relative to the LATEST selected time, so
+   the exponent stays non-positive and the sum finite for any timestamps. */
 static JSValue dyn_df_etd_avg(JSContext *ctx, JSValueConst this_val,
-                              int argc, JSValueConst *argv)
+                              int argc, JSValueConst *argv, int magic)
 {
     DataFrame *df;
     DFBound bv, bt;
     const uint8_t *mask;
+    const char *op = dfe_name(magic);
     uint32_t i, span;
-    int iv, it_, ok, have = 0;
-    double tau = 0, tmax = 0, num = 0, den = 0;
+    int iv, it_, ok, have = 0, hit = 0;
+    double tau = 0, tmax = 0, num = 0, den = 0, best = 0;
 
     df = dyn_plain_get(ctx, this_val, dyn_df_class_id);
     if (!df)
@@ -9068,14 +9107,13 @@ static JSValue dyn_df_etd_avg(JSContext *ctx, JSValueConst this_val,
     if (JS_ToFloat64(ctx, &tau, argc > 2 ? argv[2] : JS_UNDEFINED))
         return JS_EXCEPTION;
     if (!(tau > 0.0))
-        return JS_ThrowRangeError(ctx, "EXPONENTIAL_TIME_DECAYED_AVG(value, "
-                                  "time, tau): tau must be positive, got %g",
-                                  tau);
+        return JS_ThrowRangeError(ctx, "%s(value, time, tau): tau must be "
+                                  "positive, got %g", op, tau);
     mask = df_mask_arg(ctx, argc > 3 ? argv[3] : JS_UNDEFINED, df->nrows, &ok);
     if (!ok)
         return JS_EXCEPTION;
-    if (df_bind_numeric(ctx, df, iv, &bv, "EXPONENTIAL_TIME_DECAYED_AVG") ||
-        df_bind_numeric(ctx, df, it_, &bt, "EXPONENTIAL_TIME_DECAYED_AVG"))
+    if (df_bind_numeric(ctx, df, iv, &bv, op) ||
+        df_bind_numeric(ctx, df, it_, &bt, op))
         return JS_EXCEPTION;
 
     span = bv.n < bt.n ? bv.n : bt.n;
@@ -9104,6 +9142,17 @@ static JSValue dyn_df_etd_avg(JSContext *ctx, JSValueConst this_val,
         w = exp((t - tmax) / tau);
         num += v * w;
         den += w;
+        if (!hit || v * w > best)
+            best = v * w;
+        hit = 1;
+    }
+    if (!hit)
+        return JS_UNDEFINED;
+    switch (magic) {
+    case DFE_SUM:   return JS_NewFloat64(ctx, num);
+    case DFE_COUNT: return JS_NewFloat64(ctx, den);
+    case DFE_MAX:   return JS_NewFloat64(ctx, best);
+    default: break;
     }
     return den > 0.0 ? JS_NewFloat64(ctx, num / den) : JS_UNDEFINED;
 }
@@ -9550,7 +9599,10 @@ static const JSCFunctionListEntry dyn_df_proto[] = {
     JS_CFUNC_DEF("DELTA_SUM", 2, dyn_df_delta_sum),
     JS_CFUNC_DEF("DELTA_SUM_TIMESTAMP", 3, dyn_df_delta_sum_ts),
     JS_CFUNC_DEF("BOUNDING_RATIO", 3, dyn_df_bounding_ratio),
-    JS_CFUNC_DEF("EXPONENTIAL_TIME_DECAYED_AVG", 4, dyn_df_etd_avg),
+    JS_CFUNC_MAGIC_DEF("EXPONENTIAL_TIME_DECAYED_AVG", 4, dyn_df_etd_avg, DFE_AVG),
+    JS_CFUNC_MAGIC_DEF("EXPONENTIAL_TIME_DECAYED_SUM", 4, dyn_df_etd_avg, DFE_SUM),
+    JS_CFUNC_MAGIC_DEF("EXPONENTIAL_TIME_DECAYED_COUNT", 4, dyn_df_etd_avg, DFE_COUNT),
+    JS_CFUNC_MAGIC_DEF("EXPONENTIAL_TIME_DECAYED_MAX", 4, dyn_df_etd_avg, DFE_MAX),
     JS_CFUNC_DEF("GROUP_ARRAY_INSERT_AT", 5, dyn_df_group_insert_at),
     JS_CFUNC_DEF("GROUP_BITMAP", 2, dyn_df_group_bitmap),
     JS_CFUNC_DEF("QUANTILE_TDIGEST_WEIGHTED", 4, dyn_df_quantile_td_weighted),

@@ -4646,6 +4646,52 @@ S("rank conventions");
     }
 }
 
+S("time-decayed family");
+{
+    mark("EXPONENTIAL_TIME_DECAYED_SUM", "EXPONENTIAL_TIME_DECAYED_COUNT",
+         "EXPONENTIAL_TIME_DECAYED_MAX");
+    /* weights are exp(-(tMax - t)/tau), so the reference is computed here from
+       that definition rather than read back from the engine */
+    const v = Float64Array.from([1, 2, 3, 4]);
+    const ts = Float64Array.from([0, 10, 20, 30]);
+    const df = new DataFrame({ v, ts });
+    const tau = 10, tmax = 30;
+    let num = 0, den = 0, best = -Infinity;
+    for (let i = 0; i < 4; i++) {
+        const w = Math.exp((ts[i] - tmax) / tau);
+        num += v[i] * w; den += w; best = Math.max(best, v[i] * w);
+    }
+    near(df.EXPONENTIAL_TIME_DECAYED_SUM("v", "ts", tau), num, "SUM is the weighted total");
+    near(df.EXPONENTIAL_TIME_DECAYED_COUNT("v", "ts", tau), den, "COUNT is the weighted row count");
+    near(df.EXPONENTIAL_TIME_DECAYED_MAX("v", "ts", tau), best, "MAX is the largest weighted value");
+    near(df.EXPONENTIAL_TIME_DECAYED_AVG("v", "ts", tau), num / den, "AVG is SUM/COUNT");
+    /* the identity is the point of the family: it must hold exactly, not nearly */
+    near(df.EXPONENTIAL_TIME_DECAYED_SUM("v", "ts", tau) /
+         df.EXPONENTIAL_TIME_DECAYED_COUNT("v", "ts", tau),
+         df.EXPONENTIAL_TIME_DECAYED_AVG("v", "ts", tau), "SUM/COUNT reproduces AVG");
+    /* COUNT ignores the VALUE column -- that is what makes it a count */
+    const df2 = new DataFrame({ v: Float64Array.from([9, 9, 9, 9]), ts });
+    near(df2.EXPONENTIAL_TIME_DECAYED_COUNT("v", "ts", tau),
+         df.EXPONENTIAL_TIME_DECAYED_COUNT("v", "ts", tau),
+         "COUNT is unchanged by different values");
+    /* the newest row has weight exactly 1, so COUNT is never below 1 */
+    ok(df.EXPONENTIAL_TIME_DECAYED_COUNT("v", "ts", tau) >= 1,
+       "the latest row weighs exactly 1, so COUNT >= 1");
+    /* every one refuses a non-positive tau, and names ITSELF when it does */
+    for (const m of ["SUM", "COUNT", "MAX", "AVG"]) {
+        throwsLike(() => df["EXPONENTIAL_TIME_DECAYED_" + m]("v", "ts", 0),
+                   "EXPONENTIAL_TIME_DECAYED_" + m,
+                   m + " names itself when refusing tau=0");
+        throwsLike(() => df["EXPONENTIAL_TIME_DECAYED_" + m]("v", "ts", -1),
+                   "must be positive", m + " refuses a negative tau");
+    }
+    /* nothing selected is undefined, not 0 */
+    const none = new Uint8Array(4);
+    for (const m of ["SUM", "COUNT", "MAX", "AVG"])
+        eq(df["EXPONENTIAL_TIME_DECAYED_" + m]("v", "ts", tau, none), undefined,
+           m + " with nothing selected is undefined");
+}
+
 S("group array moving");
 {
     mark("GROUP_ARRAY_MOVING_SUM", "GROUP_ARRAY_MOVING_AVG");
@@ -4827,6 +4873,32 @@ S("covariance matrix");
     }
     throwsLike(() => df.COV_MATRIX("a"), "array", "COV_MATRIX refuses a bare name");
     throwsLike(() => df.COV_MATRIX([]), "between 1", "and refuses an empty list");
+    /* A repeated NAME must give a repeated CELL, not a second computation:
+       1024 names over a 2-column frame was 524288 pair scans, ~128 s. */
+    {
+        const rep = ["a", "b", "a", "b", "a"];
+        const rm2 = df.CORR_MATRIX(rep), cm2 = df.COV_MATRIX(rep);
+        eq(rm2.n, 5, "a repeated name still yields one row and column each");
+        elemEq(rm2.columns, rep, "and echoes the names as given");
+        for (let i = 0; i < 5; i++)
+            for (let j = 0; j < 5; j++) {
+                const same = rep[i] === rep[j];
+                if (same)
+                    eq(rm2.matrix[i * 5 + j], 1, "identical columns correlate 1 at (" + i + "," + j + ")");
+                eq(rm2.matrix[i * 5 + j], rm2.matrix[j * 5 + i], "symmetric at (" + i + "," + j + ")");
+                eq(cm2.matrix[i * 5 + j], cm2.matrix[j * 5 + i], "COV symmetric at (" + i + "," + j + ")");
+            }
+        /* every duplicate cell equals the pairwise call, so the collapse did
+           not just make it fast, it kept it right */
+        eq(rm2.matrix[1], df.CORR("a", "b"), "a duplicated off-diagonal is still CORR");
+        eq(rm2.matrix[3], df.CORR("a", "b"), "and so is its repeat");
+        eq(cm2.matrix[1], df.COV_SAMP("a", "b"), "COV's duplicated cell is COV_SAMP");
+        eq(cm2.matrix[0], df.COV_SAMP("a", "a"), "and its repeated diagonal is too");
+        /* rep = [a,b,a,b,a] and nc = 5, so (2,2) is index 12 -- index 8 is
+           (1,3), which is ("b","b") and a different number entirely. */
+        eq(cm2.matrix[12], df.COV_SAMP("a", "a"), "at every repeat of that column");
+        eq(cm2.matrix[8], df.COV_SAMP("b", "b"), "and the other column repeats too");
+    }
     /* CORR_MATRIX must be unchanged by COV_MATRIX sharing its implementation */
     const rm = df.CORR_MATRIX(["a", "b"]);
     eq(rm.matrix[0], 1, "CORR_MATRIX still has an exact 1 on the diagonal");
