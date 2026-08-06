@@ -62,8 +62,11 @@ function fetchTLS(host, opts, path) {
 
 async function main() {
     print("--- a real HTTPS request through the seam ---");
+    /* Only `err === "timeout"` counted as absent, so any OTHER way the host is
+       unreachable -- DNS, refused, reset -- scored as a FAILURE of the seam.
+       An empty status is the same thing: connected, nothing came back. */
     let r = await fetchTLS("badssl.com", true, "/");
-    if (r.err === "timeout") skipped("badssl.com (no network)");
+    if (r.err || !r.status) skipped("badssl.com unreachable (" + (r.err || "no response") + ")");
     else {
         ok(!r.err, "connect fired without error", r.err);
         ok(r.status === "200", "GET / over TLS returned 200 (got " + r.status + ")");
@@ -71,8 +74,12 @@ async function main() {
     }
 
     print("--- a bad certificate is a connect ERROR, not a silent session ---");
+    /* Here an error is the EXPECTED result, so "unreachable" cannot be read off
+       r.err. Distinguish them: a certificate rejection names the certificate. */
     r = await fetchTLS("expired.badssl.com", true, "/");
-    if (r.err === "timeout") skipped("expired.badssl.com");
+    if (!r.err || /timeout|refused|reset|resolve|unreachable|ENOTFOUND|EAI_/i.test(String(r.err)) === true &&
+        !/cert|expired|verify/i.test(String(r.err)))
+        skipped("expired.badssl.com unreachable (" + (r.err || "no error at all") + ")");
     else {
         ok(!!r.err, "expired cert reported through the connect handler", "no error");
         ok(String(r.err).indexOf("expired") >= 0,
