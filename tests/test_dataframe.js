@@ -110,11 +110,9 @@ const arr = (a) => Array.from(a);
 const touched = new Set();
 function mark(...names) { for (const n of names) touched.add(n); }
 
-/* `touched` records that somebody TYPED a name. It cannot tell a tested method
-   from a gutted one: deleting a method's assertions while leaving its mark()
-   still reports it covered -- measured, 158/158 with the body removed. So the
-   prototype is wrapped here and `invoked` records what was actually CALLED.
-   Both are asserted at the bottom; they answer different questions. */
+/* `touched` only proves a name was TYPED: gutting a method's assertions while
+   leaving its mark() still reported 158/158. The wrapper below records what was
+   actually CALLED, and both ledgers are asserted at the bottom. */
 const invoked = new Set();
 {
     const proto = Object.getPrototypeOf(new DataFrame({ _p: new Float64Array(1) }));
@@ -4456,12 +4454,9 @@ mark("BOUNDING_RATIO", "EXPONENTIAL_TIME_DECAYED_AVG", "GROUP_ARRAY_INSERT_AT",
 ok(hooksFired >= 12, "every attack injected code ran at least once",
    "total hook invocations " + hooksFired);
 
-/* ================================ dispersion, rank conventions, change (G8)
- *
- * Every expected value below is computed HERE, in plain JS, from the
- * definition -- never read back from the engine. A table filled from what the
- * binary currently returns freezes today's behaviour including its bugs.
- */
+/* =============================== dispersion, rank conventions, change (G8)
+   Every expected value below comes from the definition or a cited outside
+   source, never read back from the engine -- that freezes today's bugs. */
 S("rolling dispersion");
 {
     mark("ROLLING_VAR", "ROLLING_STD");
@@ -4630,11 +4625,9 @@ S("rank conventions");
        "a NaN in either column drops the row from BOTH rankings",
        "got " + holed.RANK_CORR("a", "b"));
 
-    /* TIES ARE THE ONLY CASE THAT SEPARATES THE TWO FORMULAS. Everything above
-       is tie-free, so it passes just as well against the naive
-       1 - 6*sum(d^2)/(n(n^2-1)) shortcut, which is WRONG with ties. Expected
-       values are scipy 1.18.0 scipy.stats.spearmanr(x, y).statistic; the
-       fourth column is what the shortcut would have returned. */
+    /* Ties are the ONLY case separating the two formulas: everything above is
+       tie-free and passes against the naive 1-6*sum(d^2)/(n(n^2-1)) shortcut
+       too. Expected = scipy 1.18.0 spearmanr; 4th column = the shortcut. */
     for (const [name, xs, ys, scipyRho, shortcut] of [
         ["heavy ties both", [1, 1, 2, 2, 3, 3, 4, 4], [2, 2, 2, 5, 5, 9, 9, 9],
          0.9036961141150639, 0.910714],
@@ -4665,10 +4658,9 @@ S("covariance matrix");
     /* a cell must equal the pairwise call to the last bit, not merely closely */
     eq(cm.matrix[1], df.COV_SAMP("a", "b"), "the off-diagonal IS COV_SAMP");
     eq(cm.matrix[2], cm.matrix[1], "and the matrix is symmetric");
-    /* The diagonal IS the pairwise call -- exact, and that is the contract.
-       It is NOT bit-equal to VARIANCE: those are two summation orders and they
-       diverge above DFM_UNROLL_MIN (measured 0.7 ulp at n=63, 2.1 at n=10000),
-       so asserting eq() here would pass only for frames smaller than 64. */
+    /* The diagonal IS the pairwise call, exactly. It is NOT bit-equal to
+       VARIANCE -- two summation orders, diverging above DFM_UNROLL_MIN
+       (0.7 ulp at n=63), so eq() would hold only for frames under 64. */
     eq(cm.matrix[0], df.COV_SAMP("a", "a"), "the diagonal is COV_SAMP(a,a), exactly");
     eq(cm.matrix[3], df.COV_SAMP("b", "b"), "for every column");
     ulpNear(cm.matrix[0], df.VARIANCE("a"), 4, "and is the sample variance to within 4 ulp");
