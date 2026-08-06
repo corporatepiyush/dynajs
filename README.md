@@ -86,7 +86,7 @@ to install.
 ## Install (or Upgrade)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/corporatepiyush/dynascript/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/corporatepiyush/dynajs/master/install.sh | bash
 ```
 
 That clones, builds with the whole native standard library, and installs one binary to
@@ -104,11 +104,11 @@ dynajs -i                 # REPL
 
 ```sh
 # No root anywhere: install under your home directory instead.
-curl -fsSL https://raw.githubusercontent.com/corporatepiyush/dynascript/master/install.sh \
+curl -fsSL https://raw.githubusercontent.com/corporatepiyush/dynajs/master/install.sh \
   | bash -s -- --prefix "$HOME/.local"
 
 # Or clone first and read it before running it, which is the better habit.
-git clone https://github.com/corporatepiyush/dynascript && cd dynascript
+git clone https://github.com/corporatepiyush/dynajs && cd dynajs
 ./install.sh --help          # every flag, with what it does
 ./install.sh --dry-run       # the preflight report, and then stop
 ./install.sh --verbose       # a live build transcript
@@ -774,7 +774,7 @@ Numbers from the repo's own benchmarks — 36 suites under `tests/bench_*.js`. R
 ## Build from source
 
 ```sh
-git clone https://github.com/corporatepiyush/dynascript && cd dynascript
+git clone https://github.com/corporatepiyush/dynajs && cd dynajs
 make CONFIG_NATIVE_MODULES=y -j8
 ./dynajs -e 'print("ok")'
 ```
