@@ -7415,13 +7415,14 @@ static JSValue dyn_df_group_bit(JSContext *ctx, JSValueConst this_val,
     return dfc_pair(ctx, keys, vals);
 }
 
-/* CORR_MATRIX([col, ...][, mask]) -> { columns, matrix }. The matrix is n*n
-   row-major with 1 on the diagonal; every off-diagonal pair goes through the
-   same dfm_moments CORR uses, so a cell cannot disagree with CORR itself. */
+/* CORR_MATRIX / COV_MATRIX([col, ...][, mask]) -> { columns, matrix, n }. The
+   matrix is n*n row-major; every pair goes through the same dfm_moments CORR
+   and COV_SAMP use, so a cell cannot disagree with the pairwise call. */
 static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
-                                  int argc, JSValueConst *argv)
+                                  int argc, JSValueConst *argv, int magic)
 {
     DataFrame *df;
+    const char *op = magic ? "COV_MATRIX" : "CORR_MATRIX";
     const uint8_t *mask;
     JSValue arr = JS_UNDEFINED, lenv, cols = JS_UNDEFINED, mv, res;
     int *idx = NULL, ok;
@@ -7442,12 +7443,12 @@ static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
         }
         JS_FreeValue(ctx, lenv);
     } else {
-        return JS_ThrowTypeError(ctx, "CORR_MATRIX(cols): cols must be an array "
-                                 "of column names");
+        return JS_ThrowTypeError(ctx, "%s(cols): cols must be an array "
+                                 "of column names", op);
     }
     if (nc == 0 || nc > DF_MAX_COLS) {
         JS_FreeValue(ctx, arr);
-        return JS_ThrowRangeError(ctx, "CORR_MATRIX: between 1 and %d columns",
+        return JS_ThrowRangeError(ctx, "%s: between 1 and %d columns", op,
                                   DF_MAX_COLS);
     }
     idx = df_out_alloc(ctx, nc, sizeof(int));
@@ -7479,15 +7480,18 @@ static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
         free(idx);
         return JS_EXCEPTION;
     }
+    /* CORR's diagonal is 1 by definition and is not computed; COV's is the
+       column variance, so its pair loop starts ON the diagonal. */
     for (i = 0; i < nc; i++) {
-        m[i * nc + i] = 1.0;
-        for (j = i + 1; j < nc; j++) {
+        if (!magic)
+            m[i * nc + i] = 1.0;
+        for (j = magic ? i : i + 1; j < nc; j++) {
             DFBound bx, by;
             DFMoments mo;
             double r, den;
             uint32_t n;
-            if (df_bind_numeric(ctx, df, idx[i], &bx, "CORR_MATRIX") ||
-                df_bind_numeric(ctx, df, idx[j], &by, "CORR_MATRIX")) {
+            if (df_bind_numeric(ctx, df, idx[i], &bx, op) ||
+                df_bind_numeric(ctx, df, idx[j], &by, op)) {
                 JS_FreeValue(ctx, arr);
                 free(idx);
                 free(m);
@@ -7499,7 +7503,8 @@ static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
                differently, so an inline copy makes a cell disagree with CORR by
                a ULP -- which the doc promises it cannot. */
             (void)den;
-            r = dfm_corr(&mo);
+            r = magic ? (mo.n >= 2.0 ? mo.cxy / (mo.n - 1.0) : NAN)
+                      : dfm_corr(&mo);
             m[i * nc + j] = r;
             m[j * nc + i] = r;      /* symmetric by construction, not by luck */
         }
@@ -7528,6 +7533,326 @@ static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
         return JS_EXCEPTION;
     }
     return res;
+}
+
+/* ------------------------------------------- dispersion, rank, change (G8) */
+
+enum { DFX_ROLL_VAR, DFX_ROLL_STD };
+
+/* ROLLING_VAR / ROLLING_STD(col, w[, mask]) -> Float64Array. Sample (ddof=1),
+   as pandas rolling().var(). Two passes per window, never a subtractive sum of
+   squares: that cancels catastrophically when the mean is far from zero. */
+static JSValue dyn_df_rolling_disp(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv, int magic)
+{
+    DataFrame *df;
+    DFBound b;
+    const uint8_t *mask;
+    const char *op = magic == DFX_ROLL_STD ? "ROLLING_STD" : "ROLLING_VAR";
+    double wd, *dst;
+    uint32_t i, n, span, w;
+
+    if (dfo_open(ctx, this_val, argc, argv, 1, op, &df, &b, &wd, &mask))
+        return JS_EXCEPTION;
+    if (!(wd >= 1) || wd != floor(wd) || wd > (double)UINT32_MAX)
+        return JS_ThrowRangeError(ctx, "%s: window must be a positive integer, "
+                                  "got %g", op, wd);
+    w = (uint32_t)wd;
+    n = df->nrows;
+    dst = df_out_alloc(ctx, n, sizeof(double));
+    if (!dst)
+        return JS_EXCEPTION;
+    span = df_map_span(n, b.n, dst);
+
+    /* NaN never enters, as ROLLING_MIN/MAX; a window with fewer than two
+       contributing rows has no sample variance and yields NaN. */
+    for (i = 0; i < span; i++) {
+        double mean = 0.0, m2 = 0.0;
+        uint32_t c = 0, j, lo;
+        if (i + 1 < w) {
+            dst[i] = NAN;
+            continue;
+        }
+        lo = i + 1 - w;
+        for (j = lo; j <= i; j++) {
+            double v;
+            if (mask && !mask[j])
+                continue;
+            v = df_get(b.p, b.type, j);
+            if (v != v)
+                continue;
+            mean += v;
+            c++;
+        }
+        if (c < 2) {
+            dst[i] = NAN;
+            continue;
+        }
+        mean /= (double)c;
+        for (j = lo; j <= i; j++) {
+            double v, d;
+            if (mask && !mask[j])
+                continue;
+            v = df_get(b.p, b.type, j);
+            if (v != v)
+                continue;
+            d = v - mean;
+            m2 += d * d;
+        }
+        m2 /= (double)(c - 1);
+        dst[i] = magic == DFX_ROLL_STD ? sqrt(m2) : m2;
+    }
+    return df_to_typed_array(ctx, dst, (size_t)n * sizeof(double),
+                             JS_TYPED_ARRAY_FLOAT64);
+}
+
+/* PCT_CHANGE(col[, periods][, mask]) -> Float64Array of (x[i]-x[i-p])/x[i-p].
+   DIFF gives the absolute delta; this is the relative one, and it is NOT
+   DIFF/SHIFT composed -- that pays two output buffers and two passes. */
+static JSValue dyn_df_pct_change(JSContext *ctx, JSValueConst this_val,
+                                 int argc, JSValueConst *argv)
+{
+    DataFrame *df;
+    DFBound b;
+    const uint8_t *mask;
+    double pd = 1.0, *dst;
+    uint32_t i, n, span, p;
+
+    if (dfo_open(ctx, this_val, argc, argv, 1, "PCT_CHANGE", &df, &b, &pd, &mask))
+        return JS_EXCEPTION;
+    if (argc < 2 || JS_IsUndefined(argv[1]))
+        pd = 1.0;
+    if (!(pd >= 1) || pd != floor(pd) || pd > (double)UINT32_MAX)
+        return JS_ThrowRangeError(ctx, "PCT_CHANGE: periods must be a positive "
+                                  "integer, got %g", pd);
+    p = (uint32_t)pd;
+    n = df->nrows;
+    dst = df_out_alloc(ctx, n, sizeof(double));
+    if (!dst)
+        return JS_EXCEPTION;
+    span = df_map_span(n, b.n, dst);
+
+    for (i = 0; i < span; i++) {
+        double prev, cur;
+        if (i < p || (mask && (!mask[i] || !mask[i - p]))) {
+            dst[i] = NAN;
+            continue;
+        }
+        prev = df_get(b.p, b.type, i - p);
+        cur = df_get(b.p, b.type, i);
+        /* prev == 0 gives +/-Inf, which is the honest answer for a relative
+           change from nothing; 0/0 is NaN and stays NaN. */
+        dst[i] = (cur - prev) / prev;
+    }
+    return df_to_typed_array(ctx, dst, (size_t)n * sizeof(double),
+                             JS_TYPED_ARRAY_FLOAT64);
+}
+
+/* ZSCORE(col[, mask]) -> Float64Array of (x - mean) / sample stddev. Sample,
+   not population, so it composes with STDDEV rather than STDDEV_POP.
+   Unselected and NaN rows are NaN; a constant column is all NaN, not 0. */
+static JSValue dyn_df_zscore(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    DataFrame *df;
+    DFBound b;
+    DFMoments mo;
+    const uint8_t *mask;
+    double sd, *dst;
+    uint32_t i, n, span;
+
+    if (dfo_open(ctx, this_val, argc, argv, 0, "ZSCORE", &df, &b, NULL, &mask))
+        return JS_EXCEPTION;
+    n = df->nrows;
+    dst = df_out_alloc(ctx, n, sizeof(double));
+    if (!dst)
+        return JS_EXCEPTION;
+    span = df_map_span(n, b.n, dst);
+    dfm_moments(b.p, b.type, NULL, DF_F64, mask, b.n, &mo);
+    sd = mo.n >= 2.0 ? sqrt(mo.m2x / (mo.n - 1.0)) : NAN;
+
+    for (i = 0; i < span; i++) {
+        if (mask && !mask[i]) {
+            dst[i] = NAN;
+            continue;
+        }
+        dst[i] = (df_get(b.p, b.type, i) - mo.mx) / sd;
+    }
+    return df_to_typed_array(ctx, dst, (size_t)n * sizeof(double),
+                             JS_TYPED_ARRAY_FLOAT64);
+}
+
+enum { DFX_DENSE_RANK, DFX_PERCENT_RANK };
+
+/* DENSE_RANK / PERCENT_RANK(col[, mask]) -> Float64Array. Both use the MINIMUM
+   rank for a tie, which is SQL's rule for these two; RANK uses the average,
+   which is the only rule whose column sum is invariant. NaN rows stay NaN. */
+static JSValue dyn_df_rank_ext(JSContext *ctx, JSValueConst this_val,
+                               int argc, JSValueConst *argv, int magic)
+{
+    DataFrame *df;
+    DFBound b;
+    const uint8_t *mask;
+    DfoItem *it;
+    double *dst;
+    uint32_t nrows, n, m, i, j, dense = 0;
+    const char *op = magic == DFX_PERCENT_RANK ? "PERCENT_RANK" : "DENSE_RANK";
+
+    if (dfo_open(ctx, this_val, argc, argv, 0, op, &df, &b, NULL, &mask))
+        return JS_EXCEPTION;
+    nrows = df->nrows;
+    if (dfo_sorted(ctx, &b, mask, nrows, 0, &it, &n))
+        return JS_EXCEPTION;
+    dst = df_out_alloc(ctx, nrows, sizeof(double));
+    if (!dst) {
+        free(it);
+        return JS_EXCEPTION;
+    }
+    for (i = 0; i < nrows; i++)
+        dst[i] = NAN;
+
+    m = dfo_valued(it, n);
+    i = 0;
+    while (i < m) {
+        double r;
+        for (j = i + 1; j < m && it[j].key == it[i].key; j++)
+            ;
+        dense++;
+        /* PERCENT_RANK is (minrank-1)/(m-1); a single valued row has no spread,
+           so SQL defines it as 0 rather than dividing by zero. */
+        r = magic == DFX_PERCENT_RANK
+              ? (m > 1 ? (double)i / (double)(m - 1) : 0.0)
+              : (double)dense;
+        for (; i < j; i++)
+            dst[it[i].idx] = r;
+    }
+    free(it);
+    return df_to_typed_array(ctx, dst, (size_t)nrows * sizeof(double),
+                             JS_TYPED_ARRAY_FLOAT64);
+}
+
+/* NTILE(col, buckets[, mask]) -> Float64Array of 1..buckets. SQL's rule: the
+   first m%buckets tiles take one extra row, so sizes differ by at most one.
+   Ties are NOT kept together -- that is SQL NTILE, not a quantile bucket. */
+static JSValue dyn_df_ntile(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv)
+{
+    DataFrame *df;
+    DFBound b;
+    const uint8_t *mask;
+    DfoItem *it;
+    double kd, *dst;
+    uint32_t nrows, n, m, i, k, big, small, cut;
+
+    if (dfo_open(ctx, this_val, argc, argv, 1, "NTILE", &df, &b, &kd, &mask))
+        return JS_EXCEPTION;
+    if (!(kd >= 1) || kd != floor(kd) || kd > (double)UINT32_MAX)
+        return JS_ThrowRangeError(ctx, "NTILE: buckets must be a positive "
+                                  "integer, got %g", kd);
+    k = (uint32_t)kd;
+    nrows = df->nrows;
+    if (dfo_sorted(ctx, &b, mask, nrows, 0, &it, &n))
+        return JS_EXCEPTION;
+    dst = df_out_alloc(ctx, nrows, sizeof(double));
+    if (!dst) {
+        free(it);
+        return JS_EXCEPTION;
+    }
+    for (i = 0; i < nrows; i++)
+        dst[i] = NAN;
+
+    m = dfo_valued(it, n);
+    big = m % k;                        /* tiles that take one extra row */
+    small = m / k;
+    cut = big * (small + 1);
+    for (i = 0; i < m; i++) {
+        uint32_t t = i < cut ? i / (small + 1)
+                             : big + (small ? (i - cut) / small : 0);
+        dst[it[i].idx] = (double)(t + 1);
+    }
+    free(it);
+    return df_to_typed_array(ctx, dst, (size_t)nrows * sizeof(double),
+                             JS_TYPED_ARRAY_FLOAT64);
+}
+
+/* RANK_CORR(x, y[, mask]) -> Number. Spearman: Pearson over the AVERAGE ranks,
+   which is the definition that stays correct with ties -- the 1-6d^2/n(n^2-1)
+   shortcut is only equal to it when there are none. */
+static JSValue dyn_df_rank_corr(JSContext *ctx, JSValueConst this_val,
+                                int argc, JSValueConst *argv)
+{
+    DataFrame *df;
+    DFBound bx, by;
+    DFMoments mo;
+    const uint8_t *mask;
+    uint8_t *both = NULL;
+    DfoItem *it = NULL;
+    double *rx = NULL, *ry = NULL, r;
+    uint32_t nrows, span, n, m, i, j, pass;
+    int ix, iy, ok;
+
+    df = dyn_plain_get(ctx, this_val, dyn_df_class_id);
+    if (!df)
+        return JS_EXCEPTION;
+    ix = df_col_arg(ctx, df, argc > 0 ? argv[0] : JS_UNDEFINED);
+    if (ix < 0)
+        return JS_EXCEPTION;
+    iy = df_col_arg(ctx, df, argc > 1 ? argv[1] : JS_UNDEFINED);
+    if (iy < 0)
+        return JS_EXCEPTION;
+    mask = df_mask_arg(ctx, argc > 2 ? argv[2] : JS_UNDEFINED, df->nrows, &ok);
+    if (!ok)
+        return JS_EXCEPTION;
+    /* no JS may run from here on. */
+    if (df_bind_numeric(ctx, df, ix, &bx, "RANK_CORR") ||
+        df_bind_numeric(ctx, df, iy, &by, "RANK_CORR"))
+        return JS_EXCEPTION;
+
+    nrows = df->nrows;
+    span = bx.n < by.n ? bx.n : by.n;
+    both = df_out_alloc(ctx, nrows, sizeof(uint8_t));
+    rx = df_out_alloc(ctx, nrows, sizeof(double));
+    ry = df_out_alloc(ctx, nrows, sizeof(double));
+    if (!both || !rx || !ry)
+        goto oom;
+    /* PAIRWISE selection: a row missing in either column is out of BOTH
+       rankings, or the two rank vectors would not be over the same rows. */
+    for (i = 0; i < span; i++) {
+        double a = df_get(bx.p, bx.type, i), c = df_get(by.p, by.type, i);
+        both[i] = (!mask || mask[i]) && a == a && c == c;
+    }
+
+    for (pass = 0; pass < 2; pass++) {
+        const DFBound *bp = pass ? &by : &bx;
+        double *out = pass ? ry : rx;
+        if (dfo_sorted(ctx, bp, both, nrows, 0, &it, &n))
+            goto oom;
+        m = dfo_valued(it, n);
+        i = 0;
+        while (i < m) {
+            double v;
+            for (j = i + 1; j < m && it[j].key == it[i].key; j++)
+                ;
+            v = ((double)(i + 1) + (double)j) * 0.5;
+            for (; i < j; i++)
+                out[it[i].idx] = v;
+        }
+        free(it);
+        it = NULL;
+    }
+
+    dfm_moments(rx, DF_F64, ry, DF_F64, both, nrows, &mo);
+    r = dfm_corr(&mo);
+    free(both);
+    free(rx);
+    free(ry);
+    return JS_NewFloat64(ctx, r);
+oom:
+    free(it);
+    free(both);
+    free(rx);
+    free(ry);
+    return JS_EXCEPTION;
 }
 
 /* ---- string fold, sorted and sampled collection, weighted order statistics ---- */
@@ -9010,7 +9335,16 @@ static const JSCFunctionListEntry dyn_df_proto[] = {
     JS_CFUNC_MAGIC_DEF("GROUP_BIT_AND", 3, dyn_df_group_bit, DFY_BIT_AND),
     JS_CFUNC_MAGIC_DEF("GROUP_BIT_OR", 3, dyn_df_group_bit, DFY_BIT_OR),
     JS_CFUNC_MAGIC_DEF("GROUP_BIT_XOR", 3, dyn_df_group_bit, DFY_BIT_XOR),
-    JS_CFUNC_DEF("CORR_MATRIX", 2, dyn_df_corr_matrix),
+    JS_CFUNC_MAGIC_DEF("CORR_MATRIX", 2, dyn_df_corr_matrix, 0),
+    JS_CFUNC_MAGIC_DEF("COV_MATRIX", 2, dyn_df_corr_matrix, 1),
+    JS_CFUNC_MAGIC_DEF("ROLLING_VAR", 3, dyn_df_rolling_disp, DFX_ROLL_VAR),
+    JS_CFUNC_MAGIC_DEF("ROLLING_STD", 3, dyn_df_rolling_disp, DFX_ROLL_STD),
+    JS_CFUNC_DEF("PCT_CHANGE", 3, dyn_df_pct_change),
+    JS_CFUNC_DEF("ZSCORE", 2, dyn_df_zscore),
+    JS_CFUNC_MAGIC_DEF("DENSE_RANK", 2, dyn_df_rank_ext, DFX_DENSE_RANK),
+    JS_CFUNC_MAGIC_DEF("PERCENT_RANK", 2, dyn_df_rank_ext, DFX_PERCENT_RANK),
+    JS_CFUNC_DEF("NTILE", 3, dyn_df_ntile),
+    JS_CFUNC_DEF("RANK_CORR", 3, dyn_df_rank_corr),
     JS_CFUNC_DEF("GROUP_CONCAT", 3, dyn_df_group_concat),
     JS_CFUNC_MAGIC_DEF("GROUP_ARRAY_SORTED", 3, dyn_df_group_array_v, DFZ_SORTED),
     JS_CFUNC_MAGIC_DEF("GROUP_ARRAY_LAST", 4, dyn_df_group_array_v, DFZ_LAST),

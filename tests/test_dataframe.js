@@ -4424,6 +4424,183 @@ mark("BOUNDING_RATIO", "EXPONENTIAL_TIME_DECAYED_AVG", "GROUP_ARRAY_INSERT_AT",
 ok(hooksFired >= 12, "every attack injected code ran at least once",
    "total hook invocations " + hooksFired);
 
+/* ================================ dispersion, rank conventions, change (G8)
+ *
+ * Every expected value below is computed HERE, in plain JS, from the
+ * definition -- never read back from the engine. A table filled from what the
+ * binary currently returns freezes today's behaviour including its bugs.
+ */
+S("rolling dispersion");
+{
+    mark("ROLLING_VAR", "ROLLING_STD");
+    const n = 40, x = new Float64Array(n);
+    for (let i = 0; i < n; i++) x[i] = ((i * 37) % 17) - 8 + i * 0.25;
+    const df = new DataFrame({ x });
+
+    /* reference: two-pass sample variance over each closed window */
+    const refVar = (w) => {
+        const out = [];
+        for (let i = 0; i < n; i++) {
+            if (i + 1 < w) { out.push(NaN); continue; }
+            let s = 0, c = 0;
+            for (let j = i + 1 - w; j <= i; j++) { s += x[j]; c++; }
+            const m = s / c;
+            let q = 0;
+            for (let j = i + 1 - w; j <= i; j++) q += (x[j] - m) * (x[j] - m);
+            out.push(q / (c - 1));
+        }
+        return out;
+    };
+    for (const w of [2, 3, 8, 9, 17]) {
+        const got = df.ROLLING_VAR("x", w), want = refVar(w);
+        let worst = 0;
+        for (let i = 0; i < n; i++) {
+            if (Number.isNaN(want[i])) { ok(Number.isNaN(got[i]), "w=" + w + " row " + i + " is NaN before the window fills"); continue; }
+            worst = Math.max(worst, Math.abs(got[i] - want[i]) / Math.max(1, Math.abs(want[i])));
+        }
+        ok(worst < 1e-12, "ROLLING_VAR w=" + w + " matches the two-pass definition",
+           "worst relative error " + worst);
+    }
+    const sd = df.ROLLING_STD("x", 8), vr = df.ROLLING_VAR("x", 8);
+    let sdOk = true;
+    for (let i = 7; i < n; i++) if (Math.abs(sd[i] - Math.sqrt(vr[i])) > 1e-12) sdOk = false;
+    ok(sdOk, "ROLLING_STD is exactly sqrt(ROLLING_VAR)");
+
+    /* w=1 has one row per window: no sample variance exists, so NaN, not 0. */
+    ok(df.ROLLING_VAR("x", 1).every((v) => Number.isNaN(v)),
+       "a window of 1 has no sample variance and is all NaN");
+    /* a masked window can drop below two contributors even when w is large. */
+    const m1 = new Uint8Array(n);
+    m1[0] = 1;
+    ok(Number.isNaN(df.ROLLING_VAR("x", 4, m1)[3]),
+       "one selected row in the window yields NaN, not 0");
+    throwsLike(() => df.ROLLING_VAR("x", 0), "positive integer",
+               "ROLLING_VAR refuses a zero window");
+    throwsLike(() => df.ROLLING_STD("x", 2.5), "positive integer",
+               "ROLLING_STD refuses a fractional window");
+}
+
+S("pct change / zscore");
+{
+    mark("PCT_CHANGE", "ZSCORE");
+    const v = Float64Array.from([4, 5, 10, 10, 0, -2, 8]);
+    const df = new DataFrame({ v });
+
+    const pc = df.PCT_CHANGE("v");
+    ok(Number.isNaN(pc[0]), "the first row has no predecessor");
+    eq(pc[1], 0.25, "5 from 4 is +25%");
+    eq(pc[2], 1, "10 from 5 is +100%");
+    eq(pc[3], 0, "no change is 0, not NaN");
+    eq(pc[4], -1, "0 from 10 is -100%");
+    ok(pc[5] === -Infinity, "a change away from 0 is -Infinity, honestly");
+    const pc2 = df.PCT_CHANGE("v", 2);
+    ok(Number.isNaN(pc2[0]) && Number.isNaN(pc2[1]), "periods=2 skips two rows");
+    eq(pc2[2], 1.5, "10 from 4 over two periods");
+    throwsLike(() => df.PCT_CHANGE("v", 0), "positive integer",
+               "PCT_CHANGE refuses zero periods");
+
+    /* reference: sample stddev, so it composes with STDDEV not STDDEV_POP */
+    let s = 0;
+    for (let i = 0; i < v.length; i++) s += v[i];
+    const mu = s / v.length;
+    let q = 0;
+    for (let i = 0; i < v.length; i++) q += (v[i] - mu) * (v[i] - mu);
+    const sd = Math.sqrt(q / (v.length - 1));
+    const z = df.ZSCORE("v");
+    let zw = 0;
+    for (let i = 0; i < v.length; i++)
+        zw = Math.max(zw, Math.abs(z[i] - (v[i] - mu) / sd));
+    ok(zw < 1e-12, "ZSCORE matches (x-mean)/sample stddev", "worst " + zw);
+    let zs = 0;
+    for (let i = 0; i < v.length; i++) zs += z[i];
+    ok(Math.abs(zs) < 1e-12, "a z-scored column sums to zero", "sum " + zs);
+    /* a constant column has no spread: NaN, never a column of zeros. */
+    const flat = new DataFrame({ c: Float64Array.from([3, 3, 3, 3]) });
+    ok(flat.ZSCORE("c").every((t) => Number.isNaN(t)),
+       "a constant column z-scores to NaN, not 0");
+}
+
+S("rank conventions");
+{
+    mark("DENSE_RANK", "PERCENT_RANK", "NTILE", "RANK_CORR");
+    /* ties at 20 and at 40, so the three conventions must visibly disagree. */
+    const k = Float64Array.from([10, 20, 20, 30, 40, 40, 40]);
+    const df = new DataFrame({ k });
+    elemEq(df.RANK("k"), [1, 2.5, 2.5, 4, 6, 6, 6], "RANK averages a tie");
+    elemEq(df.DENSE_RANK("k"), [1, 2, 2, 3, 4, 4, 4], "DENSE_RANK leaves no gap");
+    /* SQL: (minrank-1)/(m-1), so first is 0 and last is 1 */
+    const pr = df.PERCENT_RANK("k"), wantPr = [0, 1 / 6, 1 / 6, 3 / 6, 4 / 6, 4 / 6, 4 / 6];
+    let pw = 0;
+    for (let i = 0; i < pr.length; i++) pw = Math.max(pw, Math.abs(pr[i] - wantPr[i]));
+    ok(pw < 1e-15, "PERCENT_RANK is (minrank-1)/(m-1)", "worst " + pw);
+    eq(df.PERCENT_RANK("k")[0], 0, "the smallest row is exactly 0");
+    const one = new DataFrame({ k: Float64Array.from([7]) });
+    eq(one.PERCENT_RANK("k")[0], 0, "a single row is 0, not a division by zero");
+
+    /* NTILE: 7 rows into 3 tiles is 3,2,2 -- the first m%k tiles take the extra */
+    elemEq(df.NTILE("k", 3), [1, 1, 1, 2, 2, 3, 3], "NTILE gives sizes 3,2,2");
+    elemEq(df.NTILE("k", 1), [1, 1, 1, 1, 1, 1, 1], "one tile takes everything");
+    const t7 = df.NTILE("k", 7);
+    elemEq(t7, [1, 2, 3, 4, 5, 6, 7], "as many tiles as rows is one row each");
+    /* more tiles than rows: the trailing tiles are empty, none is out of range */
+    const t9 = df.NTILE("k", 9);
+    ok(t9.every((t) => t >= 1 && t <= 9), "no tile index is out of range when k > m");
+    throwsLike(() => df.NTILE("k", 0), "positive integer", "NTILE refuses zero buckets");
+
+    /* NaN is ranked by no convention: it stays NaN in all four. */
+    const withNaN = new DataFrame({ k: Float64Array.from([3, NaN, 1]) });
+    for (const m of ["RANK", "DENSE_RANK", "PERCENT_RANK"])
+        ok(Number.isNaN(withNaN[m]("k")[1]), m + " leaves a NaN row unranked");
+    ok(Number.isNaN(withNaN.NTILE("k", 2)[1]), "NTILE leaves a NaN row unranked");
+
+    /* Spearman: exactly 1 on any strictly increasing transform, which is the
+       property that distinguishes it from Pearson. */
+    const mono = new DataFrame({
+        a: Float64Array.from([1, 2, 3, 4, 5, 6]),
+        b: Float64Array.from([1, 8, 27, 64, 125, 216]),
+        c: Float64Array.from([6, 5, 4, 3, 2, 1]),
+    });
+    ok(Math.abs(mono.RANK_CORR("a", "b") - 1) < 1e-12,
+       "Spearman is 1 on a cube, where Pearson is not", "got " + mono.RANK_CORR("a", "b"));
+    ok(mono.CORR("a", "b") < 0.98, "and Pearson on the same pair is not 1",
+       "Pearson " + mono.CORR("a", "b"));
+    ok(Math.abs(mono.RANK_CORR("a", "c") + 1) < 1e-12, "reversed is -1");
+    eq(mono.RANK_CORR("a", "a"), 1, "a column against itself is 1");
+    /* pairwise selection: a NaN in either column drops the ROW from both
+       rankings, so the answer must still be a perfect +1 here. */
+    const holed = new DataFrame({
+        a: Float64Array.from([1, NaN, 3, 4, 5]),
+        b: Float64Array.from([2, 9, 6, NaN, 10]),
+    });
+    ok(Math.abs(holed.RANK_CORR("a", "b") - 1) < 1e-12,
+       "a NaN in either column drops the row from BOTH rankings",
+       "got " + holed.RANK_CORR("a", "b"));
+}
+
+S("covariance matrix");
+{
+    mark("COV_MATRIX");
+    const a = Float64Array.from([1, 2, 3, 4, 5, 7]);
+    const b = Float64Array.from([2, 4, 7, 8, 11, 13]);
+    const df = new DataFrame({ a, b });
+    const cm = df.COV_MATRIX(["a", "b"]);
+    eq(cm.n, 2, "COV_MATRIX reports its own order");
+    elemEq(cm.columns, ["a", "b"], "and echoes the column names");
+    /* a cell must equal the pairwise call to the last bit, not merely closely */
+    eq(cm.matrix[1], df.COV_SAMP("a", "b"), "the off-diagonal IS COV_SAMP");
+    eq(cm.matrix[2], cm.matrix[1], "and the matrix is symmetric");
+    eq(cm.matrix[0], df.VARIANCE("a"), "the diagonal is the sample variance");
+    eq(cm.matrix[3], df.VARIANCE("b"), "for every column");
+    const one = df.COV_MATRIX(["a"]);
+    eq(one.matrix[0], df.VARIANCE("a"), "a 1x1 matrix is just the variance");
+    throwsLike(() => df.COV_MATRIX("a"), "array", "COV_MATRIX refuses a bare name");
+    throwsLike(() => df.COV_MATRIX([]), "between 1", "and refuses an empty list");
+    /* CORR_MATRIX must be unchanged by COV_MATRIX sharing its implementation */
+    const rm = df.CORR_MATRIX(["a", "b"]);
+    eq(rm.matrix[0], 1, "CORR_MATRIX still has an exact 1 on the diagonal");
+    eq(rm.matrix[1], df.CORR("a", "b"), "and its off-diagonal is still CORR");
+}
+
 /* ============================================ every method was exercised */
 S("coverage");
 {
