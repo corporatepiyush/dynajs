@@ -28,8 +28,9 @@ cd "$(dirname "$0")/.." || exit 2
 IMAGE=dynajs:xplat
 DOCKERFILE=docker/Dockerfile
 DOCKER_TARGET=glibc
-DO_BUILD=0
-[ "${1:-}" = "--build" ] && { DO_BUILD=1; shift; }
+# --build is now the DEFAULT and the flag is accepted only so old invocations
+# keep working; the image is rebuilt every run (see the note at the build).
+[ "${1:-}" = "--build" ] && shift
 
 # Differential tests: each must produce identical output on both platforms.
 # Add every new oracle-style test here.
@@ -92,11 +93,26 @@ die(){ echo "FAIL: $*" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || die "docker not found"
 docker info >/dev/null 2>&1 || die "docker daemon not running"
 
-if [ "$DO_BUILD" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  echo "building $IMAGE (linux/amd64, emulated -- this is slow)..."
+# ALWAYS build. The old condition was "--build was passed OR the image does not
+# exist", so once dynajs:xplat existed it was reused forever however far the
+# source moved: measured, the cached image exposed 16 DataFrame methods against
+# the host's 167, and the script reported five "MISMATCH" lines that were not
+# cross-platform bugs at all. A gate that invents defects is worse than none.
+# Docker's own layer cache makes an unchanged context cheap, so this costs
+# seconds when nothing moved and is correct when something did.
+if true; then
+  echo "building $IMAGE (linux/amd64, emulated -- cached layers make this fast"
+  echo "  when the source has not moved; slow the first time)..."
   # NB: the `docker build` must be the LAST command in the pipeline, never
   # chained with `; echo`, or its exit code is masked by the echo's success.
-  docker build --platform linux/amd64 --target "$DOCKER_TARGET" -f "$DOCKERFILE" -t "$IMAGE" . > /tmp/xplat-build.log 2>&1 \
+  # --pull is load-bearing, not hygiene. The legacy builder walks every stage
+  # ahead of the target, so the glibc target still evaluates `FROM base-musl AS
+  # amd64`; if the locally cached alpine/debian base is the HOST's arm64 image
+  # the build dies with "found but does not provide the specified platform" and
+  # the whole gate fails for a reason that has nothing to do with the code.
+  # BuildKit would skip those stages but needs buildx, which is not assumed here.
+  docker build --pull --platform linux/amd64 --target "$DOCKER_TARGET" \
+    -f "$DOCKERFILE" -t "$IMAGE" . > /tmp/xplat-build.log 2>&1 \
     || { tail -30 /tmp/xplat-build.log; die "amd64 image build (see /tmp/xplat-build.log)"; }
   say "build linux/amd64 + make test" "ok"
 fi
@@ -159,8 +175,12 @@ done
 # ---- 2. suites inside the container -----------------------------------------
 # The image build already ran both, but re-running catches an image built from
 # an older tree, and reports which one broke.
+# CONFIG_CLANG=y is not optional here: the image is BUILT with it, but a bare
+# `make test` inherits none of the main build's flags, so $(CC) falls back to
+# gcc -- which the image does not install. The failure reads as an x86-64 defect
+# ("amd64 make test FAIL") and is a missing compiler.
 for target in test test-native; do
-  if docker run --rm --platform linux/amd64 "$IMAGE" sh -c "make $target" \
+  if docker run --rm --platform linux/amd64 "$IMAGE" sh -c "make CONFIG_CLANG=y CONFIG_NATIVE_MODULES=y $target" \
        >"/tmp/xplat-$target.log" 2>&1; then
     say "amd64 make $target" "ok"
   else

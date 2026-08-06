@@ -55,6 +55,19 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 
+
+# ------------------------------------------------------- portability smoke --
+FROM base-deb AS glibc
+COPY . .
+RUN make CONFIG_CLANG=y CONFIG_NATIVE_MODULES=y -j"$(nproc)"
+CMD ["./dynajs", "-e", "print('dynascript on glibc (' + (typeof Array.fromAsync) + ' fromAsync) OK')"]
+
+# NOTE: base-musl and the amd64 gate sit BELOW glibc on purpose. The classic
+# builder (no buildx here) walks every stage ahead of --target, and under
+# --platform linux/amd64 it rejects its own intermediate stage image with
+# "found but does not provide the specified platform". glibc needs neither,
+# so keeping them after it is what lets the amd64 gate build at all.
+
 FROM alpine:3.21 AS base-musl
 # zip/unzip are TEST DEPENDENCIES: test_archive's foreign-archive check skips
 # itself without them, and a skip reads as a pass in the summary line.
@@ -112,12 +125,6 @@ RUN ./dynajs tests/test_ml_oracle.js > /tmp/ml_vec.txt \
  && echo "=== dyna:ml oracle diff on x86-64 ===" \
  && ./dynajs tests/test_ml_oracle.js --diff /tmp/ml_vec.txt /tmp/ml_seq.txt
 CMD ["/tmp/caps"]
-
-# ------------------------------------------------------- portability smoke --
-FROM base-deb AS glibc
-COPY . .
-RUN make CONFIG_CLANG=y CONFIG_NATIVE_MODULES=y -j"$(nproc)"
-CMD ["./dynajs", "-e", "print('dynascript on glibc (' + (typeof Array.fromAsync) + ' fromAsync) OK')"]
 
 FROM base-musl AS musl
 COPY . .
