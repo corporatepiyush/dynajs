@@ -111,7 +111,7 @@ if (RUN_AGG) {
         const df = new DataFrame({ f64, f64b, f64pos, i32, u8, key });
         /* ~50% selectivity: a mask that is all-ones or all-zeros measures a
            branch predictor, not a kernel. */
-        const mask = df.gt("f64", 250);
+        const mask = df.GT("f64", 250);
         return {
             n, df, mask, f64,
             allOnes: new Uint8Array(n).fill(1),
@@ -148,91 +148,88 @@ if (RUN_AGG) {
         const A = true;                      /* shorthand: this row reads .length */
 
         /* ---- reductions, the family the accumulator count changes ---- */
-        row("sum.f64", n, () => df.sum("f64"), reps);
-        row("sum.f64.masked", n, () => df.sum("f64", mask), reps);
-        row("sum.i32", n, () => df.sum("i32"), reps);
-        row("sum.u8", n, () => df.sum("u8"), reps);
-        row("mean.f64", n, () => df.mean("f64"), reps);
-        row("min.f64", n, () => df.min("f64"), reps);
-        row("max.f64", n, () => df.max("f64"), reps);
-        row("min.i32", n, () => df.min("i32"), reps);
-        row("max.i32", n, () => df.max("i32"), reps);
-        row("min.f64.masked", n, () => df.min("f64", mask), reps);
-        row("count.masked", n, () => df.count("f64", mask), reps);
-        row("product.f64", n, () => df.product("f64"), reps);
-        row("product.i32", n, () => df.product("i32"), reps);
-        row("product.f64.masked", n, () => df.product("f64", mask), reps);
-        row("dot.f64", n, () => df.dotProduct("f64", "f64b"), reps);
-        row("dot.f64.masked", n, () => df.dotProduct("f64", "f64b", mask), reps);
-        row("dot.i32", n, () => df.dotProduct("i32", "i32"), reps);
+        row("sum.f64", n, () => df.SUM("f64"), reps);
+        row("sum.f64.masked", n, () => df.SUM("f64", mask), reps);
+        row("sum.i32", n, () => df.SUM("i32"), reps);
+        row("sum.u8", n, () => df.SUM("u8"), reps);
+        row("mean.f64", n, () => df.MEAN("f64"), reps);
+        row("min.f64", n, () => df.MIN("f64"), reps);
+        row("max.f64", n, () => df.MAX("f64"), reps);
+        row("min.i32", n, () => df.MIN("i32"), reps);
+        row("max.i32", n, () => df.MAX("i32"), reps);
+        row("min.f64.masked", n, () => df.MIN("f64", mask), reps);
+        row("count.masked", n, () => df.COUNT("f64", mask), reps);
+        row("product.f64", n, () => df.PRODUCT("f64"), reps);
+        row("product.i32", n, () => df.PRODUCT("i32"), reps);
+        row("product.f64.masked", n, () => df.PRODUCT("f64", mask), reps);
+        row("dot.f64", n, () => df.DOT_PRODUCT("f64", "f64b"), reps);
+        row("dot.f64.masked", n, () => df.DOT_PRODUCT("f64", "f64b", mask), reps);
+        row("dot.i32", n, () => df.DOT_PRODUCT("i32", "i32"), reps);
         /* the mixed narrow pair is the GENERIC block-widening path, not one of
            the fifteen specialised kernels -- a different cost entirely */
-        row("dot.u8xi32.generic", n, () => df.dotProduct("u8", "i32"), reps);
-        row("variance.f64", n, () => df.variance("f64"), reps);
-        row("variance.f64.masked", n, () => df.variance("f64", mask), reps);
-        row("stddev.f64", n, () => df.stddev("f64"), reps);
-        row("variance.i32", n, () => df.variance("i32"), reps);
-        row("bitwiseAnd.i32", n, () => df.bitwiseAnd("i32"), reps);
-        row("bitwiseOr.i32", n, () => df.bitwiseOr("i32"), reps);
-        row("bitwiseXor.i32", n, () => df.bitwiseXor("i32"), reps);
-        row("bitwiseXor.u8", n, () => df.bitwiseXor("u8"), reps);
-        row("bitwiseAnd.masked", n, () => df.bitwiseAnd("i32", mask), reps);
+        row("dot.u8xi32.generic", n, () => df.DOT_PRODUCT("u8", "i32"), reps);
+        row("variance.f64", n, () => df.VARIANCE("f64"), reps);
+        row("variance.f64.masked", n, () => df.VARIANCE("f64", mask), reps);
+        row("stddev.f64", n, () => df.STDDEV("f64"), reps);
+        row("variance.i32", n, () => df.VARIANCE("i32"), reps);
+        row("bitwiseAnd.i32", n, () => df.BITWISE_AND("i32"), reps);
+        row("bitwiseOr.i32", n, () => df.BITWISE_OR("i32"), reps);
+        row("bitwiseXor.i32", n, () => df.BITWISE_XOR("i32"), reps);
+        row("bitwiseXor.u8", n, () => df.BITWISE_XOR("u8"), reps);
+        row("bitwiseAnd.masked", n, () => df.BITWISE_AND("i32", mask), reps);
 
         /* ---- all/any: ADVERSARIAL first, and it is the number that counts ----
            On these two shapes the bypass never fires, every byte is read, and
-           the denominator n is the work actually done. */
-        row("ADV.all.allTrue", n, () => (df.all(ones) ? 1 : 0), reps);
-        row("ADV.any.allFalse", n, () => (df.any(zero) ? 1 : 0), reps);
-        row("ADV.allScan.allTrue", n, () => (df.allScan(ones) ? 1 : 0), reps);
-        row("ADV.anyScan.allFalse", n, () => (df.anyScan(zero) ? 1 : 0), reps);
-        row("ADV.allEarly.allTrue", n, () => (df.allEarly(ones) ? 1 : 0), reps);
-        row("ADV.anyEarly.allFalse", n, () => (df.anyEarly(zero) ? 1 : 0), reps);
+           the denominator n is the work actually done. The Scan/Early variants
+           these rows named are gone from the API; the mask CONTENT is what
+           decides whether the bypass fires, so the control survives. */
+        row("ADV.all.allTrue", n, () => (df.ALL(ones) ? 1 : 0), reps);
+        row("ADV.any.allFalse", n, () => (df.ANY(zero) ? 1 : 0), reps);
         /* the friendly shapes: the bypass fires at element 0, so ns/elem here is
            a per-CALL cost divided by n and means nothing about the kernel */
-        row("easy.any.firstTrue", n, () => (df.any(c.firstTrue) ? 1 : 0), reps);
-        row("easy.all.firstFalse", n, () => (df.all(c.firstFalse) ? 1 : 0), reps);
-        row("easy.anyEarly.first", n, () => (df.anyEarly(c.firstTrue) ? 1 : 0), reps);
-        row("any.mixed", n, () => (df.any(mask) ? 1 : 0), reps);
+        row("easy.any.firstTrue", n, () => (df.ANY(c.firstTrue) ? 1 : 0), reps);
+        row("easy.all.firstFalse", n, () => (df.ALL(c.firstFalse) ? 1 : 0), reps);
+        row("any.mixed", n, () => (df.ANY(mask) ? 1 : 0), reps);
 
         /* ---- producers: these return a TypedArray, so calibrate on noopArr ---- */
-        row("bitmask", n, () => df.bitmask(mask).length, reps, A);
-        row("abs.f64", n, () => df.abs("f64").length, reps, A);
-        row("abs.i32", n, () => df.abs("i32").length, reps, A);
-        row("round.f64", n, () => df.round("f64").length, reps, A);
-        row("floor.f64", n, () => df.floor("f64").length, reps, A);
-        row("ceil.f64", n, () => df.ceil("f64").length, reps, A);
-        row("sign.f64", n, () => df.sign("f64").length, reps, A);
-        row("sqrt.f64", n, () => df.sqrt("f64pos").length, slow, A);
-        row("log.f64", n, () => df.log("f64pos").length, slow, A);
-        row("exp.f64", n, () => df.exp("f64b").length, slow, A);
-        row("isna.f64", n, () => df.isna("f64").length, reps, A);
-        row("notna.f64", n, () => df.notna("f64").length, reps, A);
-        row("isna.i32", n, () => df.isna("i32").length, reps, A);
-        row("between.f64", n, () => df.between("f64", K(), 400).length, reps, A);
-        row("clip.f64", n, () => df.clip("f64", K(), 400).length, reps, A);
-        row("fillna.f64", n, () => df.fillna("f64", K()).length, reps, A);
-        row("add.col", n, () => df.add("f64", "f64b").length, reps, A);
-        row("add.scalar", n, () => df.add("f64", K()).length, reps, A);
-        row("sub.col", n, () => df.sub("f64", "f64b").length, reps, A);
-        row("mul.col", n, () => df.mul("f64", "f64b").length, reps, A);
-        row("div.col", n, () => df.div("f64", "f64b").length, reps, A);
-        row("rsub.scalar", n, () => df.rsub("f64", K()).length, reps, A);
-        row("rdiv.scalar", n, () => df.rdiv("f64", K()).length, reps, A);
-        row("add.widen.i32", n, () => df.add("i32", "f64b").length, reps, A);
+        row("bitmask", n, () => df.BITMASK(mask).length, reps, A);
+        row("abs.f64", n, () => df.ABS("f64").length, reps, A);
+        row("abs.i32", n, () => df.ABS("i32").length, reps, A);
+        row("round.f64", n, () => df.ROUND("f64").length, reps, A);
+        row("floor.f64", n, () => df.FLOOR("f64").length, reps, A);
+        row("ceil.f64", n, () => df.CEIL("f64").length, reps, A);
+        row("sign.f64", n, () => df.SIGN("f64").length, reps, A);
+        row("sqrt.f64", n, () => df.SQRT("f64pos").length, slow, A);
+        row("log.f64", n, () => df.LOG("f64pos").length, slow, A);
+        row("exp.f64", n, () => df.EXP("f64b").length, slow, A);
+        row("isna.f64", n, () => df.IS_NA("f64").length, reps, A);
+        row("notna.f64", n, () => df.NOT_NA("f64").length, reps, A);
+        row("isna.i32", n, () => df.IS_NA("i32").length, reps, A);
+        row("between.f64", n, () => df.BETWEEN("f64", K(), 400).length, reps, A);
+        row("clip.f64", n, () => df.CLIP("f64", K(), 400).length, reps, A);
+        row("fillna.f64", n, () => df.FILL_NA("f64", K()).length, reps, A);
+        row("add.col", n, () => df.ADD("f64", "f64b").length, reps, A);
+        row("add.scalar", n, () => df.ADD("f64", K()).length, reps, A);
+        row("sub.col", n, () => df.SUB("f64", "f64b").length, reps, A);
+        row("mul.col", n, () => df.MUL("f64", "f64b").length, reps, A);
+        row("div.col", n, () => df.DIV("f64", "f64b").length, reps, A);
+        row("rsub.scalar", n, () => df.RSUB("f64", K()).length, reps, A);
+        row("rdiv.scalar", n, () => df.RDIV("f64", K()).length, reps, A);
+        row("add.widen.i32", n, () => df.ADD("i32", "f64b").length, reps, A);
         /* guard (c) in the output, not just the comment: an INTEGRAL exponent
            takes libm's fast path. If these two rows are within 2x of each other
            the guard has stopped working and pow.frac is no longer a pow. */
-        row("pow.k2", n, () => df.pow("f64", 2).length, slow, A);
-        row("pow.frac", n, () => df.pow("f64", 2.7).length, slow, A);
-        row("pow.col", n, () => df.pow("f64b", "f64b").length, slow, A);
-        row("where.cc", n, () => df.where(mask, "f64", "f64b").length, reps, A);
-        row("where.cs", n, () => df.where(mask, "f64", K()).length, reps, A);
-        row("where.ss", n, () => df.where(mask, K(), 0).length, reps, A);
-        row("eq.f64", n, () => df.eq("f64", K()).length, reps, A);
-        row("ne.f64", n, () => df.ne("f64", K()).length, reps, A);
-        row("le.f64", n, () => df.le("f64", K()).length, reps, A);
-        row("ge.f64", n, () => df.ge("f64", K()).length, reps, A);
-        row("lt.i32", n, () => df.lt("i32", 0).length, reps, A);
+        row("pow.k2", n, () => df.POW("f64", 2).length, slow, A);
+        row("pow.frac", n, () => df.POW("f64", 2.7).length, slow, A);
+        row("pow.col", n, () => df.POW("f64b", "f64b").length, slow, A);
+        row("where.cc", n, () => df.WHERE(mask, "f64", "f64b").length, reps, A);
+        row("where.cs", n, () => df.WHERE(mask, "f64", K()).length, reps, A);
+        row("where.ss", n, () => df.WHERE(mask, K(), 0).length, reps, A);
+        row("eq.f64", n, () => df.EQ("f64", K()).length, reps, A);
+        row("ne.f64", n, () => df.NE("f64", K()).length, reps, A);
+        row("le.f64", n, () => df.LE("f64", K()).length, reps, A);
+        row("ge.f64", n, () => df.GE("f64", K()).length, reps, A);
+        row("lt.i32", n, () => df.LT("i32", 0).length, reps, A);
 
         /* ---- CONTROLS ----
            Nothing in the reduction kernel family reaches any of these, so all
@@ -243,11 +240,11 @@ if (RUN_AGG) {
            scatter; abs is the map1 table; where is the branchless select. The
            last two were added because gt and groupBySum are both integer-keyed
            and would miss a float-side layout effect between them. */
-        row("CONTROL.gt", n, () => df.gt("f64", 250).length, reps, A);
+        row("CONTROL.gt", n, () => df.GT("f64", 250).length, reps, A);
         row("CONTROL.groupBySum", n,
-            () => df.groupBySum("key", "f64").values[0], Math.max(20, reps >> 3));
-        row("CONTROL.abs.map", n, () => df.abs("f64b").length, reps, A);
-        row("CONTROL.where.sel", n, () => df.where(ones, "f64", "f64b").length, reps, A);
+            () => df.GROUP_BY_SUM("key", "f64").values[0], Math.max(20, reps >> 3));
+        row("CONTROL.abs.map", n, () => df.ABS("f64b").length, reps, A);
+        row("CONTROL.where.sel", n, () => df.WHERE(ones, "f64", "f64b").length, reps, A);
     }
     console.log("# sink " + (SINK === 12345 ? "?" : "ok"));
 
@@ -286,7 +283,7 @@ if (RUN_AGG) {
         const pv = new Float64Array(n);
         for (let i = 0; i < n; i++) pv[i] = (i & 1) ? 0.5 : 2;
         const df = new DataFrame({ x, y, iv, u, pv });
-        const m = df.gt("x", 200);
+        const m = df.GT("x", 200);
         const rel = (a, b) => (Object.is(a, b) ? 0
                                : Math.abs(a - b) / Math.max(1e-300, Math.abs(b)));
         let bad = 0;
@@ -298,34 +295,34 @@ if (RUN_AGG) {
         console.log("\n[A9] aggregates vs the JS loops");
         {
             let d = 0; for (let i = 0; i < n; i++) d += x[i] * y[i];
-            say("dotProduct", rel(df.dotProduct("x", "y"), d));
+            say("dotProduct", rel(df.DOT_PRODUCT("x", "y"), d));
             let dm = 0; for (let i = 0; i < n; i++) if (m[i]) dm += x[i] * y[i];
-            say("dotProduct mask", rel(df.dotProduct("x", "y", m), dm));
+            say("dotProduct mask", rel(df.DOT_PRODUCT("x", "y", m), dm));
             let dg = 0; for (let i = 0; i < n; i++) dg += u[i] * iv[i];
-            say("dot generic", rel(df.dotProduct("u", "iv"), dg));
+            say("dot generic", rel(df.DOT_PRODUCT("u", "iv"), dg));
         }
         {
             let s = 0; for (let i = 0; i < n; i++) s += x[i];
             const mu = s / n;
             let v = 0; for (let i = 0; i < n; i++) v += (x[i] - mu) * (x[i] - mu);
-            say("variance", rel(df.variance("x"), v / (n - 1)));
-            say("stddev", rel(df.stddev("x"), Math.sqrt(v / (n - 1))));
+            say("variance", rel(df.VARIANCE("x"), v / (n - 1)));
+            say("stddev", rel(df.STDDEV("x"), Math.sqrt(v / (n - 1))));
         }
         {
             let p = 1; for (let i = 0; i < n; i++) p *= pv[i];
-            say("product", rel(df.product("pv"), p));
+            say("product", rel(df.PRODUCT("pv"), p));
             if (!Number.isFinite(p))
                 console.log("  ** the product reference overflowed; this row is not a test **");
             let a = -1, o = 0, xr = 0;
             for (let i = 0; i < n; i++) { a &= iv[i]; o |= iv[i]; xr ^= iv[i]; }
-            say("bitwiseAnd", rel(df.bitwiseAnd("iv"), a));
-            say("bitwiseOr", rel(df.bitwiseOr("iv"), o));
-            say("bitwiseXor", rel(df.bitwiseXor("iv"), xr));
+            say("bitwiseAnd", rel(df.BITWISE_AND("iv"), a));
+            say("bitwiseOr", rel(df.BITWISE_OR("iv"), o));
+            say("bitwiseXor", rel(df.BITWISE_XOR("iv"), xr));
             let su = 0; for (let i = 0; i < n; i++) su += u[i];
-            say("sum.u8", rel(df.sum("u"), su));
+            say("sum.u8", rel(df.SUM("u"), su));
         }
         {
-            const bm = df.bitmask(m);
+            const bm = df.BITMASK(m);
             let b2 = 0;
             for (let i = 0; i < n; i++)
                 if (((bm[i >> 5] >>> (i & 31)) & 1) !== (m[i] ? 1 : 0)) b2++;
@@ -342,10 +339,10 @@ if (RUN_AGG) {
                 if (w >= 0) bad++;
                 console.log("  " + name.padEnd(18) + (w < 0 ? "ok (bit-identical)" : "MISMATCH at " + w));
             };
-            chk("abs", df.abs("x"), Math.abs);
-            chk("round", df.round("x"), Math.round);
-            chk("sqrt", df.sqrt("x"), Math.sqrt);
-            chk("log", df.log("x"), Math.log);
+            chk("abs", df.ABS("x"), Math.abs);
+            chk("round", df.ROUND("x"), Math.round);
+            chk("sqrt", df.SQRT("x"), Math.sqrt);
+            chk("log", df.LOG("x"), Math.log);
         }
         console.log(bad ? "  ** " + bad + " DIFFERENTIAL MISMATCH(ES): the numbers above are not "
                           + "measuring a correct kernel **"
@@ -394,7 +391,7 @@ const jsSum = bench("JS for-loop sum", () => { let s = 0; for (let i = 0; i < N;
 const t0 = performance.now();
 const df = new DataFrame({ price, qty, keyc, city });
 const ctorMs = performance.now() - t0;
-const dfSum = bench("df.sum('price')", () => df.sum("price"));
+const dfSum = bench("df.SUM('price')", () => df.SUM("price"));
 console.log("  -> vs JS loop " + (jsSum / dfSum).toFixed(1) + "x, " +
             "vs floor " + (dfSum / floor).toFixed(2) + "x");
 console.log("  (DataFrame construction, incl. dictionary-encoding " + N +
@@ -402,13 +399,13 @@ console.log("  (DataFrame construction, incl. dictionary-encoding " + N +
 
 console.log("\n[2] predicate -> mask");
 const jsFilter = bench("JS filter count (price>250)", () => { let c = 0; for (let i = 0; i < N; i++) if (price[i] > 250) c++; return c; });
-const dfMask = bench("df.gt('price',250)", () => df.gt("price", 250));
+const dfMask = bench("df.GT('price',250)", () => df.GT("price", 250));
 console.log("  -> " + (jsFilter / dfMask).toFixed(1) + "x");
 
 console.log("\n[3] MASKED reduction -- no engine primitive exists for this");
-const mask = df.gt("price", 250);
+const mask = df.GT("price", 250);
 const jsMasked = bench("JS masked sum", () => { let s = 0; for (let i = 0; i < N; i++) if (price[i] > 250) s += price[i]; return s; });
-const dfMasked = bench("df.sum('price', mask)", () => df.sum("price", mask));
+const dfMasked = bench("df.SUM('price', mask)", () => df.SUM("price", mask));
 console.log("  -> " + (jsMasked / dfMasked).toFixed(1) + "x");
 
 console.log("\n[4] GROUP-BY sum -- no engine primitive exists for this");
@@ -417,8 +414,8 @@ const jsGroup = bench("JS groupby-sum (int keys)", () => {
     for (let i = 0; i < N; i++) g[keyc[i]] += price[i];
     return g[0];
 });
-const dfGroupI = bench("df.groupBySum('keyc','price')", () => df.groupBySum("keyc", "price"));
-const dfGroupS = bench("df.groupBySum('city','price')", () => df.groupBySum("city", "price"));
+const dfGroupI = bench("df.GROUP_BY_SUM('keyc','price')", () => df.GROUP_BY_SUM("keyc", "price"));
+const dfGroupS = bench("df.GROUP_BY_SUM('city','price')", () => df.GROUP_BY_SUM("city", "price"));
 console.log("  -> int keys " + (jsGroup / dfGroupI).toFixed(1) + "x, " +
             "string keys " + (jsGroup / dfGroupS).toFixed(1) +
             "x (a JS string-keyed groupby with a Map is far slower still)");
@@ -430,8 +427,8 @@ const jsPipe = bench("JS: filter+groupby", () => {
     return g[0];
 });
 const dfPipe = bench("df: gt + groupBySum(mask)", () => {
-    const m = df.gt("price", 250);
-    return df.groupBySum("keyc", "price", m);
+    const m = df.GT("price", 250);
+    return df.GROUP_BY_SUM("keyc", "price", m);
 });
 console.log("  -> " + (jsPipe / dfPipe).toFixed(1) + "x");
 
@@ -445,9 +442,9 @@ const jsMap = bench("JS: (price*1.2 + 3) clipped", () => {
     return o[0];
 });
 const dfMap = bench("df: mul -> add -> clip", () => {
-    const a = new DataFrame({ v: df.mul("price", 1.2) });
-    const b = new DataFrame({ v: a.add("v", 3) });
-    return b.clip("v", 10, 400)[0];
+    const a = new DataFrame({ v: df.MUL("price", 1.2) });
+    const b = new DataFrame({ v: a.ADD("v", 3) });
+    return b.CLIP("v", 10, 400)[0];
 });
 console.log("  -> " + (jsMap / dfMap).toFixed(1) +
             "x (three passes and two intermediate frames against one fused JS loop:" +
@@ -457,19 +454,19 @@ console.log("  -> " + (jsMap / dfMap).toFixed(1) +
    and a silently-wrong kernel is exactly the failure mode SIMD code has. */
 console.log("\n[7] results agree with the JS loops");
 let ref = 0; for (let i = 0; i < N; i++) ref += price[i];
-const got = df.sum("price");
+const got = df.SUM("price");
 console.log("  sum      rel.err " + (Math.abs(got - ref) / ref).toExponential(2) +
             "   (reordered additions: tolerance, not equality)");
 let refm = 0, refc = 0;
 for (let i = 0; i < N; i++) if (price[i] > 250) { refm += price[i]; refc++; }
-console.log("  masked   rel.err " + (Math.abs(df.sum("price", mask) - refm) / refm).toExponential(2) +
-            "   count " + (df.count("price", mask) === refc ? "EXACT" : "MISMATCH"));
+console.log("  masked   rel.err " + (Math.abs(df.SUM("price", mask) - refm) / refm).toExponential(2) +
+            "   count " + (df.COUNT("price", mask) === refc ? "EXACT" : "MISMATCH"));
 let refq = 0; for (let i = 0; i < N; i++) refq += qty[i];
-console.log("  int sum  " + (df.sum("qty") === refq ? "EXACT" : "MISMATCH " + df.sum("qty") + " vs " + refq) +
+console.log("  int sum  " + (df.SUM("qty") === refq ? "EXACT" : "MISMATCH " + df.SUM("qty") + " vs " + refq) +
             "   (int64 accumulator, so this one is equality)");
 const gref = new Float64Array(NGROUPS);
 for (let i = 0; i < N; i++) gref[keyc[i]] += price[i];
-const gg = df.groupBySum("keyc", "price");
+const gg = df.GROUP_BY_SUM("keyc", "price");
 let gmax = 0;
 for (let i = 0; i < NGROUPS; i++) gmax = Math.max(gmax, Math.abs(gg.values[i] - gref[i]) / Math.max(1, gref[i]));
 console.log("  groupby  max rel.err " + gmax.toExponential(2));

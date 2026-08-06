@@ -259,10 +259,19 @@ static int dyn_df_bind(JSContext *ctx, const DataFrame *df, int idx, DFBound *b)
  * returns the index, or -1 throwing. */
 static int df_col_arg(JSContext *ctx, const DataFrame *df, JSValueConst v)
 {
-    const char *s = JS_ToCString(ctx, v);
+    size_t len;
+    const char *s = JS_ToCStringLen(ctx, &len, v);
     int idx;
     if (!s)
         return -1;
+    /* A JS string may hold U+0000 and the C form is NUL-terminated, so strcmp
+       would match a PREFIX: "secret\0ignored" resolved to "secret". Refuse it
+       rather than truncate — a caller that vetted the name vetted all of it. */
+    if (strlen(s) != len) {
+        JS_FreeCString(ctx, s);
+        JS_ThrowRangeError(ctx, "column name contains a NUL character");
+        return -1;
+    }
     idx = df_find_col(df, s);
     if (idx < 0)
         JS_ThrowRangeError(ctx, "no such column: '%s'", s);
@@ -7480,12 +7489,11 @@ static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
         free(idx);
         return JS_EXCEPTION;
     }
-    /* CORR's diagonal is 1 by definition and is not computed; COV's is the
-       column variance, so its pair loop starts ON the diagonal. */
+    /* Both loops start ON the diagonal. CORR's used to be a literal 1.0, which
+       disagreed with CORR(c,c) = NaN for a zero-variance column — the one cell
+       that never went through the moments the rest are computed from. */
     for (i = 0; i < nc; i++) {
-        if (!magic)
-            m[i * nc + i] = 1.0;
-        for (j = magic ? i : i + 1; j < nc; j++) {
+        for (j = i; j < nc; j++) {
             DFBound bx, by;
             DFMoments mo;
             double r, den;
@@ -7503,8 +7511,12 @@ static JSValue dyn_df_corr_matrix(JSContext *ctx, JSValueConst this_val,
                differently, so an inline copy makes a cell disagree with CORR by
                a ULP -- which the doc promises it cannot. */
             (void)den;
+            /* On the diagonal dfm_corr computes S/(sqrt(S)*sqrt(S)), which is
+               not exactly 1 for every S — so pin 1.0 where a variance exists
+               and let the NaN through where it does not. */
             r = magic ? (mo.n >= 2.0 ? mo.cxy / (mo.n - 1.0) : NAN)
-                      : dfm_corr(&mo);
+              : (i == j) ? (mo.m2x > 0.0 ? 1.0 : NAN)
+              : dfm_corr(&mo);
             m[i * nc + j] = r;
             m[j * nc + i] = r;      /* symmetric by construction, not by luck */
         }
@@ -7564,8 +7576,9 @@ static JSValue dyn_df_rolling_disp(JSContext *ctx, JSValueConst this_val,
         return JS_EXCEPTION;
     span = df_map_span(n, b.n, dst);
 
-    /* NaN never enters, as ROLLING_MIN/MAX; a window with fewer than two
-       contributing rows has no sample variance and yields NaN. */
+    /* NaN PROPAGATES, as VARIANCE and ROLLING_MEAN do -- variance is in the sum
+       family, not the min/max family that ignores it. A window with fewer than
+       two selected rows has no sample variance and yields NaN. */
     for (i = 0; i < span; i++) {
         double mean = 0.0, m2 = 0.0;
         uint32_t c = 0, j, lo;
@@ -7575,13 +7588,9 @@ static JSValue dyn_df_rolling_disp(JSContext *ctx, JSValueConst this_val,
         }
         lo = i + 1 - w;
         for (j = lo; j <= i; j++) {
-            double v;
             if (mask && !mask[j])
                 continue;
-            v = df_get(b.p, b.type, j);
-            if (v != v)
-                continue;
-            mean += v;
+            mean += df_get(b.p, b.type, j);
             c++;
         }
         if (c < 2) {
@@ -7590,13 +7599,10 @@ static JSValue dyn_df_rolling_disp(JSContext *ctx, JSValueConst this_val,
         }
         mean /= (double)c;
         for (j = lo; j <= i; j++) {
-            double v, d;
+            double d;
             if (mask && !mask[j])
                 continue;
-            v = df_get(b.p, b.type, j);
-            if (v != v)
-                continue;
-            d = v - mean;
+            d = df_get(b.p, b.type, j) - mean;
             m2 += d * d;
         }
         m2 /= (double)(c - 1);
@@ -7684,9 +7690,9 @@ static JSValue dyn_df_zscore(JSContext *ctx, JSValueConst this_val,
 
 enum { DFX_DENSE_RANK, DFX_PERCENT_RANK };
 
-/* DENSE_RANK / PERCENT_RANK(col[, mask]) -> Float64Array. Both use the MINIMUM
-   rank for a tie, which is SQL's rule for these two; RANK uses the average,
-   which is the only rule whose column sum is invariant. NaN rows stay NaN. */
+/* DENSE_RANK counts DISTINCT values (no gap after a tie); PERCENT_RANK uses the
+   MINIMUM rank, normalised. RANK averages instead -- the only rule whose column
+   sum is invariant. Verified against SQLite's window functions. NaN stays NaN. */
 static JSValue dyn_df_rank_ext(JSContext *ctx, JSValueConst this_val,
                                int argc, JSValueConst *argv, int magic)
 {
@@ -7841,7 +7847,10 @@ static JSValue dyn_df_rank_corr(JSContext *ctx, JSValueConst this_val,
         it = NULL;
     }
 
-    dfm_moments(rx, DF_F64, ry, DF_F64, both, nrows, &mo);
+    /* span, not nrows: both[] is only filled over span, and df_out_alloc does
+       not zero. They are equal today (the constructor refuses ragged columns),
+       so this keeps the guard above consistent rather than half-applied. */
+    dfm_moments(rx, DF_F64, ry, DF_F64, both, span, &mo);
     r = dfm_corr(&mo);
     free(both);
     free(rx);

@@ -55,6 +55,14 @@ function eq(a, b, what) {
     ok((a === b) || (Number.isNaN(a) && Number.isNaN(b)), what, a + " !== " + b);
 }
 function same(a, b, what) { ok(Object.is(a, b), what, a + " is not " + b); }
+/* For two results that are the same quantity by a DIFFERENT summation order.
+   `eq` would pin one association and break the day an accumulator count moves;
+   `near`'s relative tolerance is far looser than the few ulp actually at stake. */
+function ulpNear(a, b, ulps, what) {
+    const d = Math.abs(a - b), scale = Math.max(Math.abs(a), Math.abs(b));
+    const got = scale === 0 ? 0 : d / (scale * Number.EPSILON);
+    ok(got <= ulps, what, a + " vs " + b + " (" + got.toFixed(2) + " ulp > " + ulps + ")");
+}
 function near(a, b, what, tol) {
     tol = tol || 1e-12;
     if (Number.isNaN(a) && Number.isNaN(b)) { pass++; return; }
@@ -4474,6 +4482,26 @@ S("rolling dispersion");
     m1[0] = 1;
     ok(Number.isNaN(df.ROLLING_VAR("x", 4, m1)[3]),
        "one selected row in the window yields NaN, not 0");
+    /* NaN PROPAGATES here, like VARIANCE and ROLLING_MEAN and unlike
+       ROLLING_MIN/MAX. Ignoring it would report the variance of a SUBSET of the
+       window with nothing to say so -- a plausible wrong answer. */
+    {
+        const h = new DataFrame({ v: Float64Array.from([1, 2, NaN, 4, 5, 6, 7, 8]) });
+        const rv = h.ROLLING_VAR("v", 3), rm = h.ROLLING_MEAN("v", 3);
+        for (const i of [2, 3, 4]) {
+            ok(Number.isNaN(rv[i]), "row " + i + " touches the NaN so ROLLING_VAR is NaN");
+            ok(Number.isNaN(rm[i]), "and ROLLING_MEAN agrees at row " + i);
+        }
+        ok(Number.isNaN(h.VARIANCE("v")), "as does the non-rolling VARIANCE");
+        ok(!Number.isNaN(rv[7]), "a window clear of the NaN still answers");
+        eq(rv[7], 1, "and answers correctly");
+        /* min/max are the family that DOES ignore NaN -- the contrast is the point */
+        ok(!Number.isNaN(h.ROLLING_MIN("v", 3)[3]), "ROLLING_MIN still ignores NaN");
+        /* an infinity already reached NaN through Inf-Inf; keep it pinned */
+        const inf = new DataFrame({ v: Float64Array.from([1, 2, Infinity, 4, 5, 6]) });
+        ok(Number.isNaN(inf.ROLLING_VAR("v", 3)[3]), "an infinity in the window is NaN");
+        ok(Number.isNaN(inf.VARIANCE("v")), "matching VARIANCE, which is also NaN");
+    }
     throwsLike(() => df.ROLLING_VAR("x", 0), "positive integer",
                "ROLLING_VAR refuses a zero window");
     throwsLike(() => df.ROLLING_STD("x", 2.5), "positive integer",
@@ -4543,8 +4571,10 @@ S("rank conventions");
     const t7 = df.NTILE("k", 7);
     elemEq(t7, [1, 2, 3, 4, 5, 6, 7], "as many tiles as rows is one row each");
     /* more tiles than rows: the trailing tiles are empty, none is out of range */
-    const t9 = df.NTILE("k", 9);
-    ok(t9.every((t) => t >= 1 && t <= 9), "no tile index is out of range when k > m");
+    /* NOT `every(t => t >= 1 && t <= 9)`: that predicate is also true of
+       [1,1,1,1,1,1,1]. 7 rows into 9 tiles is one row each, tiles 8 and 9 empty. */
+    elemEq(df.NTILE("k", 9), [1, 2, 3, 4, 5, 6, 7],
+           "more tiles than rows gives one row each, not a clamp");
     throwsLike(() => df.NTILE("k", 0), "positive integer", "NTILE refuses zero buckets");
 
     /* NaN is ranked by no convention: it stays NaN in all four. */
@@ -4575,6 +4605,28 @@ S("rank conventions");
     ok(Math.abs(holed.RANK_CORR("a", "b") - 1) < 1e-12,
        "a NaN in either column drops the row from BOTH rankings",
        "got " + holed.RANK_CORR("a", "b"));
+
+    /* TIES ARE THE ONLY CASE THAT SEPARATES THE TWO FORMULAS. Everything above
+       is tie-free, so it passes just as well against the naive
+       1 - 6*sum(d^2)/(n(n^2-1)) shortcut, which is WRONG with ties. Expected
+       values are scipy 1.18.0 scipy.stats.spearmanr(x, y).statistic; the
+       fourth column is what the shortcut would have returned. */
+    for (const [name, xs, ys, scipyRho, shortcut] of [
+        ["heavy ties both", [1, 1, 2, 2, 3, 3, 4, 4], [2, 2, 2, 5, 5, 9, 9, 9],
+         0.9036961141150639, 0.910714],
+        ["ties in x only", [1, 1, 1, 2, 3, 4, 5, 5], [3, 1, 4, 1, 5, 9, 2, 6],
+         0.44457998712659669, 0.464286],
+        ["perfect with ties", [1, 1, 2, 2, 3, 3], [4, 4, 7, 7, 9, 9], 1, 1],
+        ["anti with ties", [1, 1, 2, 2, 3, 3], [9, 9, 7, 7, 4, 4], -1, -0.828571],
+    ]) {
+        const tf = new DataFrame({ x: Float64Array.from(xs), y: Float64Array.from(ys) });
+        const got = tf.RANK_CORR("x", "y");
+        ulpNear(got, scipyRho, 4, "RANK_CORR " + name + " matches scipy 1.18.0");
+        if (scipyRho !== shortcut)
+            ok(Math.abs(got - shortcut) > 1e-4,
+               "and is NOT the tie-broken shortcut for " + name,
+               "got " + got + ", shortcut would be " + shortcut);
+    }
 }
 
 S("covariance matrix");
@@ -4589,16 +4641,63 @@ S("covariance matrix");
     /* a cell must equal the pairwise call to the last bit, not merely closely */
     eq(cm.matrix[1], df.COV_SAMP("a", "b"), "the off-diagonal IS COV_SAMP");
     eq(cm.matrix[2], cm.matrix[1], "and the matrix is symmetric");
-    eq(cm.matrix[0], df.VARIANCE("a"), "the diagonal is the sample variance");
-    eq(cm.matrix[3], df.VARIANCE("b"), "for every column");
+    /* The diagonal IS the pairwise call -- exact, and that is the contract.
+       It is NOT bit-equal to VARIANCE: those are two summation orders and they
+       diverge above DFM_UNROLL_MIN (measured 0.7 ulp at n=63, 2.1 at n=10000),
+       so asserting eq() here would pass only for frames smaller than 64. */
+    eq(cm.matrix[0], df.COV_SAMP("a", "a"), "the diagonal is COV_SAMP(a,a), exactly");
+    eq(cm.matrix[3], df.COV_SAMP("b", "b"), "for every column");
+    ulpNear(cm.matrix[0], df.VARIANCE("a"), 4, "and is the sample variance to within 4 ulp");
     const one = df.COV_MATRIX(["a"]);
-    eq(one.matrix[0], df.VARIANCE("a"), "a 1x1 matrix is just the variance");
+    eq(one.matrix[0], df.COV_SAMP("a", "a"), "a 1x1 matrix is just that variance");
+    /* the divergence is real, so cross the threshold rather than assume it */
+    {
+        const n = 200, big = new Float64Array(n);
+        for (let i = 0; i < n; i++) big[i] = ((i * 7919) % 1013) - 506 + i * 0.03125;
+        const bf = new DataFrame({ big });
+        eq(bf.COV_MATRIX(["big"]).matrix[0], bf.COV_SAMP("big", "big"),
+           "above DFM_UNROLL_MIN the diagonal is still exactly COV_SAMP");
+        ulpNear(bf.COV_MATRIX(["big"]).matrix[0], bf.VARIANCE("big"), 8,
+                "and still within 8 ulp of VARIANCE");
+    }
     throwsLike(() => df.COV_MATRIX("a"), "array", "COV_MATRIX refuses a bare name");
     throwsLike(() => df.COV_MATRIX([]), "between 1", "and refuses an empty list");
     /* CORR_MATRIX must be unchanged by COV_MATRIX sharing its implementation */
     const rm = df.CORR_MATRIX(["a", "b"]);
     eq(rm.matrix[0], 1, "CORR_MATRIX still has an exact 1 on the diagonal");
     eq(rm.matrix[1], df.CORR("a", "b"), "and its off-diagonal is still CORR");
+    /* The diagonal used to be a literal 1.0 — the one cell not computed from
+       the moments — so it read 1 for a CONSTANT column while CORR(c,c) is NaN.
+       Every cell must agree with the pairwise call, including this one. */
+    {
+        const k = new DataFrame({
+            c: Float64Array.from([5, 5, 5, 5]),
+            v: Float64Array.from([1, 2, 3, 4]),
+        });
+        ok(Number.isNaN(k.CORR("c", "c")), "CORR of a constant column is NaN");
+        ok(Number.isNaN(k.CORR_MATRIX(["c"]).matrix[0]),
+           "so the CORR_MATRIX diagonal is NaN too, not a literal 1",
+           "got " + k.CORR_MATRIX(["c"]).matrix[0]);
+        const mixed = k.CORR_MATRIX(["c", "v"]);
+        ok(Number.isNaN(mixed.matrix[0]), "the constant column's diagonal is NaN");
+        eq(mixed.matrix[3], 1, "the varying column's diagonal is still exactly 1");
+        /* COV has a real answer for a constant column: zero variance. */
+        eq(k.COV_MATRIX(["c"]).matrix[0], k.COV_SAMP("c", "c"),
+           "COV_MATRIX's diagonal is 0 there, and equals COV_SAMP");
+    }
+    /* A column name may hold U+0000; the C name is NUL-terminated, so strcmp
+       would match a PREFIX and "secret\0ignored" would resolve to "secret". */
+    {
+        const NUL = String.fromCharCode(0);
+        const g = new DataFrame({ secret: Float64Array.from([1, 2, 3]) });
+        eq(g.SUM("secret"), 6, "the real name still resolves");
+        throwsLike(() => g.SUM("secret" + NUL + "ignored"), "NUL",
+                   "a name with a trailing NUL segment is refused, not truncated");
+        throwsLike(() => g.SUM("sec" + NUL + "ret"), "NUL",
+                   "and so is one with an interior NUL");
+        throwsLike(() => g.COV_MATRIX(["secret" + NUL + "x"]), "NUL",
+                   "the array-of-names path refuses it too");
+    }
 }
 
 /* ============================================ every method was exercised */
