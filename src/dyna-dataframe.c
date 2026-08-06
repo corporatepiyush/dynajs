@@ -3910,6 +3910,170 @@ static JSValue dyn_df_drop_duplicates(JSContext *ctx, JSValueConst this_val,
 
 enum { DFC_GROUP_ALL, DFC_GROUP_UNIQ };
 
+/* Values gathered per group and flattened. Group g owns
+   [off[g] - cnt[g], off[g]) in `flat` once dfc_group_gather has filled it. */
+typedef struct {
+    double *flat;
+    uint32_t *cnt, *off;
+    uint32_t nkeys, ngroups, total, n;
+} DfcGrouped;
+
+static void dfc_grouped_free(DfcGrouped *G)
+{
+    free(G->flat);
+    free(G->cnt);
+    free(G->off);
+    memset(G, 0, sizeof(*G));
+}
+
+/* Two passes: count per group, prefix-sum into offsets, then scatter. `uniq`
+   keeps only the FIRST occurrence of each (group, value) pair. Runs no JS, so
+   every caller must have coerced its arguments before calling. */
+static int dfc_group_gather(JSContext *ctx, DataFrame *df, int ki, int vi,
+                            const uint8_t *mask, int uniq, DfcGrouped *G)
+{
+    DFBound kb, vb;
+    DfcSet set;
+    uint8_t *keep = NULL;
+    uint32_t i, g, n, total;
+
+    memset(G, 0, sizeof(*G));
+    memset(&set, 0, sizeof(set));
+    if (dfc_group_count(ctx, df, ki, &G->nkeys, &G->ngroups))
+        return -1;
+    if (dyn_df_bind(ctx, df, ki, &kb) || dyn_df_bind(ctx, df, vi, &vb))
+        return -1;
+    if (vb.type == DF_STR) {
+        JS_ThrowTypeError(ctx, "cannot collect %s into a group",
+                          df_type_name(vb.type));
+        return -1;
+    }
+    n = kb.n < vb.n ? kb.n : vb.n;
+    if (n > df->nrows)
+        n = df->nrows;
+    G->n = n;
+
+    G->cnt = calloc(G->ngroups, sizeof(*G->cnt));
+    G->off = malloc((size_t)G->ngroups * sizeof(*G->off));
+    if (!G->cnt || !G->off) {
+        JS_ThrowOutOfMemory(ctx);
+        goto fail;
+    }
+    if (uniq) {
+        keep = calloc(n ? n : 1, 1);
+        if (!keep) {
+            JS_ThrowOutOfMemory(ctx);
+            goto fail;
+        }
+    }
+
+    /* pass 1: how many values each group receives. For the uniq variant the
+       per-row answer is kept so pass 2 needs no second probe. */
+    for (i = 0; i < n; i++) {
+        if (mask && !mask[i])
+            continue;
+        g = (uint32_t)df_get(kb.p, kb.type, i);
+        if (g >= G->ngroups)
+            continue;
+        if (uniq) {
+            int fresh;
+            if (dfc_set_put(ctx, &set, dfc_key(df_get(vb.p, vb.type, i)), g,
+                            NULL, &fresh))
+                goto fail;
+            if (!fresh)
+                continue;
+            keep[i] = 1;
+        }
+        G->cnt[g]++;
+    }
+
+    total = 0;
+    for (g = 0; g < G->ngroups; g++) {
+        G->off[g] = total;
+        total += G->cnt[g];
+    }
+    G->total = total;
+    G->flat = df_out_alloc(ctx, total, sizeof(double));
+    if (!G->flat)
+        goto fail;
+
+    /* pass 2: scatter. off[g] advances as group g fills, so afterwards it is
+       one past that group's last element. */
+    for (i = 0; i < n; i++) {
+        if (mask && !mask[i])
+            continue;
+        g = (uint32_t)df_get(kb.p, kb.type, i);
+        if (g >= G->ngroups)
+            continue;
+        if (uniq && !keep[i])
+            continue;
+        G->flat[G->off[g]++] = df_get(vb.p, vb.type, i);
+    }
+    free(keep);
+    dfc_set_free(&set);
+    return 0;
+
+ fail:
+    free(keep);
+    dfc_set_free(&set);
+    dfc_grouped_free(G);
+    return -1;
+}
+
+/* One Float64Array per group, in key order. JS-visible allocation, so it runs
+   only after every gather pass is done. */
+static JSValue dfc_values_array(JSContext *ctx, const DfcGrouped *G)
+{
+    JSValue values = JS_NewArray(ctx);
+    uint32_t g;
+
+    if (JS_IsException(values))
+        return values;
+    for (g = 0; g < G->nkeys; g++) {
+        double *slice = df_out_alloc(ctx, G->cnt[g], sizeof(double));
+        JSValue ta;
+        if (!slice) {
+            JS_FreeValue(ctx, values);
+            return JS_EXCEPTION;
+        }
+        memcpy(slice, G->flat + (G->off[g] - G->cnt[g]),
+               (size_t)G->cnt[g] * sizeof(double));
+        ta = df_to_typed_array(ctx, slice, (size_t)G->cnt[g] * sizeof(double),
+                               JS_TYPED_ARRAY_FLOAT64);
+        if (JS_IsException(ta) ||
+            JS_DefinePropertyValueUint32(ctx, values, g, ta,
+                                         JS_PROP_C_W_E) < 0) {
+            JS_FreeValue(ctx, values);
+            return JS_EXCEPTION;
+        }
+    }
+    return values;
+}
+
+/* Keys for the DENSE-code grouping (dfc_group_count assigns 0..nkeys-1); the
+   hash-set grouping has its own dfc_keys_array above. A string key column
+   yields its dictionary strings, a numeric one its codes. */
+static JSValue dfc_dense_keys(JSContext *ctx, const DataFrame *df, int ki,
+                              uint32_t nkeys)
+{
+    JSValue keys = JS_NewArray(ctx);
+    uint32_t g;
+
+    if (JS_IsException(keys))
+        return keys;
+    for (g = 0; g < nkeys; g++) {
+        JSValue k = (df->cols[ki].type == DF_STR)
+                    ? JS_NewString(ctx, df->cols[ki].dict[g])
+                    : JS_NewInt64(ctx, g);
+        if (JS_IsException(k) ||
+            JS_DefinePropertyValueUint32(ctx, keys, g, k, JS_PROP_C_W_E) < 0) {
+            JS_FreeValue(ctx, keys);
+            return JS_EXCEPTION;
+        }
+    }
+    return keys;
+}
+
 /* An empty group is a zero-length Float64Array, never a hole and never
    undefined, so values[i].length is always safe. Summing a group's array
    reproduces GROUP_BY_SUM's value for that group. */
@@ -3917,15 +4081,10 @@ static JSValue dyn_df_group_array(JSContext *ctx, JSValueConst this_val,
                                   int argc, JSValueConst *argv, int magic)
 {
     DataFrame *df;
-    DFBound kb, vb;
-    DfcSet set;
+    DfcGrouped G;
     const uint8_t *mask;
-    uint32_t *cnt = NULL, *off = NULL;
-    uint8_t *keep = NULL;
-    double *flat = NULL;
     int ki, vi, ok;
-    uint32_t i, g, n, nkeys, ngroups, total;
-    JSValue keys = JS_UNDEFINED, values = JS_UNDEFINED;
+    JSValue keys, values;
 
     df = dyn_plain_get(ctx, this_val, dyn_df_class_id);
     if (!df)
@@ -3940,124 +4099,170 @@ static JSValue dyn_df_group_array(JSContext *ctx, JSValueConst this_val,
     if (!ok)
         return JS_EXCEPTION;
 
-    /* no JS may run from here to the end of the second pass. */
-    memset(&set, 0, sizeof(set));
-    if (dfc_group_count(ctx, df, ki, &nkeys, &ngroups))
+    /* no JS may run from here to the end of the gather. */
+    if (dfc_group_gather(ctx, df, ki, vi, mask, magic == DFC_GROUP_UNIQ, &G))
         return JS_EXCEPTION;
-    if (dyn_df_bind(ctx, df, ki, &kb) || dyn_df_bind(ctx, df, vi, &vb))
+
+    values = dfc_values_array(ctx, &G);
+    keys = JS_IsException(values) ? JS_EXCEPTION
+                                  : dfc_dense_keys(ctx, df, ki, G.nkeys);
+    dfc_grouped_free(&G);
+    if (JS_IsException(values) || JS_IsException(keys)) {
+        JS_FreeValue(ctx, values);
+        JS_FreeValue(ctx, keys);
         return JS_EXCEPTION;
-    if (vb.type == DF_STR)
-        return JS_ThrowTypeError(ctx, "cannot collect %s into a group",
-                                 df_type_name(vb.type));
-    n = kb.n < vb.n ? kb.n : vb.n;
-    if (n > df->nrows)
-        n = df->nrows;
-
-    cnt = calloc(ngroups, sizeof(*cnt));
-    off = malloc((size_t)ngroups * sizeof(*off));
-    if (!cnt || !off) {
-        JS_ThrowOutOfMemory(ctx);
-        goto fail;
     }
-    if (magic == DFC_GROUP_UNIQ) {
-        keep = malloc(n ? n : 1);
-        if (!keep) {
-            JS_ThrowOutOfMemory(ctx);
-            goto fail;
-        }
-        memset(keep, 0, n ? n : 1);
-    }
-
-    /* pass 1: how many values each group receives. For the uniq variant that
-       is the count of FRESH (group, value) pairs, and the per-row answer is
-       kept so the second pass needs no second probe. */
-    for (i = 0; i < n; i++) {
-        if (mask && !mask[i])
-            continue;
-        g = (uint32_t)df_get(kb.p, kb.type, i);
-        if (g >= ngroups)
-            continue;
-        if (magic == DFC_GROUP_UNIQ) {
-            int fresh;
-            if (dfc_set_put(ctx, &set, dfc_key(df_get(vb.p, vb.type, i)), g,
-                            NULL, &fresh))
-                goto fail;
-            if (!fresh)
-                continue;
-            keep[i] = 1;
-        }
-        cnt[g]++;
-    }
-
-    total = 0;
-    for (g = 0; g < ngroups; g++) {
-        off[g] = total;
-        total += cnt[g];
-    }
-    flat = df_out_alloc(ctx, total, sizeof(double));
-    if (!flat)
-        goto fail;
-
-    /* pass 2: scatter. off[g] advances as group g fills, so afterwards it is
-       one past that group's last element and the slice is
-       [off[g] - cnt[g], off[g]). */
-    for (i = 0; i < n; i++) {
-        if (mask && !mask[i])
-            continue;
-        g = (uint32_t)df_get(kb.p, kb.type, i);
-        if (g >= ngroups)
-            continue;
-        if (magic == DFC_GROUP_UNIQ && !keep[i])
-            continue;
-        flat[off[g]++] = df_get(vb.p, vb.type, i);
-    }
-
-    /* only now may a JS-visible allocation run. */
-    values = JS_NewArray(ctx);
-    if (JS_IsException(values))
-        goto fail;
-    for (g = 0; g < nkeys; g++) {
-        double *slice = df_out_alloc(ctx, cnt[g], sizeof(double));
-        JSValue ta;
-        if (!slice)
-            goto fail;
-        memcpy(slice, flat + (off[g] - cnt[g]), (size_t)cnt[g] * sizeof(double));
-        ta = df_to_typed_array(ctx, slice, (size_t)cnt[g] * sizeof(double),
-                               JS_TYPED_ARRAY_FLOAT64);
-        if (JS_IsException(ta) ||
-            JS_DefinePropertyValueUint32(ctx, values, g, ta,
-                                         JS_PROP_C_W_E) < 0)
-            goto fail;
-    }
-
-    keys = JS_NewArray(ctx);
-    if (JS_IsException(keys))
-        goto fail;
-    for (g = 0; g < nkeys; g++) {
-        JSValue k = (df->cols[ki].type == DF_STR)
-                    ? JS_NewString(ctx, df->cols[ki].dict[g])
-                    : JS_NewInt64(ctx, g);
-        if (JS_IsException(k) ||
-            JS_DefinePropertyValueUint32(ctx, keys, g, k, JS_PROP_C_W_E) < 0)
-            goto fail;
-    }
-
-    free(flat);
-    free(keep);
-    free(off);
-    free(cnt);
-    dfc_set_free(&set);
     return dfc_pair(ctx, keys, values);
+}
 
- fail:
-    free(flat);
-    free(keep);
-    free(off);
-    free(cnt);
-    dfc_set_free(&set);
-    JS_FreeValue(ctx, keys);
-    JS_FreeValue(ctx, values);
-    return JS_EXCEPTION;
+enum { DFC_MOVING_SUM, DFC_MOVING_AVG };
+
+/* Above this window size the O(n*w) re-sum loses to an O(n) block-decomposed
+   sum, whose association (and therefore last-ULP values) differs: small windows
+   keep the exact path so their pinned values hold. Shared by dfc_moving_blocks
+   and dfg_roll_sum -- one threshold, so the two cannot disagree. */
+#define DFG_ROLL_SLIDE_MIN 256u
+
+/* Block decomposition, as dfg_roll_sum: each full window is suffix(previous
+   block) + prefix(current), so every element is added exactly twice and none
+   is ever subtracted. O(m) where the re-sum below is O(m*w) -- measured 756 ms
+   for one group of 40k at w=m-1, growing 4x per doubling. -1 means it declined
+   and the caller re-sums. Associates differently, hence the gate. */
+static int dfc_moving_blocks(double *v, uint32_t m, uint32_t w, int want_avg)
+{
+    double *suf = malloc((size_t)w * sizeof(double));
+    double *out = malloc((size_t)m * sizeof(double));
+    double run = 0.0;
+    uint32_t s, i;
+
+    if (!suf || !out) {
+        free(suf);
+        free(out);
+        return -1;
+    }
+    /* windows before the first full one are PARTIAL -- [0, i], not absent */
+    for (i = 0; i + 1 < w; i++) {
+        run += v[i];
+        out[i] = want_avg ? run / (double)(i + 1) : run;
+    }
+    for (s = 0; s < m; s += w) {
+        uint32_t end = (s + w < m) ? s + w : m;
+        uint32_t k, lo, hi;
+        double r = 0.0, pre = 0.0;
+        for (k = end; k-- > s; ) {
+            r += v[k];
+            suf[k - s] = r;
+        }
+        lo = s + w - 1;
+        hi = s + 2 * w - 2;
+        if (hi >= m)
+            hi = m - 1;
+        for (k = lo; k <= hi; k++) {
+            uint32_t st = k + 1 - w;            /* window is [st, k], w wide */
+            double a;
+            if (k >= end)
+                pre += v[k];
+            a = (st < end ? suf[st - s] : 0.0) + pre;
+            out[k] = want_avg ? a / (double)w : a;
+        }
+    }
+    memcpy(v, out, (size_t)m * sizeof(double));
+    free(out);
+    free(suf);
+    return 0;
+}
+
+/* Rewrite one group's slice in place with its moving aggregate. `w` is the
+   window; 0 means expanding. Every window ends at i and reads only indices
+   <= i, which is what lets both forms run in place. */
+static void dfc_moving_slice(double *v, uint32_t m, uint32_t w, int want_avg)
+{
+    uint32_t i;
+
+    if (w == 0 || w >= m) {
+        /* Expanding: purely additive, so a running accumulator IS the
+           definition here -- nothing is ever subtracted -- and it is O(m)
+           rather than the O(m*w) the fixed window below has to pay. */
+        double a = 0.0;
+        for (i = 0; i < m; i++) {
+            a += v[i];
+            v[i] = want_avg ? a / (double)(i + 1) : a;
+        }
+        return;
+    }
+    if (w == 1)
+        return;                 /* each window is one element, sum and mean */
+    if (w >= DFG_ROLL_SLIDE_MIN && dfc_moving_blocks(v, m, w, want_avg) == 0)
+        return;
+    /* Fixed window, re-summed. Subtracting the element that leaves is the O(m)
+       form this module already rejected: a large value leaving cancels the
+       accumulator to a FINITE wrong answer, so no check catches it.
+       Backwards, so v[i] is still ORIGINAL when the window ending at i reads it. */
+    for (i = m; i-- > 0; ) {
+        uint32_t lo = (i + 1 >= w) ? i + 1 - w : 0, j, c = i - lo + 1;
+        double a = 0.0;
+        for (j = lo; j <= i; j++)
+            a += v[j];
+        v[i] = want_avg ? a / (double)c : a;
+    }
+}
+
+/* GROUP_ARRAY_MOVING_SUM / _AVG(key, val[, w][, mask]) -> { keys, values }.
+   AVG divides by what CONTRIBUTED, as ROLLING_MEAN does and unlike ClickHouse,
+   which divides by the window and so ramps up from a smaller first value. */
+static JSValue dyn_df_group_array_moving(JSContext *ctx, JSValueConst this_val,
+                                         int argc, JSValueConst *argv, int magic)
+{
+    DataFrame *df;
+    DfcGrouped G;
+    const uint8_t *mask;
+    const char *op = magic == DFC_MOVING_AVG ? "GROUP_ARRAY_MOVING_AVG"
+                                             : "GROUP_ARRAY_MOVING_SUM";
+    double wd = 0.0;
+    uint32_t g, w;
+    int ki, vi, ok;
+    JSValue keys, values;
+
+    df = dyn_plain_get(ctx, this_val, dyn_df_class_id);
+    if (!df)
+        return JS_EXCEPTION;
+    ki = df_col_arg(ctx, df, argc > 0 ? argv[0] : JS_UNDEFINED);
+    if (ki < 0)
+        return JS_EXCEPTION;
+    vi = df_col_arg(ctx, df, argc > 1 ? argv[1] : JS_UNDEFINED);
+    if (vi < 0)
+        return JS_EXCEPTION;
+    /* an omitted window is EXPANDING, which is what ClickHouse's one-argument
+       groupArrayMovingSum computes; a given one must still be a real window. */
+    if (argc > 2 && !JS_IsUndefined(argv[2])) {
+        if (JS_ToFloat64(ctx, &wd, argv[2]))
+            return JS_EXCEPTION;
+        if (!(wd >= 1) || wd != floor(wd) || wd > (double)UINT32_MAX)
+            return JS_ThrowRangeError(ctx, "%s: window must be a positive "
+                                      "integer, got %g", op, wd);
+    }
+    w = (uint32_t)wd;
+    mask = df_mask_arg(ctx, argc > 3 ? argv[3] : JS_UNDEFINED, df->nrows, &ok);
+    if (!ok)
+        return JS_EXCEPTION;
+
+    /* no JS may run from here to the end of the rewrite. */
+    if (dfc_group_gather(ctx, df, ki, vi, mask, 0, &G))
+        return JS_EXCEPTION;
+    for (g = 0; g < G.nkeys; g++)
+        dfc_moving_slice(G.flat + (G.off[g] - G.cnt[g]), G.cnt[g], w,
+                         magic == DFC_MOVING_AVG);
+
+    values = dfc_values_array(ctx, &G);
+    keys = JS_IsException(values) ? JS_EXCEPTION
+                                  : dfc_dense_keys(ctx, df, ki, G.nkeys);
+    dfc_grouped_free(&G);
+    if (JS_IsException(values) || JS_IsException(keys)) {
+        JS_FreeValue(ctx, values);
+        JS_FreeValue(ctx, keys);
+        return JS_EXCEPTION;
+    }
+    return dfc_pair(ctx, keys, values);
 }
 
 /* ==== generated family g4 ====. */
@@ -5426,12 +5631,8 @@ static int dfg_roll_extreme(const DFBound *b, const uint8_t *mask, double *dst,
    association their pinned values use. -1 means the generic macro runs. */
 #define DFG_ROLL_UNROLL 8u
 
-/* Above this window size the O(n*w) re-sum loses to an O(n) sliding sum, whose
-   association (and therefore last-ULP values) differs: small windows keep the
-   exact path so their pinned values hold, and any NON-FINITE input forces it
-   too -- a NaN rides the accumulator forever, and an Inf leaving the window
-   subtracts to NaN where the re-sum gives a finite answer. */
-#define DFG_ROLL_SLIDE_MIN 256u
+/* DFG_ROLL_SLIDE_MIN is defined above dfc_moving_blocks: both windowed sums
+   use one threshold, and a second copy would drift from it. */
 
 static int dfg_roll_sum(const DFBound *b, double *dst, uint32_t span,
                         uint32_t w, int want_mean)
@@ -9278,6 +9479,10 @@ static const JSCFunctionListEntry dyn_df_proto[] = {
     JS_CFUNC_DEF("DROP_DUPLICATES", 2, dyn_df_drop_duplicates),
     JS_CFUNC_MAGIC_DEF("GROUP_ARRAY", 3, dyn_df_group_array, DFC_GROUP_ALL),
     JS_CFUNC_MAGIC_DEF("GROUP_UNIQ_ARRAY", 3, dyn_df_group_array, DFC_GROUP_UNIQ),
+    JS_CFUNC_MAGIC_DEF("GROUP_ARRAY_MOVING_SUM", 4, dyn_df_group_array_moving,
+                       DFC_MOVING_SUM),
+    JS_CFUNC_MAGIC_DEF("GROUP_ARRAY_MOVING_AVG", 4, dyn_df_group_array_moving,
+                       DFC_MOVING_AVG),
     /* g4 */
     JS_CFUNC_MAGIC_DEF("HEAD", 3, dyn_df_head, DFP_HEAD),
     JS_CFUNC_MAGIC_DEF("TAIL", 3, dyn_df_head, DFP_TAIL),

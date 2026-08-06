@@ -4646,6 +4646,155 @@ S("rank conventions");
     }
 }
 
+S("group array moving");
+{
+    mark("GROUP_ARRAY_MOVING_SUM", "GROUP_ARRAY_MOVING_AVG");
+    /* keys are integer codes, values deliberately out of order within a group
+       so a wrong row order shows up rather than cancelling */
+    const k = Int32Array.from([0, 1, 0, 2, 1, 0, 2, 1]);
+    const v = Float64Array.from([5, 1, -2, 7, 4, 10, 0, 3]);
+    const df = new DataFrame({ k, v });
+
+    /* independent reference: gather in ROW order, then fold */
+    const slices = [[], [], []];
+    for (let i = 0; i < k.length; i++) slices[k[i]].push(v[i]);
+    const refMove = (a, w, avg) => a.map((_, i) => {
+        const lo = w ? Math.max(0, i + 1 - w) : 0;
+        let t = 0;
+        for (let j = lo; j <= i; j++) t += a[j];
+        return avg ? t / (i - lo + 1) : t;
+    });
+
+    const ms = df.GROUP_ARRAY_MOVING_SUM("k", "v");
+    elemEq(ms.keys, [0, 1, 2], "moving sum reports the group keys");
+    eq(ms.values.length, 3, "one array per group");
+    for (let g = 0; g < 3; g++) {
+        elemEq(ms.values[g], refMove(slices[g], 0, false),
+               "group " + g + " expands: a running sum");
+        elemEq(df.GROUP_ARRAY_MOVING_AVG("k", "v").values[g],
+               refMove(slices[g], 0, true),
+               "group " + g + " expands: a running mean");
+        for (const w of [1, 2, 3]) {
+            elemEq(df.GROUP_ARRAY_MOVING_SUM("k", "v", w).values[g],
+                   refMove(slices[g], w, false),
+                   "group " + g + " window " + w + " sum");
+            elemEq(df.GROUP_ARRAY_MOVING_AVG("k", "v", w).values[g],
+                   refMove(slices[g], w, true),
+                   "group " + g + " window " + w + " mean");
+        }
+        /* the values are the same rows GROUP_ARRAY hands back, in the same order */
+        elemEq(df.GROUP_ARRAY("k", "v").values[g], slices[g],
+               "group " + g + " matches GROUP_ARRAY's own collection");
+    }
+
+    /* Two INDEPENDENT oracles that already ship: the last element of an
+       expanding sum is that group's total, and of an expanding mean, its mean. */
+    const gs = df.GROUP_BY_SUM("k", "v"), gm = df.GROUP_BY_MEAN("k", "v");
+    const avg0 = df.GROUP_ARRAY_MOVING_AVG("k", "v");
+    for (let g = 0; g < 3; g++) {
+        const a = ms.values[g], b = avg0.values[g];
+        near(a[a.length - 1], gs.values[g],
+             "group " + g + " expanding sum ends at GROUP_BY_SUM");
+        near(b[b.length - 1], gm.values[g],
+             "group " + g + " expanding mean ends at GROUP_BY_MEAN");
+    }
+
+    /* a window at or past the group length IS the expanding form */
+    for (const w of [3, 4, 100]) {
+        for (let g = 0; g < 3; g++)
+            elemEq(df.GROUP_ARRAY_MOVING_SUM("k", "v", w).values[g],
+                   ms.values[g], "w=" + w + " >= group " + g + " length is expanding");
+    }
+    /* w = 1 is the identity */
+    for (let g = 0; g < 3; g++) {
+        elemEq(df.GROUP_ARRAY_MOVING_SUM("k", "v", 1).values[g], slices[g],
+               "w=1 sum is the value itself");
+        elemEq(df.GROUP_ARRAY_MOVING_AVG("k", "v", 1).values[g], slices[g],
+               "w=1 mean is the value itself");
+    }
+
+    /* AVG divides by what CONTRIBUTED, not by w -- so it does NOT ramp up from
+       a smaller first value the way ClickHouse's groupArrayMovingAvg does. */
+    const a2 = df.GROUP_ARRAY_MOVING_AVG("k", "v", 2).values[0];
+    eq(a2[0], slices[0][0], "the first element of a w=2 mean is the element, not half it");
+    near(a2[1], (slices[0][0] + slices[0][1]) / 2, "and the second is a real mean of two");
+
+    /* mask filters rows BEFORE grouping, as everywhere else in the module */
+    const m = new Uint8Array(k.length);
+    for (let i = 0; i < k.length; i++) m[i] = i % 2 ? 0 : 1;
+    const masked = df.GROUP_ARRAY_MOVING_SUM("k", "v", 0 || undefined, m);
+    const mslices = [[], [], []];
+    for (let i = 0; i < k.length; i++) if (m[i]) mslices[k[i]].push(v[i]);
+    for (let g = 0; g < 3; g++)
+        elemEq(masked.values[g], refMove(mslices[g], 0, false),
+               "masked group " + g + " sees only selected rows");
+
+    /* an empty group is a zero-length array, never a hole */
+    const none = new Uint8Array(k.length);
+    const empty = df.GROUP_ARRAY_MOVING_SUM("k", "v", undefined, none);
+    for (let g = 0; g < 3; g++)
+        eq(empty.values[g].length, 0, "an all-masked group " + g + " is empty, not a hole");
+
+    /* NaN propagates through an expanding sum and only through the windows that
+       hold it -- the same asymmetry the two definitions have. */
+    const nf = new DataFrame({
+        k: Int32Array.from([0, 0, 0, 0]),
+        v: Float64Array.from([1, NaN, 3, 4]),
+    });
+    const ne = nf.GROUP_ARRAY_MOVING_SUM("k", "v").values[0];
+    eq(ne[0], 1, "before the NaN the expanding sum is finite");
+    ok(Number.isNaN(ne[1]) && Number.isNaN(ne[2]) && Number.isNaN(ne[3]),
+       "and every element after it is NaN");
+    const nw = nf.GROUP_ARRAY_MOVING_SUM("k", "v", 2).values[0];
+    eq(nw[3], 7, "a w=2 window clear of the NaN still answers");
+
+    /* Above DFG_ROLL_SLIDE_MIN (256) a block decomposition replaces the
+       re-sum. Everything above uses w <= 3, so without these the fast path
+       ships unexercised -- and it is where the O(m^2) used to live. */
+    for (const m of [255, 256, 257, 512, 1000]) {
+        const kk = new Int32Array(m), vv = new Float64Array(m);
+        for (let i = 0; i < m; i++) { kk[i] = 0; vv[i] = Math.sin(i * 0.37) * 1000 + i * 0.25; }
+        const bf = new DataFrame({ k: kk, v: vv });
+        for (const w of [255, 256, 257, 300]) {
+            if (w >= m) continue;
+            for (const avg of [false, true]) {
+                const got = bf[avg ? "GROUP_ARRAY_MOVING_AVG" : "GROUP_ARRAY_MOVING_SUM"]("k", "v", w).values[0];
+                eq(got.length, m, "m=" + m + " w=" + w + " keeps the group length");
+                let worst = 0;
+                for (let i = 0; i < m; i++) {
+                    const lo = Math.max(0, i + 1 - w);
+                    let t = 0;
+                    for (let j = lo; j <= i; j++) t += vv[j];
+                    const want = avg ? t / (i - lo + 1) : t;
+                    worst = Math.max(worst, Math.abs(got[i] - want) / Math.max(1, Math.abs(want)));
+                }
+                ok(worst < 1e-12, "m=" + m + " w=" + w + (avg ? " AVG" : " SUM") +
+                   " crosses the block gate and matches the reference",
+                   "worst relative error " + worst);
+            }
+        }
+    }
+    /* the partial prefix must stay partial, not zero and not the first full window */
+    {
+        const m = 600, kk = new Int32Array(m), vv = new Float64Array(m).fill(1);
+        const bf = new DataFrame({ k: kk, v: vv });
+        const a1 = bf.GROUP_ARRAY_MOVING_SUM("k", "v", 256).values[0];
+        eq(a1[0], 1, "the first partial window is the element itself");
+        eq(a1[100], 101, "a partial window at 100 holds 101 elements");
+        eq(a1[255], 256, "the first FULL window holds 256");
+        eq(a1[m - 1], 256, "and later windows stay 256");
+        const b1 = bf.GROUP_ARRAY_MOVING_AVG("k", "v", 256).values[0];
+        ok(b1[0] === 1 && b1[100] === 1 && b1[m - 1] === 1,
+           "every mean of an all-ones column is exactly 1");
+    }
+    throwsLike(() => df.GROUP_ARRAY_MOVING_SUM("k", "v", 0), "positive integer",
+               "a zero window is refused");
+    throwsLike(() => df.GROUP_ARRAY_MOVING_AVG("k", "v", 2.5), "positive integer",
+               "a fractional window is refused");
+    throwsLike(() => df.GROUP_ARRAY_MOVING_SUM("k", "nope"), "no such column",
+               "an unknown value column is refused");
+}
+
 S("covariance matrix");
 {
     mark("COV_MATRIX");
