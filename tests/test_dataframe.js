@@ -4521,6 +4521,41 @@ S("rolling dispersion");
         ok(Number.isNaN(inf.ROLLING_VAR("v", 3)[3]), "an infinity in the window is NaN");
         ok(Number.isNaN(inf.VARIANCE("v")), "matching VARIANCE, which is also NaN");
     }
+    /* Above span*w = 1e8 a centred block decomposition replaces the O(span*w)
+       two-pass: 21.9 s -> 1.4 ms at span=200k, w=100k. It is NOT exact, which
+       is why it is gated -- so both sides of the gate are checked. */
+    {
+        const bn = 200000, bx = new Float64Array(bn);
+        for (let i = 0; i < bn; i++) bx[i] = Math.sin(i * 0.37) * 1000 + i * 0.5;
+        const bf = new DataFrame({ x: bx });
+        for (const w of [1000, 100000]) {
+            const t0 = Date.now();
+            const r = bf.ROLLING_VAR("x", w);
+            const took = Date.now() - t0;
+            eq(r.length, bn, "w=" + w + " keeps the column length");
+            ok(took < 2000, "w=" + w + " is bounded (took " + took + " ms)");
+            /* an independent two-pass over the LAST window only */
+            const i = bn - 1;
+            let sum = 0;
+            for (let j = i + 1 - w; j <= i; j++) sum += bx[j];
+            const mu = sum / w;
+            let q = 0;
+            for (let j = i + 1 - w; j <= i; j++) q += (bx[j] - mu) * (bx[j] - mu);
+            const want = q / (w - 1);
+            ok(Math.abs(r[i] - want) / want < 1e-10,
+               "w=" + w + " the fast path still matches a two-pass reference",
+               "got " + r[i] + " want " + want);
+            ok(Number.isNaN(r[w - 2]) && !Number.isNaN(r[w - 1]),
+               "w=" + w + " fills at exactly w-1, as the exact path does");
+        }
+        /* below the gate the exact path must still run: span*w = 4e6 here */
+        const sn = 4000, sx = new Float64Array(sn);
+        for (let i = 0; i < sn; i++) sx[i] = Math.sin(i * 0.7) * 3;
+        const sf = new DataFrame({ x: sx });
+        const rs = sf.ROLLING_VAR("x", 1024);
+        ok(!Number.isNaN(rs[1023]) && Number.isNaN(rs[1022]),
+           "below the gate the exact path still fills at w-1");
+    }
     throwsLike(() => df.ROLLING_VAR("x", 0), "positive integer",
                "ROLLING_VAR refuses a zero window");
     throwsLike(() => df.ROLLING_STD("x", 2.5), "positive integer",
