@@ -4697,6 +4697,18 @@ S("covariance matrix");
                    "and so is one with an interior NUL");
         throwsLike(() => g.COV_MATRIX(["secret" + NUL + "x"]), "NUL",
                    "the array-of-names path refuses it too");
+        /* The CONSTRUCTOR truncated too, and that is the sharper case: two
+           distinct keys became one name, so COLUMNS read ["a","a"] and the
+           second column could never be addressed again. */
+        const two = {};
+        two["a" + NUL + "b"] = Float64Array.from([1, 1, 1]);
+        two["a" + NUL + "c"] = Float64Array.from([9, 9, 9]);
+        throwsLike(() => new DataFrame(two), "NUL",
+                   "the constructor refuses a NUL column name");
+        const one = {};
+        one["a" + NUL + "b"] = Float64Array.from([1, 2, 3]);
+        throwsLike(() => new DataFrame(one), "NUL",
+                   "even when only one column would collide with nothing");
     }
 }
 

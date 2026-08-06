@@ -8692,11 +8692,24 @@ static JSValue dyn_df_ctor(JSContext *ctx, JSValueConst new_target,
 
     for (i = 0; i < ntab; i++) {
         JSValue v = JS_GetProperty(ctx, argv[0], tab[i].atom);
-        const char *name = JS_AtomToCString(ctx, tab[i].atom);
+        JSValue nv = JS_AtomToValue(ctx, tab[i].atom);
+        size_t nlen = 0;
+        const char *name = JS_IsException(nv) ? NULL
+                                              : JS_ToCStringLen(ctx, &nlen, nv);
         int rc;
+        JS_FreeValue(ctx, nv);
         if (JS_IsException(v) || !name) {
             JS_FreeValue(ctx, v);
             if (name) JS_FreeCString(ctx, name);
+            goto fail;
+        }
+        /* A key may hold U+0000 and the C name is NUL-terminated, so two
+           distinct keys collapse to one: {"a\0b","a\0c"} gave COLUMNS
+           ["a","a"] and the second column was unreachable forever. */
+        if (strlen(name) != nlen) {
+            JS_FreeValue(ctx, v);
+            JS_FreeCString(ctx, name);
+            JS_ThrowRangeError(ctx, "column name contains a NUL character");
             goto fail;
         }
         if (JS_IsArray(ctx, v)) {
