@@ -794,10 +794,21 @@ ifdef CONFIG_NATIVE_MODULES
 libdynajs-nat.fuzz.a: $(patsubst %.o, %.fuzz.o, $(DYNAJS_LIB_OBJS) $(NAT_MODULE_OBJS))
 	$(AR) rcs $@ $^
 
+# dyna-dataframe.c is in NAT_MODULE_OBJS too, so this needs the SAME archive:
+# linked against libdynajs.fuzz.a it would compile and fuzz nothing.
+fuzz_dataframe: $(OBJDIR)/fuzz_dataframe.o libdynajs-nat.fuzz.a
+	$(CC) $(CFLAGS_OPT) $^ -o fuzz_dataframe $(FUZZ_DEFAULT_SAN) $(LIB_FUZZING_ENGINE) $(LIBS) $(SQLITE_LIBS)
+	@$(FUZZ_SAN_WARN)
+
 fuzz_stdlib: $(OBJDIR)/fuzz_stdlib.o libdynajs-nat.fuzz.a
 	$(CC) $(CFLAGS_OPT) $^ -o fuzz_stdlib $(FUZZ_DEFAULT_SAN) $(LIB_FUZZING_ENGINE) $(LIBS) $(SQLITE_LIBS)
 	@$(FUZZ_SAN_WARN)
 else
+fuzz_dataframe:
+	@echo "fuzz_dataframe needs CONFIG_NATIVE_MODULES=y: dyna-dataframe.c is in"
+	@echo "NAT_MODULE_OBJS, and a default build compiles none of it."
+	@exit 1
+
 fuzz_stdlib:
 	@echo "fuzz_stdlib needs CONFIG_NATIVE_MODULES=y: the parsers it covers are"
 	@echo "in NAT_MODULE_OBJS, and a default build compiles none of them."
@@ -931,18 +942,23 @@ FUZZ_TARGETS = fuzz_eval fuzz_compile fuzz_regexp fuzz_regexp_compile \
                fuzz_json fuzz_bytecode fuzz_module_export fuzz_net \
                fuzz_dyns fuzz_lz4 fuzz_scram fuzz_codec
 
+# Config-gated targets, in ONE place: this was spelled out at five separate
+# sites, which is how the sixth gets forgotten and a target silently stops
+# being built, linked or smoke-run.
+FUZZ_NAT_TARGETS = fuzz_stdlib fuzz_dataframe
+
 libfuzzer: $(FUZZ_TARGETS)
 ifdef CONFIG_NATIVE_MODULES
-libfuzzer: fuzz_stdlib
+libfuzzer: $(FUZZ_NAT_TARGETS)
 endif
 
-# fuzz_stdlib is listed separately above because it is config-gated.
+# FUZZ_NAT_TARGETS is listed separately above because those are config-gated.
 # Bidirectional ON PURPOSE. The rules->FUZZ_TARGETS direction alone cannot see
 # a SOURCE with no rule, which is how fuzz_regexp_compile.c sat unbuilt and
 # unexecuted -- carrying an uninitialised read -- while this audit reported ok.
 fuzz-audit:
 	@grep -oE '^fuzz_[a-z0-9_]+:' Makefile | tr -d ':' | sort -u > .fz_def.tmp; \
-	 printf '%s\n' $(FUZZ_TARGETS) fuzz_stdlib fuzz_csv | sort -u > .fz_gate.tmp; \
+	 printf '%s\n' $(FUZZ_TARGETS) $(FUZZ_NAT_TARGETS) fuzz_csv | sort -u > .fz_gate.tmp; \
 	 ls src/fuzz/fuzz_*.c | sed 's|src/fuzz/||; s|\.c$$||' | grep -v '^fuzz_common$$' \
 	   | sort -u > .fz_src.tmp; \
 	 miss=`comm -23 .fz_def.tmp .fz_gate.tmp`; \
@@ -969,7 +985,7 @@ fuzz-audit:
 fuzz-all:
 	@$(MAKE) --no-print-directory fuzz-audit
 	@$(MAKE) --no-print-directory libfuzzer CONFIG_NATIVE_MODULES=y
-	@bad=0; for t in $(FUZZ_TARGETS) fuzz_stdlib; do \
+	@bad=0; for t in $(FUZZ_TARGETS) $(FUZZ_NAT_TARGETS); do \
 	   test -x ./$$t || { echo "MISSING: $$t was not built"; bad=1; continue; }; \
 	   a=`nm ./$$t 2>/dev/null | grep -c __asan_init`; \
 	   u=`nm ./$$t 2>/dev/null | grep -c __ubsan_handle`; \
@@ -990,10 +1006,11 @@ fuzz-all:
 FUZZ_SMOKE_RUNS ?= 4000
 fuzz-smoke:
 	@mkdir -p /tmp/dyna-fuzzart
-	@rc=0; for t in $(FUZZ_TARGETS) fuzz_stdlib; do \
+	@rc=0; for t in $(FUZZ_TARGETS) $(FUZZ_NAT_TARGETS); do \
 	   test -x ./$$t || { echo "  SKIP $$t (not built -- run make fuzz-all)"; continue; }; \
 	   corp=""; \
-	   case $$t in fuzz_stdlib) corp=src/fuzz/corpus_robots ;; \
+	   case $$t in fuzz_stdlib)    corp=src/fuzz/corpus_robots ;; \
+	               fuzz_dataframe) corp=src/fuzz/corpus_dataframe ;; \
 	               fuzz_dyns)   corp=src/fuzz/corpus_ml ;; esac; \
 	   test -n "$$corp" && test -d "$$corp" || corp=""; \
 	   printf '  %-22s ' $$t; \
