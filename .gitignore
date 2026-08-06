@@ -51,12 +51,10 @@ bench/*
 .claude/
 
 # libFuzzer target binaries (build artifacts)
-fuzz_bytecode
-fuzz_json
-fuzz_module_export
-fuzz_eval
-fuzz_compile
-fuzz_regexp
+# Fuzz binaries build to the repo ROOT. A PATTERN, not a list: the list
+# was 14 names and already missed fuzz_dataframe. Sources live in
+# src/fuzz/, so a root anchor cannot touch them.
+/fuzz_*
 
 # vendored external experiments (mimalloc, etc.)
 third_party/
@@ -68,7 +66,6 @@ pgo.profdata
 # macOS Finder metadata
 .DS_Store
 *.dSYM/
-fuzz_net
 
 # Fuzzer and crash artefacts. libFuzzer writes a reproducer into the CWD on every
 # finding, and a fault-injection run produces one per injected bug -- reproducers
@@ -98,19 +95,12 @@ vgcore.*
 # Gitignored on purpose -- the commit messages are the shared history; this is
 # the scratch that feeds them.
 CHANGELOG.local.md
-fuzz_stdlib
-fuzz_dyns
-fuzz_lz4
-fuzz_scram
-fuzz_regexp_compile
 .build-variant
 test-tls
 test-aio-tls
 
 # python bytecode cache from the pty test harness
 __pycache__/
-fuzz_codec
-fuzz_csv
 
 docs/
 
