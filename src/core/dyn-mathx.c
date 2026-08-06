@@ -638,6 +638,19 @@ static unsigned int bessel_order_abs(int n, int *neg)
     return m;
 }
 
+/* libm's jn runs an O(n) RECURRENCE: jn(INT_MAX, 3) measured 11646 ms for an
+   answer of 0. |J_n(x)| <= (|x|/2)^n / n!, so once that bound is below the
+   smallest subnormal the recurrence cannot produce anything but zero. */
+static int bessel_underflows(unsigned int m, double x)
+{
+    double ax = fabs(x);
+    if (m < 2u)
+        return 0;
+    if (ax == 0.0)
+        return 1;                      /* J_n(0) = 0 for every n >= 1 */
+    return (double)m * log(ax * 0.5) - lgamma((double)m + 1.0) < -745.0;
+}
+
 double dyn_besselj(int n, double x)
 {
     int neg;
@@ -646,6 +659,8 @@ double dyn_besselj(int n, double x)
 
     if (m == 0)
         return j0(x);
+    if (bessel_underflows(m, x))
+        return neg ? -0.0 : 0.0;
     if (m == 1)
         v = j1(x);
     else

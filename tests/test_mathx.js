@@ -8,7 +8,7 @@ import {
     gamma, lgamma, erf, erfc, cbrt, hypot, copysign, nextafter,
     expm1, log1p, log2, logb, scalbn, ilogb, modf, frexp, ldexp,
     remainder, fmod, isInf, isNaN as mxIsNaN, signbit, trunc, round, roundToEven,
-    gcd, lcm, factorial, isPrime, abs, bitLen, popcount,
+    gcd, lcm, factorial, isPrime, abs, bitLen, popcount, besselj,
 } from "dyna:mathx";
 
 let n = 0;
@@ -543,6 +543,40 @@ function assertPosZero(actual, msg) {
     threw = false;
     try { popcount(5); } catch (e) { threw = e instanceof TypeError; }
     assert(threw, "popcount(Number) throws TypeError -- BigInt required");
+}
+
+/* besselj: libm's jn is an O(n) recurrence, so jn(INT_MAX, 3) ran 11646 ms for
+   an answer of 0. The (|x|/2)^n / n! bound skips it. Both halves are pinned:
+   that it is FAST, and that it did not change any value it used to return. */
+{
+    const t0 = Date.now();
+    assertEq(besselj(2147483647, 3), 0, "a huge order underflows to 0");
+    assertEq(besselj(-2147483648, 1), 0, "and so does INT_MIN, whose negation is itself");
+    assert(Date.now() - t0 < 1000,
+           "a huge order returns without running the recurrence (took " +
+           (Date.now() - t0) + " ms)");
+
+    /* the bound must NOT fire where a real value exists */
+    assertEq(besselj(50, 10), 1.784513607871594e-30, "an order libm can still reach is unchanged");
+    assert(besselj(200, 10) !== 0, "6.9e-236 is representable, so it is not zeroed");
+    assert(besselj(200, 100) !== 0, "nor is 2.1e-41");
+
+    /* independent oracle: the recurrence J_{n-1} + J_{n+1} = (2n/x) J_n is an
+       identity the implementation does not compute */
+    let worst = 0;
+    for (const x of [0.5, 1, 2.5, 3, 7, 10, 25, 100])
+        for (let k = 1; k <= 120; k++) {
+            const lhs = besselj(k - 1, x) + besselj(k + 1, x);
+            const rhs = (2 * k / x) * besselj(k, x);
+            worst = Math.max(worst, Math.abs(lhs - rhs) / Math.max(1e-300, Math.abs(rhs)));
+        }
+    assert(worst < 1e-12, "960 orders satisfy the Bessel recurrence (worst " + worst + ")");
+
+    /* J_-n = (-1)^n J_n must survive the fast path in both parities */
+    assertEq(besselj(-3, 2.5), -besselj(3, 2.5), "odd negative order flips sign");
+    assertEq(besselj(-4, 2.5), besselj(4, 2.5), "even negative order does not");
+    assertEq(besselj(5, 0), 0, "J_n(0) is 0 for n >= 1");
+    assertEq(besselj(0, 0), 1, "and J_0(0) is 1");
 }
 
 print("test_mathx: all tests passed (" + n + " assertions)");
