@@ -95,6 +95,10 @@ double dyn_besselk(int n, double x);
  * openlibm when the archive is present and the platform libm otherwise, and
  * that choice is observable (CLAUDE.md §5). Non-integer order is not offered
  * rather than offered badly. */
+/* Orders past ~1<<24 make libm's O(n) recurrence cost seconds, so besselj and
+   bessely REFUSE them with NaN. Ask this first if you need to distinguish a
+   refusal from a genuine NaN. */
+int dyn_bessel_order_ok(int n, double x);
 double dyn_besselj(int n, double x);
 double dyn_bessely(int n, double x);
 

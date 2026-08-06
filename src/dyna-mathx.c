@@ -1554,12 +1554,18 @@ static JSValue dyn_mathx_bessel(JSContext *ctx, JSValueConst this_val,
             nu < (double)INT_MIN || nu > (double)INT_MAX)
             return JS_ThrowRangeError(ctx,
                 "besselj: order must be an integer within int32 range");
+        if (!dyn_bessel_order_ok((int)nu, x))
+            return JS_ThrowRangeError(ctx, "besselj: |order| above 16777216 "
+                "would run libm's O(n) recurrence for seconds");
         return JS_NewFloat64(ctx, dyn_besselj((int)nu, x));
     case 1:
         if (!isfinite(nu) || nu != floor(nu) ||
             nu < (double)INT_MIN || nu > (double)INT_MAX)
             return JS_ThrowRangeError(ctx,
                 "bessely: order must be an integer within int32 range");
+        if (!dyn_bessel_order_ok((int)nu, 0.0))
+            return JS_ThrowRangeError(ctx, "bessely: |order| above 16777216 "
+                "would run libm's O(n) recurrence for seconds");
         return JS_NewFloat64(ctx, dyn_bessely((int)nu, x));
     case 2:
         return JS_NewFloat64(ctx, dyn_besseli_nu(nu, x));

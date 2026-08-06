@@ -651,6 +651,23 @@ static int bessel_underflows(unsigned int m, double x)
     return (double)m * log(ax * 0.5) - lgamma((double)m + 1.0) < -745.0;
 }
 
+/* The underflow bound cannot fire when |x| is comparable to n, and there the
+   recurrence runs to completion: measured 2668 ms at n = x = INT_MAX, linear in
+   n. Refuse past a bounded order rather than block the caller for seconds. */
+#define DYN_BESSEL_MAX_ORDER (1u << 24)   /* ~20 ms of recurrence */
+
+/* Bounded means EITHER the underflow bound answers it outright OR the order is
+   small enough to recurse. besselj(INT_MAX, 3) is bounded; besselj(INT_MAX,
+   INT_MAX) is not. bessely has no underflow path, so it asks with x = 0. */
+int dyn_bessel_order_ok(int n, double x)
+{
+    int neg;
+    unsigned int m = bessel_order_abs(n, &neg);
+    if (m <= DYN_BESSEL_MAX_ORDER)
+        return 1;
+    return bessel_underflows(m, x);
+}
+
 double dyn_besselj(int n, double x)
 {
     int neg;
@@ -661,6 +678,8 @@ double dyn_besselj(int n, double x)
         return j0(x);
     if (bessel_underflows(m, x))
         return neg ? -0.0 : 0.0;
+    if (m > DYN_BESSEL_MAX_ORDER)
+        return NAN;
     if (m == 1)
         v = j1(x);
     else
@@ -676,6 +695,8 @@ double dyn_bessely(int n, double x)
 
     if (m == 0)
         return y0(x);
+    if (m > DYN_BESSEL_MAX_ORDER)
+        return NAN;
     if (m == 1)
         v = y1(x);
     else

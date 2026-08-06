@@ -575,6 +575,15 @@ function assertPosZero(actual, msg) {
     /* J_-n = (-1)^n J_n must survive the fast path in both parities */
     assertEq(besselj(-3, 2.5), -besselj(3, 2.5), "odd negative order flips sign");
     assertEq(besselj(-4, 2.5), besselj(4, 2.5), "even negative order does not");
+    /* When |x| is comparable to n the bound cannot fire and the recurrence runs
+       to completion -- 2668 ms at n = x = INT_MAX. That is REFUSED, while the
+       same order with a small x is still answered instantly. */
+    let refused = false;
+    try { besselj(2147483647, 2147483647); } catch (e) { refused = e instanceof RangeError; }
+    assert(refused, "an order that would recurse for seconds is refused");
+    assertEq(besselj(2147483647, 3), 0, "the same order with a small x still answers");
+    assert(besselj(16777216, 1e300) !== undefined, "the cap itself is allowed");
+
     assertEq(besselj(5, 0), 0, "J_n(0) is 0 for n >= 1");
     assertEq(besselj(0, 0), 1, "and J_0(0) is 1");
 }
