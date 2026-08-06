@@ -163,6 +163,35 @@ check "  the installer ran"                "[ -e '$T/RAN_OK' ]"
 check "  and brew is usable in the CALLER" 'command -v brew >/dev/null'
 fi   # skip_no_curl
 
+# ------------------------------------------------- the URLs the script hands out
+# WHY: install.sh pointed at .../dynascript for every user after the repository
+# was renamed to dynajs -- a hard 404, so the FIRST command a new user runs
+# could not clone anything. Nothing caught it: every case above stubs the
+# network, so REPO_URL_DEFAULT was never read by any test.
+#
+# This check is OFFLINE and deterministic on purpose. Hitting GitHub would make
+# the suite fail when the network is down, which is not a defect in install.sh.
+# The repository's own `origin` is the authority, and a rename moves it.
+origin_url="$(git -C "$(dirname "$SRC")" remote get-url origin 2>/dev/null || true)"
+if [ -z "$origin_url" ]; then
+    echo "  SKIP  repo-url consistency (no git origin remote here)"
+else
+    # normalise: strip a trailing .git and any scheme/host, compare owner/name
+    slug_of() { printf '%s' "$1" | sed -E 's#\.git$##; s#^.*[/:]([^/]+/[^/]+)$#\1#'; }
+    want="$(slug_of "$origin_url")"
+    check "install.sh's default repo is this repository ($want)" \
+          "[ \"\$(slug_of \"\$REPO_URL_DEFAULT\")\" = \"$want\" ]"
+    # every other URL the script prints must name the same repository, or a
+    # user is sent to a 404 for docs, issues, or the curl-pipe-bash one-liner
+    # Homebrew/install is a genuine third party (the brew bootstrap), named
+    # here so any OTHER foreign repository still fails this check.
+    stale="$(grep -oE 'github(usercontent)?\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' "$SRC" \
+             | sed -E 's#^github(usercontent)?\.com/##; s#\.git$##' | sort -u \
+             | grep -v -x -e "$want" -e 'Homebrew/install' || true)"
+    check "no other repository is named in $SRC (found: ${stale:-none})" \
+          "[ -z \"\$stale\" ]"
+fi
+
 echo
 if [ "$fails" -eq 0 ]; then echo "test_brew: all $n checks passed"; else echo "test_brew: $fails FAILED of $n"; fi
 exit "$fails"

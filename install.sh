@@ -14,7 +14,7 @@
 set -Eeuo pipefail
 
 # ----------------------------------------------------------------------------- config / defaults
-REPO_URL_DEFAULT="https://github.com/corporatepiyush/dynascript.git"
+REPO_URL_DEFAULT="https://github.com/corporatepiyush/dynajs.git"
 REF_DEFAULT="master"
 PREFIX_DEFAULT="/usr/local"
 BINARY_NAME="dynajs"
@@ -45,7 +45,7 @@ install.sh — install, reinstall, or upgrade the DynaJS runtime.
 
 USAGE
   ./install.sh [options]
-  curl -fsSL https://raw.githubusercontent.com/corporatepiyush/dynascript/master/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/corporatepiyush/dynajs/master/install.sh | bash
   curl -fsSL .../install.sh | bash -s -- --prefix "$HOME/.local"
 
 OPTIONS
@@ -128,7 +128,7 @@ dump_log() {
     printf '\n%sFull log: %s%s\n' "$C_DIM" "$LOG_FILE" "$C_OFF" >&2
     printf '%sRe-run with --verbose for a live transcript, or report it at%s\n' \
         "$C_DIM" "$C_OFF" >&2
-    printf '%s  https://github.com/corporatepiyush/dynascript/issues%s\n' "$C_DIM" "$C_OFF" >&2
+    printf '%s  https://github.com/corporatepiyush/dynajs/issues%s\n' "$C_DIM" "$C_OFF" >&2
 }
 
 # die + the log. Used wherever the failure is expected and already explained.
@@ -740,7 +740,7 @@ report() {
     printf '    %s -e '\''print(1 + 1)'\''\n' "$BINARY_NAME"
     printf '    %s -i%s\n' "$BINARY_NAME" "                      # the REPL"
     printf '    %s -e '\''import("dyna:uuid").then(u => print(u.v7()))'\''\n' "$BINARY_NAME"
-    printf '\nDocs: https://github.com/corporatepiyush/dynascript#readme\n'
+    printf '\nDocs: https://github.com/corporatepiyush/dynajs#readme\n'
     printf 'Build log kept at %s\n\n' "$LOG_FILE"
 }
 
