@@ -1,0 +1,5 @@
+User-agent: *
+Désallow: /a
+Allow: /a/b
+Crawl-de™ay: 2
+Sitemap: httpl
