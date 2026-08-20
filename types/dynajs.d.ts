@@ -3387,8 +3387,28 @@ declare module "dyna:url" {
         readonly search: string;
         readonly hash: string;
         readonly origin: string;
+        readonly searchParams: URLSearchParams;
         toJSON(): string;
         toString(): string;
+    }
+    /** WHATWG query list. A BOUND instance (from url.searchParams) writes
+     *  through to the URL's query slot; a standalone one owns its query.
+     *  entries()/keys()/values() return ARRAYS, not iterator objects. */
+    class URLSearchParams {
+        constructor(init?: string | URLSearchParams | Array<[string, string]> | Record<string, string>);
+        readonly size: number;
+        append(name: string, value: string): void;
+        delete(name: string): void;
+        get(name: string): string | null;
+        getAll(name: string): string[];
+        has(name: string): boolean;
+        set(name: string, value: string): void;
+        sort(): void;
+        toString(): string;
+        forEach(callback: (value: string, key: string, params: URLSearchParams) => void): void;
+        keys(): string[];
+        values(): string[];
+        entries(): Array<[string, string]>;
     }
     /** IDNA 2008 (UTS #46) mapping; options.transitional selects transitional processing. */
     function domainToASCII(domain: string, options?: { transitional?: boolean }): string;

@@ -361,10 +361,21 @@ static char *met_scrape_buf(size_t *out_len)
                      (unsigned long long)atomic_load_explicit(
                          &met_hot[i].v, memory_order_relaxed));
         } else if (c->kind == MET_GAUGE) {
-            snprintf(line, sizeof line, "%s%s%s%s %.17g\n", c->name,
-                     open_, lb, close_,
-                     met_utod(atomic_load_explicit(&met_hot[i].v,
-                                                   memory_order_relaxed)));
+            /* Non-finite values are legal input; the exposition grammar
+               only accepts the +Inf/-Inf/NaN tokens, which %.17g would
+               emit as inf/nan and a collector would refuse. */
+            double gv = met_utod(atomic_load_explicit(&met_hot[i].v,
+                                                      memory_order_relaxed));
+            uint64_t gb = met_dtou(gv);
+            if ((gb & 0x7FF0000000000000ULL) == 0x7FF0000000000000ULL) {
+                snprintf(line, sizeof line, "%s%s%s%s %s\n", c->name,
+                         open_, lb, close_,
+                         (gb & 0xFFFFFFFFFFFFFULL) ? "NaN"
+                         : (gb >> 63) ? "-Inf" : "+Inf");
+            } else {
+                snprintf(line, sizeof line, "%s%s%s%s %.17g\n", c->name,
+                         open_, lb, close_, gv);
+            }
         } else {
             uint64_t cum = 0, total;
             for (k = 0; k < MET_NBUCKET; k++) {

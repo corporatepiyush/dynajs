@@ -34,8 +34,8 @@ async function rejects(p, re, m) {
    immediate and delayed responses run through the settle path. */
 const app = new App({ port: 0, idleTimeoutMs: 5000 });
 app.rpc("/rpc", {
-    add: ([a, b]) => a + b,
-    echo: ([x]) => x,
+    add: (a, b) => a + b,
+    echo: (x) => x,
     slow: () => new Promise((res) => setTimeout(() => res("done"), 300)),
 });
 app.start();
@@ -234,6 +234,49 @@ const rpc = (method, params, id) => JSON.stringify({ jsonrpc: "2.0", method, par
     const p = await c.postAsync(base + "/rpc", rpc("add", [1, 2], 3));
     eq(p.status, 200, "postAsync without explicit headers works");
     c.close();
+}
+
+/* ---- a byte VIEW body (Uint8Array & co) is sent RAW, not comma-joined ---- */
+{
+    const seen = [];
+    const srv = new TCPServer({ port: 0 });
+    srv.start({
+        data: (c, b) => {
+            seen.push(Array.from(b));
+            c.write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            c.close();
+        },
+    });
+    const c = new HTTPClient();
+    const body = new Uint8Array([0x00, 0x80, 0x41, 0xff]);
+    const r = await c.requestAsync("POST", "http://127.0.0.1:" + srv.port + "/raw", body);
+    eq(r.status, 200, "byte-view body request completes");
+    /* the body follows the last \r\n\r\n header terminator on the wire */
+    const bodyOf = (chunks) => {
+        const all = [];
+        for (const ch of chunks) all.push(...ch);
+        for (let k = all.length - 4; k >= 0; k--) {
+            if (all[k] === 13 && all[k + 1] === 10 && all[k + 2] === 13 && all[k + 3] === 10)
+                return all.slice(k + 4);
+        }
+        return [];
+    };
+    const got = bodyOf(seen);
+    eq(JSON.stringify(got), JSON.stringify([0, 128, 65, 255]),
+       "a Uint8Array body arrives as its bytes, never comma-joined (" + JSON.stringify(got) + ")");
+    const dv = new DataView(new ArrayBuffer(3));
+    dv.setUint8(0, 1); dv.setUint8(1, 0); dv.setUint8(2, 2);
+    const r2 = await c.requestAsync("PUT", "http://127.0.0.1:" + srv.port + "/raw", dv);
+    eq(r2.status, 200, "DataView body request completes");
+    const got2 = bodyOf(seen.slice(1));
+    eq(JSON.stringify(got2), JSON.stringify([1, 0, 2]),
+       "a DataView body arrives as its bytes (" + JSON.stringify(got2) + ")");
+    let wide = null;
+    try { await c.requestAsync("POST", "http://127.0.0.1:" + srv.port + "/raw", new Int16Array([1])); }
+    catch (e) { wide = e; }
+    ok(wide && /byte view/.test(wide.message), "a wider view is refused, not corrupted");
+    c.close();
+    srv.close();
 }
 
 app.close();

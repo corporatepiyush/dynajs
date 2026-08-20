@@ -3,6 +3,9 @@
  * Prints "test_http: all tests passed" on success; throws on failure. */
 
 import { HTTPClient, HTTPServer } from "dyna:net";
+import * as std from "std";
+import { mkdir, open, read, close, kill, O_RDONLY } from "os";
+import { cwd } from "dyna:sys";
 
 let n = 0;
 function assert(cond, msg) {
@@ -126,6 +129,106 @@ try {
         } finally { c.close(); }
         assert(threw, "refused connection throws");
         assert(typeof dynajsError === "number", "error carries numeric .dynajsError");
+    }
+
+    /* --- a byte VIEW body is sent raw, framed by its real length --- */
+    {
+        /* The sync client blocks the loop thread, so its peer must be a real
+           process (a spawned TCPServer would starve on the loop it shares).
+           A background dynajs captures the exact wire bytes to a file; the
+           sync request then posts a byte view and the capture is asserted. */
+        const dir = "/tmp/sync_wire_" + Date.now() + "_" + Math.floor(Math.random() * 1e9);
+        const peer = dir + "/peer.js";
+        const portFile = dir + "/port";
+        const pidFile = dir + "/pid";
+        const capFile = dir + "/cap.bin";
+        const debugFile = dir + "/debug.txt";
+        mkdir(dir, 0o755);
+        const f = std.open(peer, "w");
+        f.puts(`import { TCPServer } from "dyna:net";
+import * as std from "std";
+import { pid } from "dyna:sys";
+const srv = new TCPServer({ port: 0 });
+let acc = [];
+srv.start({
+    data: (c, bytes) => {
+        acc = acc.concat(Array.from(bytes));
+        let end = -1;
+        let i = 0;
+        while (i < acc.length - 3) {
+            if (acc[i] === 13 && acc[i+1] === 10 && acc[i+2] === 13 && acc[i+3] === 10) {
+                end = i + 4; break;
+            }
+            i++;
+        }
+        if (end < 0) return;
+        let head = "";
+        for (let j = 0; j < end; j++) head += String.fromCharCode(acc[j]);
+        const m = /Content-Length:\\s*(\\d+)/i.exec(head);
+        if (!m) return;
+        const need = end + parseInt(m[1], 10);
+        if (acc.length < need) return;
+        const body = acc.slice(end, need);
+        const ab = new Uint8Array(body).buffer;
+        const f = std.open(${JSON.stringify(capFile)}, "w");
+        const wr = f.write(ab, 0, ab.byteLength);
+        const ferr = f.error();
+        f.close();
+        const fd = std.open(${JSON.stringify(debugFile)}, "a");
+        fd.puts("wr=" + wr + " err=" + ferr + " bl=" + ab.byteLength + "\\n");
+        fd.close();
+        c.write("HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n");
+        c.close();
+    },
+});
+const f = std.open(${JSON.stringify(portFile)}, "w");
+f.puts(String(srv.port)); f.close();
+const pf = std.open(${JSON.stringify(pidFile)}, "w");
+pf.puts(String(pid())); pf.close();
+setInterval(() => {}, 1000);
+`);
+        f.close();
+        std.gc();
+        const p = std.popen("cd " + dir + " && " + cwd() + "/dynajs peer.js > " + dir + "/peer.log 2>&1 &", "r");
+        if (p) p.close();
+        let port = null;
+        for (let t = 0; t < 200 && port === null; t++) {
+            try {
+                const pf = std.open(portFile, "r");
+                const s = pf.getline(); pf.close();
+                if (s) port = parseInt(s.trim(), 10);
+            } catch (e) { }
+            if (port === null) { const d = new Date(Date.now() + 25); while (new Date() < d) {} }
+        }
+        assert(port !== null && port > 0, "wire-capture peer is up (" + port + ")");
+        const c = new HTTPClient();
+        try {
+            const r = c.request("POST", "http://127.0.0.1:" + port + "/raw",
+                                new Uint8Array([0x00, 0x80, 0x41, 0xff]));
+            assert(r.status === 200, "sync byte-view body reaches a route (" + r.status + ")");
+        } finally { c.close(); }
+        let cap = null;
+        for (let t = 0; t < 200 && cap === null; t++) {
+            try {
+                const fd = open(capFile, O_RDONLY);
+                const buf = new ArrayBuffer(65536);
+                const n = read(fd, buf, 0, 65536);
+                close(fd);
+                if (n > 0) cap = new Uint8Array(buf, 0, n);
+            } catch (e) { }
+            if (cap === null) { const d = new Date(Date.now() + 25); while (new Date() < d) {} }
+        }
+        assert(cap !== null, "wire capture was written");
+        const all = Array.from(cap);
+        assert(JSON.stringify(all) === JSON.stringify([0, 128, 65, 255]),
+               "sync byte body is raw on the wire, never comma-joined (" + JSON.stringify(all) + ")");
+        let killed = false;
+        try {
+            const pf = std.open(pidFile, "r");
+            const s = pf.getline(); pf.close();
+            if (s) { kill(parseInt(s.trim(), 10), 15); killed = true; }
+        } catch (e) { }
+        assert(killed, "wire-capture peer was reaped");
     }
 
     /* --- bad URL throws --- */

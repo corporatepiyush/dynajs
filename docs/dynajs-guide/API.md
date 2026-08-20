@@ -4600,12 +4600,87 @@ Returns the full href.
 
 Returns the full href.
 
+**`URL.searchParams -> URLSearchParams`**
+
+Returns a fresh URLSearchParams BOUND to this URL: mutating it changes `url.search` and `url.href`.
+
 ```js
 import { URL } from "dyna:url";
 
 const u = new URL("https://user:pass@example.com:8080/p/a?q=1#frag");
 const joined = new URL("/p", "https://base.example:99/x");
 const host = u.hostname;
+u.searchParams.set("q", "2");
+```
+
+### URLSearchParams
+
+The WHATWG query list. A BOUND instance (from `url.searchParams`) writes through to the URL's query slot, so a mutation changes `url.search` and `url.href`; a STANDALONE instance owns its query. A searchParams created from another URLSearchParams copies its list. `entries()`/`keys()`/`values()` return ARRAYS rather than iterator objects — spread, `for..of`, `Array.from` and destructuring work, `it.next()` does not.
+
+**`new URLSearchParams([init]) -> URLSearchParams`**
+
+- `init` *(string | URLSearchParams | Array<[string, string]> | Record<string, string>)* — optional; the query list. A leading `?` on a string is not part of the list.
+
+**`URLSearchParams.size -> number`**
+
+The number of name/value pairs.
+
+**`URLSearchParams.append(name, value)`**
+
+Appends a pair; a name that already exists keeps its other values.
+
+**`URLSearchParams.delete(name)`**
+
+Removes every pair with that name.
+
+**`URLSearchParams.get(name) -> string | null`**
+
+The first value for the name, or `null` when absent.
+
+**`URLSearchParams.getAll(name) -> string[]`**
+
+Every value for the name.
+
+**`URLSearchParams.has(name) -> boolean`**
+
+Whether the name has at least one value.
+
+**`URLSearchParams.set(name, value)`**
+
+Replaces every pair with that name with a single pair.
+
+**`URLSearchParams.sort()`**
+
+Orders pairs by the DECODED key's byte order, in place.
+
+**`URLSearchParams.toString() -> string`**
+
+The `name=value&...` form, re-encoded.
+
+**`URLSearchParams.forEach(callback)`**
+
+- `callback` *(function)* — called as `(value, key, params)` per pair, in order.
+
+**`URLSearchParams.keys() -> string[]`**
+
+The names in order.
+
+**`URLSearchParams.values() -> string[]`**
+
+The values in order.
+
+**`URLSearchParams.entries() -> Array<[string, string]>`**
+
+The pairs in order.
+
+```js
+import { URLSearchParams } from "dyna:url";
+
+const p = new URLSearchParams("a=1&b=x%20y&a=2");
+p.size;              // 3
+p.getAll("a");       // ["1", "2"]
+p.set("b", "z");
+p.toString();        // "a=1&a=2&b=z"
 ```
 
 ### IDNA & Punycode

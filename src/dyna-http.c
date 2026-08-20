@@ -1097,6 +1097,8 @@ static JSValue dyn_http_perform(JSContext *ctx, JSValueConst this_val,
     const char *url = NULL;
     const char *body = NULL;
     size_t body_len = 0;
+    char *raw_body = NULL;
+    size_t raw_body_len = 0;
     char *hdr = NULL;
     int hdr_err = 0;
     hc_exch_t x;
@@ -1111,8 +1113,50 @@ static JSValue dyn_http_perform(JSContext *ctx, JSValueConst this_val,
     if (!url)
         return JS_EXCEPTION;
     if (!JS_IsUndefined(body_val) && !JS_IsNull(body_val)) {
-        body = JS_ToCStringLen(ctx, &body_len, body_val);
-        if (!body) {
+        if (JS_IsString(body_val)) {
+            body = JS_ToCStringLen(ctx, &body_len, body_val);
+        } else {
+            /* a byte view is a raw body; anything else coerces via ToString.
+               JS_GetArrayBufferView throws for non-views -- clear and coerce. */
+            size_t boff = 0, blen = 0, bpe = 0, ab = 0;
+            JSValue buf = JS_GetArrayBufferView(ctx, body_val, &boff, &blen, &bpe);
+            if (!JS_IsException(buf)) {
+                uint8_t *base;
+                if (bpe != 1) {
+                    JS_FreeValue(ctx, buf);
+                    JS_ThrowTypeError(ctx, "body must be a byte view (Uint8Array, "
+                                           "Uint8ClampedArray, Int8Array, DataView) "
+                                           "or a string; wider views are not a byte body");
+                    JS_FreeCString(ctx, url);
+                    return JS_EXCEPTION;
+                }
+                base = JS_GetArrayBuffer(ctx, &ab, buf);
+                JS_FreeValue(ctx, buf);
+                if (!base) {            /* detached mid-resolve */
+                    JS_FreeCString(ctx, url);
+                    return JS_EXCEPTION;
+                }
+                if (boff > ab || blen > ab - boff) {
+                    JS_ThrowRangeError(ctx, "body view out of bounds");
+                    JS_FreeCString(ctx, url);
+                    return JS_EXCEPTION;
+                }
+                raw_body = (char *)malloc(blen + 1);
+                if (!raw_body) {
+                    JS_FreeCString(ctx, url);
+                    return JS_EXCEPTION;
+                }
+                memcpy(raw_body, base + boff, blen);
+                raw_body[blen] = 0;
+                raw_body_len = blen;
+            } else {
+                JS_FreeValue(ctx, JS_GetException(ctx));
+                body = JS_ToCStringLen(ctx, &body_len, body_val);
+            }
+        }
+        if (!body && !raw_body) {
+            if (raw_body)
+                free(raw_body);
             JS_FreeCString(ctx, url);
             return JS_EXCEPTION;
         }
@@ -1121,6 +1165,8 @@ static JSValue dyn_http_perform(JSContext *ctx, JSValueConst this_val,
     if (hdr_err) {
         if (body)
             JS_FreeCString(ctx, body);
+        if (raw_body)
+            free(raw_body);
         JS_FreeCString(ctx, url);
         return JS_EXCEPTION;
     }
@@ -1132,6 +1178,8 @@ static JSValue dyn_http_perform(JSContext *ctx, JSValueConst this_val,
         free(hdr);
         if (body)
             JS_FreeCString(ctx, body);
+        if (raw_body)
+            free(raw_body);
         JS_FreeCString(ctx, url);
         return JS_EXCEPTION;
     }
@@ -1140,6 +1188,8 @@ static JSValue dyn_http_perform(JSContext *ctx, JSValueConst this_val,
         free(hdr);
         if (body)
             JS_FreeCString(ctx, body);
+        if (raw_body)
+            free(raw_body);
         result = dyn_http_throw(ctx, DYN_HTTP_ERR_URL, method, url, NULL);
         JS_FreeCString(ctx, url);
         return result;
@@ -1151,6 +1201,8 @@ static JSValue dyn_http_perform(JSContext *ctx, JSValueConst this_val,
             free(hdr);
             if (body)
                 JS_FreeCString(ctx, body);
+            if (raw_body)
+                free(raw_body);
             result = dyn_http_throw(ctx, DYN_HTTP_ERR_TLS, method, url, terr);
             JS_FreeCString(ctx, url);
             return result;
@@ -1161,8 +1213,8 @@ static JSValue dyn_http_perform(JSContext *ctx, JSValueConst this_val,
     x.method = method;
     x.url = (char *)url;
     x.hdr = hdr;
-    x.body = (char *)body;
-    x.body_len = body_len;
+    x.body = raw_body ? raw_body : (char *)body;
+    x.body_len = raw_body_len ? raw_body_len : body_len;
     x.timeout_ms = cl->timeout_ms;
     x.max_body = cl->max_body;
     hc_exchange(&x);
@@ -1170,6 +1222,8 @@ static JSValue dyn_http_perform(JSContext *ctx, JSValueConst this_val,
     free(hdr);
     if (body)
         JS_FreeCString(ctx, body);
+    if (raw_body)
+        free(raw_body);
     if (x.err != 0) {
         free(x.resp.data);
         result = dyn_http_throw(ctx, x.err, method, url, x.tlswhy);
@@ -1335,6 +1389,8 @@ static JSValue hc_submit_async(JSContext *ctx, JSValueConst this_val,
     const char *url = NULL;
     const char *body = NULL;
     size_t body_len = 0;
+    char *raw_body = NULL;
+    size_t raw_body_len = 0;
     char *hdr = NULL;
     int hdr_err = 0;
     hc_job_t *j;
@@ -1348,8 +1404,51 @@ static JSValue hc_submit_async(JSContext *ctx, JSValueConst this_val,
     if (!url)
         return JS_EXCEPTION;
     if (!JS_IsUndefined(body_val) && !JS_IsNull(body_val)) {
-        body = JS_ToCStringLen(ctx, &body_len, body_val);
-        if (!body) {
+        if (JS_IsString(body_val)) {
+            body = JS_ToCStringLen(ctx, &body_len, body_val);
+        } else {
+            /* a byte view (Uint8Array & co, DataView) is a raw body; anything
+               else falls through to ToString. JS_GetArrayBufferView throws for
+               non-views -- clear and coerce. */
+            size_t boff = 0, blen = 0, bpe = 0, ab = 0;
+            JSValue buf = JS_GetArrayBufferView(ctx, body_val, &boff, &blen, &bpe);
+            if (!JS_IsException(buf)) {
+                uint8_t *base;
+                if (bpe != 1) {
+                    JS_FreeValue(ctx, buf);
+                    JS_ThrowTypeError(ctx, "body must be a byte view (Uint8Array, "
+                                           "Uint8ClampedArray, Int8Array, DataView) "
+                                           "or a string; wider views are not a byte body");
+                    JS_FreeCString(ctx, url);
+                    return JS_EXCEPTION;
+                }
+                base = JS_GetArrayBuffer(ctx, &ab, buf);
+                JS_FreeValue(ctx, buf);
+                if (!base) {            /* detached mid-resolve */
+                    JS_FreeCString(ctx, url);
+                    return JS_EXCEPTION;
+                }
+                if (boff > ab || blen > ab - boff) {
+                    JS_ThrowRangeError(ctx, "body view out of bounds");
+                    JS_FreeCString(ctx, url);
+                    return JS_EXCEPTION;
+                }
+                raw_body = (char *)malloc(blen + 1);
+                if (!raw_body) {
+                    JS_FreeCString(ctx, url);
+                    return JS_EXCEPTION;
+                }
+                memcpy(raw_body, base + boff, blen);
+                raw_body[blen] = 0;
+                raw_body_len = blen;
+            } else {
+                JS_FreeValue(ctx, JS_GetException(ctx));
+                body = JS_ToCStringLen(ctx, &body_len, body_val);
+            }
+        }
+        if (!body && !raw_body) {
+            if (raw_body)
+                free(raw_body);
             JS_FreeCString(ctx, url);
             return JS_EXCEPTION;
         }
@@ -1358,6 +1457,8 @@ static JSValue hc_submit_async(JSContext *ctx, JSValueConst this_val,
     if (hdr_err) {
         if (body)
             JS_FreeCString(ctx, body);
+        if (raw_body)
+            free(raw_body);
         JS_FreeCString(ctx, url);
         return JS_EXCEPTION;
     }
@@ -1367,6 +1468,8 @@ static JSValue hc_submit_async(JSContext *ctx, JSValueConst this_val,
         free(hdr);
         if (body)
             JS_FreeCString(ctx, body);
+        if (raw_body)
+            free(raw_body);
         JS_FreeCString(ctx, url);
         return JS_EXCEPTION;
     }
@@ -1379,19 +1482,25 @@ static JSValue hc_submit_async(JSContext *ctx, JSValueConst this_val,
     j->method_own = strdup(method);
     j->x.url = strdup(url);
     j->x.body = NULL;
-    if (body) {                     /* a body may hold NULs: copy by length */
-        j->x.body = (char *)malloc(body_len + 1);
+    if (body || raw_body) {         /* a body may hold NULs: copy by length */
+        j->x.body = (char *)malloc((body ? body_len : raw_body_len) + 1);
         if (j->x.body) {
-            memcpy(j->x.body, body, body_len);
-            j->x.body[body_len] = 0;
+            if (body) {
+                memcpy(j->x.body, body, body_len);
+            } else {
+                memcpy(j->x.body, raw_body, raw_body_len);
+            }
+            j->x.body[body ? body_len : raw_body_len] = 0;
         }
     }
-    if (!j->method_own || !j->x.url || (body && !j->x.body)) {
+    if (!j->method_own || !j->x.url || ((body || raw_body) && !j->x.body)) {
         hc_job_free(j);
+        if (raw_body)
+            free(raw_body);
         goto oom;
     }
     j->x.method = j->method_own;
-    j->x.body_len = body_len;
+    j->x.body_len = body ? body_len : raw_body_len;
     /* A malformed URL is an argument error, not an IO event: it throws here
        rather than rejecting, exactly like the sync methods. */
     if (dyn_parse_url(j->x.url, &j->x.u) < 0) {
@@ -1399,6 +1508,8 @@ static JSValue hc_submit_async(JSContext *ctx, JSValueConst this_val,
         hc_job_free(j);
         if (body)
             JS_FreeCString(ctx, body);
+        if (raw_body)
+            free(raw_body);
         JS_FreeCString(ctx, url);
         return e;
     }
@@ -1410,6 +1521,8 @@ static JSValue hc_submit_async(JSContext *ctx, JSValueConst this_val,
             hc_job_free(j);
             if (body)
                 JS_FreeCString(ctx, body);
+            if (raw_body)
+                free(raw_body);
             JS_FreeCString(ctx, url);
             return e;
         }
@@ -1425,6 +1538,8 @@ static JSValue hc_submit_async(JSContext *ctx, JSValueConst this_val,
         hc_job_free(j);
         if (body)
             JS_FreeCString(ctx, body);
+        if (raw_body)
+            free(raw_body);
         JS_FreeCString(ctx, url);
         return promise;
     }
@@ -1432,6 +1547,8 @@ static JSValue hc_submit_async(JSContext *ctx, JSValueConst this_val,
     j->reject = funcs[1];
     if (body)
         JS_FreeCString(ctx, body);
+    if (raw_body)
+        free(raw_body);
     JS_FreeCString(ctx, url);
 
     aio = dyn_net_reactor_acquire(ctx);
@@ -1451,6 +1568,8 @@ oom:
     free(hdr);
     if (body)
         JS_FreeCString(ctx, body);
+    if (raw_body)
+        free(raw_body);
     JS_FreeCString(ctx, url);
     return JS_ThrowOutOfMemory(ctx);
 }
@@ -1571,6 +1690,8 @@ typedef struct {
     pthread_t *workers;
     int started;             /* JS-thread only */
     atomic_int stop_flag;    /* acceptor loop breaks on this */
+    JSContext *ctx;          /* JS thread, for the reactor keep-alive */
+    int reactor_held;        /* start() acquired the shared reactor */
 } dyn_http_server_t;
 
 static const char *dyn_reason_phrase(int status)
@@ -1973,6 +2094,10 @@ static void dyn_http_server_stop_internal(dyn_http_server_t *s)
         s->q.head = (s->q.head + 1) % DYN_HTTP_CONN_QUEUE_CAP;
         s->q.count--;
     }
+    if (s->reactor_held) {
+        dyn_net_reactor_release(s->ctx);
+        s->reactor_held = 0;
+    }
     s->started = 0;
 }
 
@@ -2236,6 +2361,7 @@ static JSValue dyn_http_server_ctor(JSContext *ctx, JSValueConst new_target,
     s->listen_fd = -1;
     s->num_workers = workers;
     s->backlog = backlog;
+    s->ctx = ctx;
     atomic_init(&s->stop_flag, 0);
     pthread_mutex_init(&s->q.mutex, NULL);
     pthread_cond_init(&s->q.not_empty, NULL);
@@ -2325,6 +2451,14 @@ static JSValue dyn_http_server_start(JSContext *ctx, JSValueConst this_val,
         return JS_UNDEFINED;
     if (dyn_http_server_spawn(s) < 0)
         return JS_ThrowInternalError(ctx, "failed to start HTTP server threads");
+    /* The acceptor/worker threads are invisible to js_os_poll, so a started
+       server would let the process exit at the end of the script. Hold the
+       shared reactor, exactly as App does; stop() releases it. */
+    if (!dyn_net_reactor_acquire(ctx)) {
+        dyn_http_server_stop_internal(s);
+        return JS_ThrowOutOfMemory(ctx);
+    }
+    s->reactor_held = 1;
     return JS_UNDEFINED;
 }
 
@@ -2383,6 +2517,7 @@ static JSClassID dyn_http_async_class_id;
 #define DYN_WS_MAX_FRAGMENTS 4096             /* frames per reassembled message */
 #define DYN_WS_CTL_BUDGET    64               /* control frames between messages */
 #define DYN_APP_MAX_BATCH    256              /* JSON-RPC calls in one batch */
+#define DYN_APP_MAX_PARAMS   256              /* JSON-RPC by-position args */
 
 typedef struct dyn_http_async dyn_http_async_t;
 
@@ -2431,6 +2566,8 @@ struct dyn_http_async {
     int started;             /* JS-thread only */
     atomic_int stop_flag;    /* reactor loop breaks on this */
     atomic_int spawn_ok;     /* reactor published its loop init result */
+    JSContext *ctx;          /* JS thread, for the reactor keep-alive */
+    int reactor_held;        /* start() acquired the shared reactor */
 };
 
 static int dyn_set_nonblock(int fd)
@@ -3146,6 +3283,10 @@ static void dyn_http_async_stop_internal(dyn_http_async_t *s)
         dyn_evloop_free(s->loop); /* reactor is joined: sole owner now */
         s->loop = NULL;
     }
+    if (s->reactor_held) {
+        dyn_net_reactor_release(s->ctx);
+        s->reactor_held = 0;
+    }
     s->started = 0;
 }
 
@@ -3253,6 +3394,7 @@ static JSValue dyn_http_async_ctor(JSContext *ctx, JSValueConst new_target,
     }
     s->listen_fd = -1;
     s->backlog = backlog;
+    s->ctx = ctx;
     atomic_init(&s->stop_flag, 0);
     atomic_init(&s->spawn_ok, 0);
     atomic_init(&s->n_refused, 0);
@@ -3357,6 +3499,14 @@ static JSValue dyn_http_async_start(JSContext *ctx, JSValueConst this_val,
         sched_yield();
     }
     s->started = 1;
+    /* Same keep-alive as dyn_http_server_start: the reactor thread is
+       invisible to js_os_poll, so hold the shared reactor or a script whose
+       server is the only work exits the instant it ends. */
+    if (!dyn_net_reactor_acquire(ctx)) {
+        dyn_http_async_stop_internal(s);
+        return JS_ThrowOutOfMemory(ctx);
+    }
+    s->reactor_held = 1;
     return JS_UNDEFINED;
 }
 
@@ -4334,15 +4484,51 @@ static int dyn_app_rpc_build_one(dyn_app_conn_t *c, JSValueConst methods,
         if (!JS_IsFunction(ctx, fn)) {
             if (has_id) { dyn_app_build_error(-32601, "Method not found", id_s, &tmp); wrote = 1; }
         } else {
-            JSValueConst a[1] = { params };
-            JSValue res = JS_Call(ctx, fn, JS_UNDEFINED, 1, a);
-            if (JS_IsException(res)) {
+            JSValue res = JS_UNDEFINED;
+            int arg_err = 0;    /* params rejected: no call happened, no res */
+            /* JSON-RPC params may be a by-position array (spread, the
+               WHATWG-Node convention), a by-name object (one argument), or
+               omitted (zero arguments). Same dispatch as the single request
+               path. */
+            if (JS_IsUndefined(params)) {
+                res = JS_Call(ctx, fn, JS_UNDEFINED, 0, NULL);
+            } else if (JS_IsArray(ctx, params)) {
+                JSValue lenv = JS_GetPropertyStr(ctx, params, "length");
+                uint32_t len = 0, i;
+                JSValueConst *argv = NULL;
+                JS_ToUint32(ctx, &len, lenv);
+                JS_FreeValue(ctx, lenv);
+                if (len > DYN_APP_MAX_PARAMS) {
+                    /* a notification must not produce a response at all */
+                    if (has_id) { dyn_app_build_error(-32602, "Invalid params", id_s, &tmp); wrote = 1; }
+                    arg_err = 1;
+                } else if (len > 0) {
+                    argv = (JSValueConst *)malloc(len * sizeof(*argv));
+                    if (!argv) {
+                        if (has_id) { dyn_app_build_error(-32603, "Internal error", id_s, &tmp); wrote = 1; }
+                        arg_err = 1;
+                    } else {
+                        for (i = 0; i < len; i++)
+                            argv[i] = JS_GetPropertyUint32(ctx, params, i);
+                        res = JS_Call(ctx, fn, JS_UNDEFINED, len, argv);
+                        for (i = 0; i < len; i++)
+                            JS_FreeValue(ctx, argv[i]);
+                        free(argv);
+                    }
+                } else {
+                    res = JS_Call(ctx, fn, JS_UNDEFINED, 0, NULL);
+                }
+            } else {
+                JSValueConst a[1] = { params };
+                res = JS_Call(ctx, fn, JS_UNDEFINED, 1, a);
+            }
+            if (!arg_err && JS_IsException(res)) {
                 JSValue exc = JS_GetException(ctx);
                 if (has_id) { const char *em = JS_ToCString(ctx, exc);
                     dyn_app_build_error(-32000, em ? em : "Server error", id_s, &tmp);
                     if (em) JS_FreeCString(ctx, em); wrote = 1; }
                 JS_FreeValue(ctx, exc);
-            } else {
+            } else if (!arg_err) {
                 int thenable = 0;
                 if (JS_IsObject(res)) {
                     JSValue th = JS_GetPropertyStr(ctx, res, "then");
@@ -4459,9 +4645,44 @@ static void dyn_app_dispatch_rpc(dyn_app_conn_t *c, JSValueConst methods,
         JS_FreeCString(ctx, method_s);
         goto cleanup;
     }
-    /* call handler(params) */
-    { JSValueConst argv[1] = { params };
-      result = JS_Call(ctx, fn, JS_UNDEFINED, 1, argv); }
+    /* call handler(params). JSON-RPC params may be a by-position array
+     * (spread, WHATWG-Node convention) or a by-name object (single
+     * argument); omitted params call with zero arguments. */
+    if (JS_IsUndefined(params)) {
+        result = JS_Call(ctx, fn, JS_UNDEFINED, 0, NULL);
+    } else if (JS_IsArray(ctx, params)) {
+        JSValue lenv = JS_GetPropertyStr(ctx, params, "length");
+        uint32_t len = 0, i;
+        JSValueConst *argv = NULL;
+        JS_ToUint32(ctx, &len, lenv);
+        JS_FreeValue(ctx, lenv);
+        if (len > DYN_APP_MAX_PARAMS) {
+            JS_FreeValue(ctx, fn);
+            JS_FreeCString(ctx, method_s);
+            dyn_app_rpc_error(c, 400, -32602, "Invalid params", id_s);
+            goto cleanup;
+        }
+        if (len > 0) {
+            argv = (JSValueConst *)malloc(len * sizeof(*argv));
+            if (!argv) {
+                JS_FreeValue(ctx, fn);
+                JS_FreeCString(ctx, method_s);
+                dyn_app_send_rpc_throw(c, JS_ThrowOutOfMemory(ctx), id_s);
+                goto cleanup;
+            }
+            for (i = 0; i < len; i++)
+                argv[i] = JS_GetPropertyUint32(ctx, params, i);
+            result = JS_Call(ctx, fn, JS_UNDEFINED, len, argv);
+            for (i = 0; i < len; i++)
+                JS_FreeValue(ctx, argv[i]);
+            free(argv);
+        } else {
+            result = JS_Call(ctx, fn, JS_UNDEFINED, 0, NULL);
+        }
+    } else {
+        JSValueConst argv[1] = { params };
+        result = JS_Call(ctx, fn, JS_UNDEFINED, 1, argv);
+    }
     JS_FreeValue(ctx, fn);
     JS_FreeCString(ctx, method_s);
 
@@ -6482,6 +6703,68 @@ static const JSCFunctionListEntry dyn_app_proto[] = {
 /* HTTP message codecs (design 15). */
 #include "dyna-httpmsg.inc.c"
 
+/* Register one public class, re-entrantly. Both dyna:net and dyna:http call
+ * dyn_http_register, and this fork's JS_NewClassID REUSES a stored id, so the
+ * second registration on one runtime fails. A failed JS_NewClass therefore
+ * means "already registered HERE": re-export the ctor from the existing proto
+ * (net.App === http.App). On a fresh runtime the stale id is out of range and
+ * JS_NewClass grows the arrays, so workers keep working. */
+static int dyn_http_register_one(JSContext *ctx, JSModuleDef *m,
+                                 JSClassID *pid, const JSClassDef *def,
+                                 const JSCFunctionListEntry *proto_funcs,
+                                 int n_funcs, JSCFunction *ctor_fn,
+                                 const char *name)
+{
+    JSRuntime *rt = JS_GetRuntime(ctx);
+    JSValue proto, ctor;
+
+    JS_NewClassID(pid);
+    if (JS_NewClass(rt, *pid, def) < 0) {
+        proto = JS_GetClassProto(ctx, *pid);
+        ctor = JS_GetPropertyStr(ctx, proto, "constructor");
+        JS_FreeValue(ctx, proto);
+        if (!JS_IsFunction(ctx, ctor)) {
+            JS_FreeValue(ctx, ctor);
+            return -1;
+        }
+        if (JS_SetModuleExport(ctx, m, name, ctor) < 0) {
+            JS_FreeValue(ctx, ctor);
+            return -1;
+        }
+        return 0;
+    }
+    proto = JS_NewObject(ctx);
+    if (JS_IsException(proto))
+        return -1;
+    JS_SetPropertyFunctionList(ctx, proto, proto_funcs, n_funcs);
+    dyn_res_class_common(ctx, *pid, proto);
+    JS_SetClassProto(ctx, *pid, proto);
+    ctor = JS_NewCFunction2(ctx, ctor_fn, name, 0, JS_CFUNC_constructor, 0);
+    JS_SetConstructor(ctx, ctor, proto);
+    return JS_SetModuleExport(ctx, m, name, ctor);
+}
+
+/* Register one internal (non-constructible) class, re-entrantly. */
+static int dyn_http_register_internal(JSContext *ctx, JSClassID *pid,
+                                      const JSClassDef *def,
+                                      const JSCFunctionListEntry *proto_funcs,
+                                      int n_funcs)
+{
+    JSRuntime *rt = JS_GetRuntime(ctx);
+
+    JS_NewClassID(pid);
+    if (JS_NewClass(rt, *pid, def) < 0)
+        return 0; /* already registered on this runtime */
+    {
+        JSValue wp = JS_NewObject(ctx);
+        if (JS_IsException(wp))
+            return -1;
+        JS_SetPropertyFunctionList(ctx, wp, proto_funcs, n_funcs);
+        JS_SetClassProto(ctx, *pid, wp);
+    }
+    return 0;
+}
+
 int dyn_http_register(JSContext *ctx, JSModuleDef *m)
 {
     if (dyn_httpmsg_register(ctx, m) < 0)
@@ -6489,48 +6772,38 @@ int dyn_http_register(JSContext *ctx, JSModuleDef *m)
     /* Install the SIMD dispatch table on the JS thread before any acceptor/
      * worker thread spawns; dyn_memfind reads it lock-free thereafter. */
     simd_init();
-    if (dyn_register_class(ctx, m, &dyn_http_client_class_id,
-                           &dyn_http_client_class, dyn_http_client_proto,
-                           countof(dyn_http_client_proto),
-                           dyn_http_client_ctor, "HTTPClient") < 0)
+    if (dyn_http_register_one(ctx, m, &dyn_http_client_class_id,
+                              &dyn_http_client_class, dyn_http_client_proto,
+                              countof(dyn_http_client_proto),
+                              dyn_http_client_ctor, "HTTPClient") < 0)
         return -1;
-    if (dyn_register_class(ctx, m, &dyn_http_server_class_id,
-                           &dyn_http_server_class, dyn_http_server_proto,
-                           countof(dyn_http_server_proto),
-                           dyn_http_server_ctor, "HTTPServer") < 0)
+    if (dyn_http_register_one(ctx, m, &dyn_http_server_class_id,
+                              &dyn_http_server_class, dyn_http_server_proto,
+                              countof(dyn_http_server_proto),
+                              dyn_http_server_ctor, "HTTPServer") < 0)
         return -1;
-    if (dyn_register_class(ctx, m, &dyn_http_async_class_id,
-                           &dyn_http_async_class, dyn_http_async_proto,
-                           countof(dyn_http_async_proto),
-                           dyn_http_async_ctor, "HTTPServerAsync") < 0)
+    if (dyn_http_register_one(ctx, m, &dyn_http_async_class_id,
+                              &dyn_http_async_class, dyn_http_async_proto,
+                              countof(dyn_http_async_proto),
+                              dyn_http_async_ctor, "HTTPServerAsync") < 0)
         return -1;
-    if (dyn_register_class(ctx, m, &dyn_app_class_id,
-                           &dyn_app_class, dyn_app_proto,
-                           countof(dyn_app_proto),
-                           dyn_app_ctor, "App") < 0)
+    if (dyn_http_register_one(ctx, m, &dyn_app_class_id,
+                              &dyn_app_class, dyn_app_proto,
+                              countof(dyn_app_proto),
+                              dyn_app_ctor, "App") < 0)
         return -1;
-    /* WsConn: internal class (created at handshake, not user-constructible) */
-    JS_NewClassID(&dyn_ws_class_id);
-    if (JS_NewClass(JS_GetRuntime(ctx), dyn_ws_class_id, &dyn_ws_class) < 0)
+    if (dyn_http_register_one(ctx, m, &dyn_wsc_class_id,
+                              &dyn_wsc_class, dyn_wsc_proto,
+                              countof(dyn_wsc_proto),
+                              dyn_wsc_ctor, "WsClient") < 0)
         return -1;
-    {
-        JSValue wp = JS_NewObject(ctx);
-        JS_SetPropertyFunctionList(ctx, wp, dyn_ws_proto, countof(dyn_ws_proto));
-        JS_SetClassProto(ctx, dyn_ws_class_id, wp);
-    }
-    /* SseConn: internal class, same shape as WsConn */
-    JS_NewClassID(&dyn_sse_class_id);
-    if (JS_NewClass(JS_GetRuntime(ctx), dyn_sse_class_id, &dyn_sse_class) < 0)
+    /* WsConn/SseConn: internal classes (created at handshake, not
+     * user-constructible); re-entry is a no-op. */
+    if (dyn_http_register_internal(ctx, &dyn_ws_class_id, &dyn_ws_class,
+                                   dyn_ws_proto, countof(dyn_ws_proto)) < 0)
         return -1;
-    {
-        JSValue sp = JS_NewObject(ctx);
-        JS_SetPropertyFunctionList(ctx, sp, dyn_sse_proto, countof(dyn_sse_proto));
-        JS_SetClassProto(ctx, dyn_sse_class_id, sp);
-    }
-    if (dyn_register_class(ctx, m, &dyn_wsc_class_id,
-                           &dyn_wsc_class, dyn_wsc_proto,
-                           countof(dyn_wsc_proto),
-                           dyn_wsc_ctor, "WsClient") < 0)
+    if (dyn_http_register_internal(ctx, &dyn_sse_class_id, &dyn_sse_class,
+                                   dyn_sse_proto, countof(dyn_sse_proto)) < 0)
         return -1;
     {
         static const char *const fetch_names[] = {
