@@ -8,7 +8,7 @@ import {
     gamma, lgamma, erf, erfc, cbrt, hypot, copysign, nextafter,
     expm1, log1p, log2, logb, scalbn, ilogb, modf, frexp, ldexp,
     remainder, fmod, isInf, isNaN as mxIsNaN, signbit, trunc, round, roundToEven,
-    gcd, lcm, factorial, isPrime, abs, bitLen, popcount, besselj,
+    gcd, lcm, factorial, isPrime, abs, bitLen, popcount, besselj, besselk, besselkScaled,
 } from "dyna:mathx";
 
 let n = 0;
@@ -586,6 +586,41 @@ function assertPosZero(actual, msg) {
 
     assertEq(besselj(5, 0), 0, "J_n(0) is 0 for n >= 1");
     assertEq(besselj(0, 0), 1, "and J_0(0) is 1");
+}
+
+/* besselk: the NaN->int UBSan and large-order guard (dyn_besselk_scaled).
+ * K_nu(x) -> 0 as |nu|->inf or x->Inf, and NaN propagates. The (int)floor
+ * in mx_besselk_small is UB on NaN, so the core now guards it. */
+{
+    // besselk may be missing in some minimal builds; guard
+    if (typeof besselk === "function") {
+        assertNaN(besselk(NaN, 1), "besselk(NaN,1) NaN");
+        assertNaN(besselk(1, NaN), "besselk(1,NaN) NaN");
+        assertNaN(besselk(NaN, NaN), "besselk(NaN,NaN) NaN");
+        assertNaN(besselkScaled(NaN, 1), "besselkScaled(NaN,1) NaN");
+        assertNaN(besselkScaled(1, NaN), "besselkScaled(1,NaN) NaN");
+        assertEq(besselk(Infinity, 1), 0, "besselk(Inf,1) 0");
+        assertEq(besselk(-Infinity, 1), 0, "besselk(-Inf,1) 0");
+        assertEq(besselk(1, Infinity), 0, "besselk(1,Inf) 0");
+        assertEq(besselkScaled(Infinity, 1), 0, "besselkScaled(Inf,1) 0");
+        assertEq(besselkScaled(1, Infinity), 0, "besselkScaled(1,Inf) 0");
+
+        assertEq(besselk(0, 0), Infinity, "besselk(0,0) Inf");
+        assertNaN(besselk(0, -1), "besselk(0,-1) NaN");
+        for (const [nu, x] of [[0,1],[0.5,1],[1,1],[2,0.5],[5,2]]) {
+            const k = besselk(nu, x);
+            const ks = besselkScaled(nu, x);
+            assert(Number.isFinite(k), `besselk(${nu},${x}) finite`);
+            assert(Number.isFinite(ks), `besselkScaled(${nu},${x}) finite`);
+            const expect = k * Math.exp(x);
+            const rel = Math.abs(ks - expect) / Math.max(1e-300, Math.abs(expect));
+            assert(rel < 1e-12, `besselkScaled vs k*exp at ${nu},${x} rel ${rel}`);
+        }
+        for (const [nu,x] of [[NaN,1],[1,NaN],[Infinity,1],[1,Infinity],[1e9,1]]) {
+            let threw=false; try{besselk(nu,x);}catch(e){threw=true;}
+            assert(!threw, `besselk(${nu},${x}) should not throw`);
+        }
+    }
 }
 
 print("test_mathx: all tests passed (" + n + " assertions)");

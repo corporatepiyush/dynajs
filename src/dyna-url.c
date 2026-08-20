@@ -1195,8 +1195,10 @@ static int dyn_sp_enc_pair(JSContext *ctx, dyn_sb_t *out, int *first,
         JS_FreeValue(ctx, v);
         v = nv;
     }
-    if (JS_IsException(v))
+    if (JS_IsException(v)) {
+        JS_FreeValue(ctx, k);
         return -1;
+    }
     if (!JS_IsString(k)) {
         JSValue nk = JS_ToString(ctx, k);
         JS_FreeValue(ctx, k);
@@ -1209,8 +1211,12 @@ static int dyn_sp_enc_pair(JSContext *ctx, dyn_sb_t *out, int *first,
     ks = JS_ToCStringLen(ctx, &kn, k);
     vs = JS_ToCStringLen(ctx, &vn, v);
     JS_FreeValue(ctx, v);
-    if (!ks || !vs)
+    JS_FreeValue(ctx, k);
+    if (!ks || !vs) {
+        if (ks) JS_FreeCString(ctx, ks);
+        if (vs) JS_FreeCString(ctx, vs);
         return -1;
+    }
     if (!*first)
         dyn_sb_putc(out, '&');
     dyn_pct_encode(out, ks, kn, 1);
@@ -1296,12 +1302,10 @@ static JSValue dyn_sp_ctor(JSContext *ctx, JSValueConst new_target,
                     return JS_EXCEPTION;
                 }
                 if (dyn_sp_enc_pair(ctx, &out, &first, k, v) < 0) {
-                    JS_FreeValue(ctx, k);
                     dyn_sb_free(&out);
                     free(sp);
                     return JS_EXCEPTION;
                 }
-                JS_FreeValue(ctx, k);
             }
         } else {
             /* plain record: own enumerable string keys, values ToString'd */
@@ -1325,13 +1329,11 @@ static JSValue dyn_sp_ctor(JSContext *ctx, JSValueConst new_target,
                     return JS_EXCEPTION;
                 }
                 if (dyn_sp_enc_pair(ctx, &out, &first, k, v) < 0) {
-                    JS_FreeValue(ctx, k);
                     JS_FreePropertyEnum(ctx, tab, len);
                     dyn_sb_free(&out);
                     free(sp);
                     return JS_EXCEPTION;
                 }
-                JS_FreeValue(ctx, k);
             }
             JS_FreePropertyEnum(ctx, tab, len);
         }

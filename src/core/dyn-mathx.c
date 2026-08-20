@@ -589,6 +589,14 @@ static double mx_besselk_small(double nu, double x)
 
 double dyn_besselk_scaled(double nu, double x)
 {
+    /* NaN/Inf orders are not representable in the branches below (the
+       (int)floor steps in the small-x series are UB on NaN). The limits
+       are K_nu(x) -> 0 as |nu| -> inf, and K_nu(x) ~ sqrt(pi/2x) e^-x -> 0
+       as x -> +inf; scipy's kv agrees on all three. */
+    if (isnan(nu) || isnan(x))
+        return NAN;
+    if (isinf(nu) || x == INFINITY)
+        return 0.0;
     if (nu < 0.0)
         nu = -nu; /* K_-nu = K_nu, exactly, for every order */
     if (!(x > 0.0))
