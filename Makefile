@@ -1369,6 +1369,7 @@ NATIVE_TESTS=tests/test_algo_blackbox.js tests/test_http_security.js tests/test_
   tests/test_http_sse.js \
   tests/test_http_compress.js \
   tests/test_http_metrics_endpoint.js \
+  tests/test_http_hardening.js \
   tests/test_ws_client.js \
   tests/test_encoding.js \
   tests/test_file.js tests/test_file_handle.js tests/test_file_async.js \
