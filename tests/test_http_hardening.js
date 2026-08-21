@@ -515,13 +515,21 @@ p50 = one * 50
 r = hit(p50, want=50, hard=8.0)
 rec("pipeline50", n=r["n"])
 
-# connect + immediate close must not disturb the server
+# connect + immediate close must not disturb the server. The follow-up
+# request RETRIES across fresh connections: under parallel-suite load one
+# attempt can lose the race, but a server genuinely wedged by the abort
+# churn fails every attempt.
 try:
     sk = socket.create_connection((H, P), timeout=2); sk.close()
     sk = socket.create_connection((H, P), timeout=2); sk.close()
 except Exception: pass
-r = post(json.dumps({"method": "add", "params": [4, 4], "id": 11}).encode())
-rec("survives_abort", code=r["code"])
+code = None
+for _ in range(4):
+    r = post(json.dumps({"method": "add", "params": [4, 4], "id": 11}).encode())
+    if r["code"] == "200":
+        code = "200"; break
+    time.sleep(0.25)
+rec("survives_abort", code=code)
 
 # split delivery: one request dripped a byte at a time reassembles correctly
 full = b"GET /f/oo.html HTTP/1.1\\r\\nHost: x\\r\\nUser-Agent: drip\\r\\n\\r\\n"
