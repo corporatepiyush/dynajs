@@ -8,6 +8,9 @@
  * per-connection buffers; that is what keeps RSS flat.
  * The request path is SYSCALL-bound, not CPU-bound: the lever is syscalls per
  * request, not C micro-optimisation.
+ * NAMED LIMITATION: ws/sse sends have no backpressure. dyn_aio_send queues
+ * what the kernel will not take, so a handler flooding a non-reading peer
+ * grows that queue without bound; frames are size-capped, the queue is not.
  * Full API: see the dyna:* module in dyna-libc.h.
  */
 #include "dyna-nat.h"
@@ -5649,6 +5652,16 @@ static void dyn_app_upload_start(dyn_app_conn_t *c, const dyn_app_route_t *rt,
     u->fd = fd; u->remaining = clen; u->size = clen;
     u->handler = JS_DupValue(ctx, rt->handler);
     u->path = strdup(fpath);
+    if (!u->path) {
+        /* finish() would hand a NULL path to JS_NewString; fail the upload
+           instead. The handler ref was taken above and dies with u here. */
+        JS_FreeValue(ctx, u->handler);
+        free(u);
+        close(fd);
+        dyn_app_send_err(c, 500, "{\"error\":\"out of memory\"}");
+        dyn_app_conn_close(c);
+        return;
+    }
     /* Copy the STRING, not the buffer: memcpy of sizeof(u->ctype) was correct
        only because both are 128, which nothing pinned, and it dragged the
        uninitialised tail of a stack buffer into the heap struct. */
