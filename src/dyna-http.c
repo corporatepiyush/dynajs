@@ -5416,7 +5416,11 @@ static void dyn_app_serve_static(dyn_app_conn_t *c, const dyn_app_route_t *rt,
     dyn_iobuf_init(&out);
     if (n > 0) {
         dyn_iobuf_append(&out, head, (size_t)n);
-        if (c->close_after) {
+        /* The close callback may ride the HEADER send only when no body
+           phase follows (HEAD): otherwise it fires before sendfile runs and
+           truncates the response to its headers -- measured as an empty
+           200 by test_http_params before this move. */
+        if (c->close_after && head_only) {
             c->refs++;
             dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0,
                          dyn_app_close_after_send, c);
@@ -5432,15 +5436,18 @@ static void dyn_app_serve_static(dyn_app_conn_t *c, const dyn_app_route_t *rt,
         dyn_app_met_response(c, 0);
         return;
     }
-    /* dyn_aio_sendfile owns ffd and closes it on completion or connection close.
-       With close_after there is no completion callback to ride, so the
-       keep-alive close is left to the peer/idle sweep for this one path. */
+    /* dyn_aio_sendfile owns ffd and closes it on completion or connection
+     * close. With close_after the close rides the TRANSFER's completion --
+     * the only callback that fires after the last body byte. */
     if (rstart >= 0)
         dyn_aio_sendfile(c->app->aio, c->fd, ffd, (off_t)rstart,
-                         (size_t)(rend - rstart + 1), NULL, NULL);
+                         (size_t)(rend - rstart + 1),
+                         c->close_after ? dyn_app_close_after_send : NULL,
+                         c->close_after ? (void *)c : NULL);
     else
         dyn_aio_sendfile(c->app->aio, c->fd, ffd, 0, (size_t)st.st_size,
-                         NULL, NULL);
+                         c->close_after ? dyn_app_close_after_send : NULL,
+                         c->close_after ? (void *)c : NULL);
     /* the zero-copy path bypasses dyn_app_send_body, so it reports itself */
     dyn_app_met_response(c, (double)(rstart >= 0 ? rend - rstart + 1
                                                  : st.st_size));

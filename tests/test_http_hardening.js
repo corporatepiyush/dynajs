@@ -669,11 +669,13 @@ def hit_eof(payload, hard=4.0):
     except Exception: pass
     s.close()
     return {"code": (out[9:12].decode() if out[:4] == b"HTTP" else None),
-            "eof": eof}
+            "eof": eof, "full": (b"PREFIX-OK" in out)}
 r = hit_eof(b"GET /f/oo.html HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n")
-rec("app_close_token", code=r["code"], eof=r["eof"])
+rec("app_close_token", code=r["code"], eof=r["eof"],
+                   full=r["full"])
 r = hit_eof(b"GET /f/oo.html HTTP/1.0\\r\\nHost: x\\r\\n\\r\\n")
-rec("app_http10_default_close", code=r["code"], eof=r["eof"])
+rec("app_http10_default_close", code=r["code"], eof=r["eof"],
+                   full=r["full"])
 # control: keep-alive request stays open (no EOF within the window)
 try:
     s = socket.create_connection((H, P), timeout=2)
@@ -963,9 +965,11 @@ print(json.dumps(R))
            "rpc: a single notification (no id) gets NO response, per JSON-RPC 2.0 " +
            "(n=" + (R.rpc_notification_silent && R.rpc_notification_silent.n) + ")");
         ok(R.app_close_token && R.app_close_token.code === "200" &&
-           R.app_close_token.eof === true,
-           "close: Connection: close is honored -- 200, then EOF (got " +
+           R.app_close_token.eof === true && R.app_close_token.full === true,
+           "close: Connection: close delivers the FULL body, then EOF (got " +
            JSON.stringify(R.app_close_token) + ")");
+        ok(R.app_http10_default_close.full === true,
+           "close: HTTP/1.0 default-close also delivers the full body");
         ok(R.app_http10_default_close && R.app_http10_default_close.code === "200" &&
            R.app_http10_default_close.eof === true,
            "close: HTTP/1.0 with no Connection header defaults to close (got " +
