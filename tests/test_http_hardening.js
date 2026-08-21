@@ -231,6 +231,16 @@ app.upload("/up", { dir: new Path("${T}/updir"), maxFileSize: 1 << 22 },
            (p, m) => m.size);
 app.upload("/uptxt", { dir: new Path("${T}/updir"), maxFileSize: 65536,
                        allow: ["text/plain"] }, (p, m) => m.size);
+/* ④ outbound backpressure: each open floods 6 MB at a peer that never
+ * reads -- the 4 MB outbound cap must end the connection, not grow the
+ * aio queue without bound. */
+const MB = new Uint8Array(1048576);
+app.ws("/wsflood", { open: (ws) => {
+  for (let i = 0; i < 6; i++) ws.send(MB);
+}, message: () => {}, close: () => {} });
+app.sse("/sseflood", { open: (sse) => {
+  for (let i = 0; i < 6; i++) sse.send("F".repeat(1048576));
+}, close: () => {} });
 /* route registrations while an upload is in flight: the old code held a
  * pointer into the realloc'd route array across event-loop turns (UAF) */
 let n = 0;
@@ -492,13 +502,13 @@ rec("many_headers", code=r["code"])
 r = hit(b"GET /f/" + b"q" * 3000 + b" HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n")
 rec("long_reqline", code=r["code"])
 
-# Connection: close swallows everything pipelined behind it
+# Connection: close swallows everything pipelined behind it (recorded again,
+# with the close semantics, in the App-close section below)
 one = ("POST /rpc HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: %d\\r\\n\\r\\n"
        % len(body)).encode() + body.encode()
 closer = (b"POST /rpc HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n"
           b"Content-Length: %d\\r\\n\\r\\n" % len(body)) + body.encode()
-r = hit(one + closer + one)
-rec("pipeline_after_close", n=r["n"])
+hit(one + closer + one)
 
 # 50 pipelined requests -> 50 responses in order
 p50 = one * 50
@@ -625,13 +635,125 @@ rec("rpc_batch_mixed",
     ok=isinstance(parsed, list) and len(parsed) == 2,
     ids=[e.get("id") for e in parsed] if isinstance(parsed, list) else None)
 
-# notification alone: current contract answers with id null -- pinned here
+# notification alone: JSON-RPC 2.0 -- a request with no id NEVER gets an
+# answer. The old code replied id:null; the spec fix made it silent.
 r = post(json.dumps({"method": "add", "params": [2, 2]}).encode())
-parsed = None
-try: parsed = json.loads(r["body"])
-except Exception: pass
-rec("rpc_notification_contract",
-    ok=parsed is not None and parsed.get("id") is None and parsed.get("result") == 4)
+rec("rpc_notification_silent", n=r["n"], code=r["code"])
+
+# --- ① App honors Connection: close / HTTP/1.0 default-close ---
+def hit_eof(payload, hard=4.0):
+    for _ in range(30):
+        try:
+            s = socket.create_connection((H, P), timeout=2); break
+        except Exception: time.sleep(0.1)
+    else: return {"code": None, "eof": None}
+    try: s.sendall(payload)
+    except Exception: pass
+    s.settimeout(hard)
+    out = b""; eof = False
+    try:
+        while True:
+            d = s.recv(65536)
+            if not d: eof = True; break
+            out += d
+            if b"}" in out or b"\\r\\n\\r\\n" in out:
+                # got a response; wait briefly for the EOF that proves close
+                try:
+                    while True:
+                        d = s.recv(4096)
+                        if not d: eof = True; break
+                        out += d
+                except socket.timeout:
+                    pass
+                break
+    except Exception: pass
+    s.close()
+    return {"code": (out[9:12].decode() if out[:4] == b"HTTP" else None),
+            "eof": eof}
+r = hit_eof(b"GET /f/oo.html HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n")
+rec("app_close_token", code=r["code"], eof=r["eof"])
+r = hit_eof(b"GET /f/oo.html HTTP/1.0\\r\\nHost: x\\r\\n\\r\\n")
+rec("app_http10_default_close", code=r["code"], eof=r["eof"])
+# control: keep-alive request stays open (no EOF within the window)
+try:
+    s = socket.create_connection((H, P), timeout=2)
+    s.sendall(b"GET /f/oo.html HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n")
+    s.settimeout(1.5)
+    out = b""
+    kept = True
+    try:
+        while b"\\r\\n\\r\\n" not in out:
+            d = s.recv(4096)
+            if not d: kept = False; break
+            out += d
+        if kept:
+            d = s.recv(16)   # any byte/EOF within 1.5s means it closed early
+            kept = False if d == b"" else True
+    except socket.timeout:
+        pass
+    s.close()
+    rec("app_keepalive_control", kept=kept)
+except Exception as e:
+    rec("app_keepalive_control", kept=None, err=str(e)[:40])
+
+# pipeline_after_close revisited: closer now ends the batch at itself
+r = hit(one + closer + one, want=3, hard=4.0)
+rec("pipeline_after_close", n=r["n"])
+
+# --- ⑥ static HEAD + Range ---
+import subprocess as _sp
+def curl_raw(args):
+    rr = _sp.run(["curl", "-s", "--max-time", "4"] + args,
+                 capture_output=True)
+    return rr.stdout.decode("latin1")
+hd = curl_raw(["-I", "http://127.0.0.1:%d/f/oo.html" % P])
+rec("static_head", ok=("200" in hd.split("\\r\\n")[0] and
+                       "Content-Length: 9" in hd and
+                       not hd.endswith("PREFIX-OK")))
+rg = curl_raw(["-si", "-H", "Range: bytes=0-3",
+               "http://127.0.0.1:%d/f/oo.html" % P])
+rec("static_range_first4", body=rg)
+rg = curl_raw(["-si", "-H", "Range: bytes=-4",
+               "http://127.0.0.1:%d/f/oo.html" % P])
+rec("static_range_suffix", body=rg)
+rg = curl_raw(["-si", "-H", "Range: bytes=100-",
+               "http://127.0.0.1:%d/f/oo.html" % P])
+rec("static_range_unsat", code=rg[:40])
+rg = curl_raw(["-si", "-H", "Range: bytes=0-2,5-8",
+               "http://127.0.0.1:%d/f/oo.html" % P])
+rec("static_range_multi_full", body=rg)
+
+# --- ④ outbound backpressure: 6 MB pushed at a peer that reads NOTHING ---
+def flood_probe(path, is_ws):
+    try:
+        s = socket.create_connection((H, P), timeout=2)
+        if is_ws:
+            k = base64.b64encode(b"0123456789abcdef").decode()
+            s.sendall(("GET %s HTTP/1.1\\r\\nHost: h\\r\\nUpgrade: websocket\\r\\n"
+                       "Connection: Upgrade\\r\\nSec-WebSocket-Key: %s\\r\\n"
+                       "Sec-WebSocket-Version: 13\\r\\n\\r\\n"
+                       % (path, k)).encode())
+        else:
+            s.sendall(("GET %s HTTP/1.1\\r\\nHost: h\\r\\nAccept: text/event-stream\\r\\n\\r\\n"
+                       % path).encode())
+        s.settimeout(10.0)
+        t0 = time.time()
+        got = b""
+        eof = False
+        try:
+            while time.time() - t0 < 9:
+                d = s.recv(65536)
+                if not d: eof = True; break
+                got += d
+        except socket.timeout:
+            pass
+        s.close()
+        return {"eof": eof, "waited": round(time.time() - t0, 1),
+                "bytes": len(got)}
+    except Exception as e:
+        return {"eof": None, "err": str(e)[:50]}
+rec("ws_flood_bounded", **flood_probe("/wsflood", True))
+rec("sse_flood_bounded", **flood_probe("/sseflood", False))
 
 print(json.dumps(R))
 `);
@@ -670,7 +792,12 @@ print(json.dumps(R))
                       "pct_not_decoded", "ws_reserved_op", "ws_unmasked_refused",
                       "upload_type_disallowed", "upload_over_cap",
                       "upload_allowed_ok", "proxy_hugehead", "proxy_earlyclose",
-                      "rpc_batch_mixed", "rpc_notification_contract"];
+                      "rpc_batch_mixed", "rpc_notification_silent",
+                      "app_close_token", "app_http10_default_close",
+                      "app_keepalive_control",
+                      "static_head", "static_range_first4", "static_range_suffix",
+                      "static_range_unsat", "static_range_multi_full",
+                      "ws_flood_bounded", "sse_flood_bounded"];
         const missing = need.filter(t => !R[t]);
         ok(missing.length === 0, "every probe recorded (missing means the probe died, not that a defence failed)"
            + (missing.length ? " -- missing: " + missing.join(",") + " stderr: " +
@@ -771,10 +898,7 @@ print(json.dumps(R))
         ok(R.long_reqline && R.long_reqline.code === "404",
            "worst-case: a 3000-char request line truncates and answers 404, bounded (got " +
            JSON.stringify(R.long_reqline && R.long_reqline.code) + ")");
-        ok(R.pipeline_after_close && R.pipeline_after_close.n === 3,
-           "framing: a Connection: close request pipelined mid-batch does NOT desync " +
-           "the App -- 3 in, 3 well-formed responses out (the App keeps connections " +
-           "open by design; honoured close is pinned on the thread-pool and Model A)");
+
         ok(R.pipeline50 && R.pipeline50.n === 50,
            "best-case: 50 pipelined requests give 50 in-order responses (n=" +
            (R.pipeline50 && R.pipeline50.n) + ")");
@@ -808,8 +932,50 @@ print(json.dumps(R))
            R.rpc_batch_mixed.ids[0] === "a" && R.rpc_batch_mixed.ids[1] === "b",
            "rpc: a mixed batch yields result(a), error(b) and NOTHING for the notification (got " +
            JSON.stringify(R.rpc_batch_mixed && R.rpc_batch_mixed.ids) + ")");
-        ok(R.rpc_notification_contract && R.rpc_notification_contract.ok === true,
-           "rpc: single notification contract pinned: answered with id null, result intact");
+        ok(R.static_head && R.static_head.ok === true,
+           "static HEAD: 200 with the true Content-Length and no body (got " +
+           JSON.stringify(R.static_head) + ")");
+        ok(R.static_range_first4 && R.static_range_first4.body.indexOf("206") >= 0 &&
+           R.static_range_first4.body.endsWith("PREF"),
+           "static Range bytes=0-3 -> 206 Partial Content, first 4 bytes (got '" +
+           (R.static_range_first4 ? R.static_range_first4.body.slice(-8) : "") + "')");
+        ok(R.static_range_suffix && R.static_range_suffix.body.endsWith("X-OK") &&
+           R.static_range_suffix.body.indexOf("206") >= 0,
+           "static suffix Range -4 -> last 4 bytes 'X-OK' (got '" +
+           (R.static_range_suffix ? R.static_range_suffix.body.slice(-8) : "") + "')");
+        ok(R.static_range_unsat && R.static_range_unsat.code.indexOf("416") >= 0,
+           "static Range past EOF -> 416 with bytes */9 failure form (got '" +
+           (R.static_range_unsat ? R.static_range_unsat.code.slice(0, 30) : "") + "')");
+        ok(R.static_range_multi_full &&
+           R.static_range_multi_full.body.indexOf("200") >= 0 &&
+           R.static_range_multi_full.body.endsWith("PREFIX-OK"),
+           "static multi-range falls back to a full 200 (got '" +
+           (R.static_range_multi_full ? R.static_range_multi_full.body.slice(0, 30) : "") + "')");
+        ok(R.ws_flood_bounded && R.ws_flood_bounded.eof === true &&
+           R.ws_flood_bounded.waited < 9,
+           "backpressure: 6 MB ws flood at a non-reading peer ends the connection (" +
+           JSON.stringify(R.ws_flood_bounded) + ")");
+        ok(R.sse_flood_bounded && R.sse_flood_bounded.eof === true &&
+           R.sse_flood_bounded.waited < 9,
+           "backpressure: same bound on the sse push path (" +
+           JSON.stringify(R.sse_flood_bounded) + ")");
+        ok(R.rpc_notification_silent && R.rpc_notification_silent.n === 0,
+           "rpc: a single notification (no id) gets NO response, per JSON-RPC 2.0 " +
+           "(n=" + (R.rpc_notification_silent && R.rpc_notification_silent.n) + ")");
+        ok(R.app_close_token && R.app_close_token.code === "200" &&
+           R.app_close_token.eof === true,
+           "close: Connection: close is honored -- 200, then EOF (got " +
+           JSON.stringify(R.app_close_token) + ")");
+        ok(R.app_http10_default_close && R.app_http10_default_close.code === "200" &&
+           R.app_http10_default_close.eof === true,
+           "close: HTTP/1.0 with no Connection header defaults to close (got " +
+           JSON.stringify(R.app_http10_default_close) + ")");
+        ok(R.app_keepalive_control && R.app_keepalive_control.kept === true,
+           "close control: an HTTP/1.1 keep-alive request stays open");
+        ok(R.pipeline_after_close && R.pipeline_after_close.n === 2,
+           "close: a Connection: close request ends the pipelined batch at itself " +
+           "-- the request behind it is NOT answered (n=" +
+           (R.pipeline_after_close && R.pipeline_after_close.n) + ")");
 
         if (appPid > 0) sh(`kill ${appPid} 2>/dev/null`);
         sh("pkill -f upstream.py 2>/dev/null");
@@ -1075,9 +1241,52 @@ const f = std.open("${T}/cli.out", "w"); f.puts(out); f.close();
            "S3: a 40-digit status line clamps deterministically and cannot hang " +
            "(rc=" + c.rc + ", out='" + c.out.slice(0, 40) + "')");
 
+        /* ③ TE + Content-Length on one response: the client now REJECTS
+           (RFC 9112 6.1 rejection arm) instead of silently preferring
+           chunked -- a hostile server cannot desync us against a proxy. */
+        c = runEvil("cl_and_te",
+            `"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nContent-Length: 5\\r\\n\\r\\n0\\r\\n\\r\\n"`);
+        ok(c.rc !== 137 && c.out.indexOf("threw:") === 0,
+           "③: TE+CL on one response is rejected, not silently dechunked (got '" +
+           c.out.slice(0, 50) + "')");
+
         c = runEvil("normal", `"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nhi"`);
         ok(c.out.indexOf("ok:200:2") === 0,
            "S3 control: a normal status still parses (got '" + c.out + "')");
+    }
+
+    /* ---- ⑤ IPv6: host "::" binds dual-stack (v6 native + v4-mapped) ---- */
+    {
+        const s = new HTTPServerAsync({ port: 0, host: "::",
+                                        routes: { "/": "dual\n" } });
+        s.start();
+        sh(`rm -f ${T}/v6.out`);
+        sh(`python3 - <<'PYEOF' > ${T}/v6.out 2>&1
+import socket, json
+R = {}
+for tag, host in (("v6", "::1"), ("v4map", "127.0.0.1")):
+    try:
+        sk = socket.create_connection((host, ${s.port}), timeout=2)
+        sk.sendall(b"GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n")
+        sk.settimeout(3)
+        out = b""
+        while True:
+            d = sk.recv(4096)
+            if not d: break
+            out += d
+        sk.close()
+        R[tag] = "ok" if b"dual" in out else "badbody"
+    except Exception as e:
+        R[tag] = "err:" + str(e)[:40]
+print(json.dumps(R))
+PYEOF`);
+        let V = {};
+        try { V = JSON.parse(cat(`${T}/v6.out`).trim()); }
+        catch (e) { ok(false, "v6 probe failed: " + cat(`${T}/v6.out`).slice(0, 60)); }
+        ok(V.v6 === "ok", "⑤: host '::' serves ::1 natively (got " + JSON.stringify(V.v6) + ")");
+        ok(V.v4map === "ok", "⑤: the same socket serves 127.0.0.1 v4-mapped (got " +
+           JSON.stringify(V.v4map) + ")");
+        s.close();
     }
 
     sh(`rm -rf ${T}`);

@@ -80,6 +80,10 @@ int dyn_aio_run(dyn_aio_t *aio, int timeout_ms);
 
 /* Count of ops still in flight (for loop-liveness / drain-before-close). */
 size_t dyn_aio_inflight(const dyn_aio_t *aio);
+/* Bytes queued for `fd` that the kernel has not taken (active send remainder
+ * + deferred send nodes + sendfile tail). The backpressure signal for
+ * streaming senders; 0 when the fd is not attached. */
+size_t dyn_aio_queued(const dyn_aio_t *aio, int fd);
 
 /* ---- generic offload --------------------------------------------------- */
 

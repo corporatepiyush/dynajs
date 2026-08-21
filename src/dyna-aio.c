@@ -562,6 +562,28 @@ size_t dyn_aio_inflight(const dyn_aio_t *a)
     return a->inflight;
 }
 
+/* Bytes this fd still owes the wire: the active slot's remainder, every
+ * deferred send node, and any sendfile tail. This is the number a streaming
+ * caller (ws/sse push) bounds against -- without it a handler flooding a
+ * peer that never reads grows the queue without limit. */
+size_t dyn_aio_queued(const dyn_aio_t *a, int fd)
+{
+    const aio_fd_t *s;
+    const aio_wnode_t *q;
+    size_t n = 0;
+
+    if (!a || fd < 0 || fd >= a->cap || !a->fds[fd].active)
+        return 0;
+    s = &a->fds[fd];
+    if (s->w_len > s->w_off)
+        n += s->w_len - s->w_off;
+    for (q = s->w_qhead; q; q = q->next)
+        n += q->len;
+    if (s->w_file_rem > 0)
+        n += (size_t)s->w_file_rem;
+    return n;
+}
+
 /* ---- network ---------------------------------------------------------- */
 
 int dyn_aio_listen(dyn_aio_t *a, const char *host, uint16_t port, int backlog)
@@ -569,6 +591,51 @@ int dyn_aio_listen(dyn_aio_t *a, const char *host, uint16_t port, int backlog)
     int fd, on = 1;
     struct sockaddr_in sa;
     (void)a;
+
+    /* A host containing ':' is an IPv6 literal: bind v6, and with V6ONLY off
+     * (the platform default on macOS; set explicitly where the kernel needs
+     * it) a wildcard v6 socket also serves v4-mapped peers. */
+    if (host && strchr(host, ':')) {
+        struct sockaddr_in6 sa6;
+        char hbuf[64];
+#ifdef IPV6_V6ONLY
+        int v6only = 0;
+#endif
+        fd = socket(AF_INET6, SOCK_STREAM, 0);
+        if (fd < 0)
+            return -1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+#ifdef SO_REUSEPORT
+        setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &on, sizeof(on));
+#endif
+#ifdef IPV6_V6ONLY
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only));
+#endif
+        {   /* accept "[::1]" bracket spelling; copy for inet_pton */
+            const char *h = host;
+            size_t hl = strlen(host);
+            if (hl >= sizeof(hbuf))
+                hl = sizeof(hbuf) - 1;
+            if (h[0] == '[') { h++; if (hl > 0) hl--; 
+                               if (hl > 0 && h[hl - 1] == ']') hl--; }
+            memcpy(hbuf, h, hl);
+            hbuf[hl] = '\0';
+        }
+        memset(&sa6, 0, sizeof(sa6));
+        sa6.sin6_family = AF_INET6;
+        sa6.sin6_port = htons(port);
+        if (inet_pton(AF_INET6, hbuf, &sa6.sin6_addr) != 1) {
+            close(fd);
+            return -1;
+        }
+        if (bind(fd, (struct sockaddr *)&sa6, sizeof(sa6)) < 0 ||
+            listen(fd, backlog > 0 ? backlog : 1024) < 0) {
+            close(fd);
+            return -1;
+        }
+        dyn_net_set_nonblock(fd);
+        return fd;
+    }
 
     fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0)

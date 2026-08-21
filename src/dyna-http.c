@@ -358,6 +358,19 @@ static int dyn_method_valid(const char *m)
     return 1;
 }
 
+/* Fire-and-forget JS invocation for handler callbacks whose result nobody
+ * consumes. The exception state is CLEARED: a JS_EXCEPTION dropped without
+ * JS_GetException leaves the context's pending exception stuck, surfacing
+ * later as a bogus throw at an unrelated boundary. */
+static void dyn_call_drop(JSContext *ctx, JSValueConst fn,
+                          JSValueConst this_val, int argc, JSValueConst *argv)
+{
+    JSValue r = JS_Call(ctx, fn, this_val, argc, argv);
+    if (JS_IsException(r))
+        JS_FreeValue(ctx, JS_GetException(ctx));
+    JS_FreeValue(ctx, r);
+}
+
 /* --- URL parsing: "http[s]://host[:port][/path]" --- */
 
 /* The path is BORROWED from the caller's url -- it runs to that string's NUL,
@@ -854,6 +867,13 @@ static int dyn_read_response(hc_conn_t *conn, size_t max_body, dyn_bytes_t *resp
                 break;
             hp = eol + 2;
         }
+        /* Both framings on one response is the classic desync attempt
+           (CWE-444). RFC 9112 6.1 lets a recipient process it (chunked
+           wins) or reject; as the CLIENT of a possibly hostile server we
+           reject -- there is no honest way to be sure we frame it the way
+           any intermediary did. */
+        if (chunked && have_cl)
+            return DYN_HTTP_ERR_PARSE;
         *pchunked = chunked;
 
         /* 3. read the body per the framing rule */
@@ -2424,6 +2444,44 @@ static int dyn_http_bind(const char *host, uint16_t *pport, int backlog)
     char portstr[16];
     int fd = -1, on = 1;
 
+    /* A v6 literal never reaches getaddrinfo below: this binder is AF_INET
+       by contract, so v6 is handled directly -- wildcard v6 with V6ONLY off
+       serves v4-mapped peers too. */
+    if (host && strchr(host, ':')) {
+        struct sockaddr_in6 sa6;
+        char hbuf[64];
+#ifdef IPV6_V6ONLY
+        int v6only = 0;
+#endif
+        {
+            const char *h = host;
+            size_t hl = strlen(host);
+            if (hl >= sizeof(hbuf))
+                hl = sizeof(hbuf) - 1;
+            if (h[0] == '[') { h++; if (hl > 0) hl--;
+                               if (hl > 0 && h[hl - 1] == ']') hl--; }
+            memcpy(hbuf, h, hl);
+            hbuf[hl] = '\0';
+        }
+        fd = socket(AF_INET6, SOCK_STREAM, 0);
+        if (fd < 0)
+            return -1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+#ifdef IPV6_V6ONLY
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only));
+#endif
+        memset(&sa6, 0, sizeof(sa6));
+        sa6.sin6_family = AF_INET6;
+        sa6.sin6_port = htons(*pport);
+        if (inet_pton(AF_INET6, hbuf, &sa6.sin6_addr) != 1 ||
+            bind(fd, (struct sockaddr *)&sa6, sizeof(sa6)) < 0 ||
+            listen(fd, backlog > 0 ? backlog : SOMAXCONN) < 0) {
+            close(fd);
+            return -1;
+        }
+        goto resolved;
+    }
+
     snprintf(portstr, sizeof(portstr), "%u", (unsigned)*pport);
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -2446,6 +2504,9 @@ static int dyn_http_bind(const char *host, uint16_t *pport, int backlog)
     if (fd < 0)
         return -1;
 
+ resolved:
+    /* Ephemeral-port read: sin_family/sin_port and sin6_family/sin6_port
+       share their offsets, so the sockaddr_in read is correct for both. */
     if (*pport == 0) {
         struct sockaddr_in sin;
         socklen_t sl = sizeof(sin);
@@ -2706,6 +2767,11 @@ static JSClassID dyn_http_async_class_id;
    on a delivered message, so a client doing real work never reaches them. */
 #define DYN_WS_MAX_FRAGMENTS 4096             /* frames per reassembled message */
 #define DYN_WS_CTL_BUDGET    64               /* control frames between messages */
+/* Outbound bound for streaming senders (ws/sse push, client frames): when
+   this much is already queued for the peer, it is not reading -- send more
+   and dyn_aio's queue grows without limit. The connection is closed rather
+   than the frame silently dropped. */
+#define DYN_HTTP_OUTBOUND_MAX (4 << 20)
 #define DYN_APP_MAX_BATCH    256              /* JSON-RPC calls in one batch */
 #define DYN_APP_MAX_PARAMS   256              /* JSON-RPC by-position args */
 
@@ -3160,15 +3226,24 @@ typedef struct {
     unsigned char *buf_base; /* nbufs * bufsz slab backing the provided ring */
     int nbufs, bufsz;
     int accept_errs;         /* consecutive accept failures (backoff) */
+    int accept_needs_arm;    /* re-arm failed: retry each loop tick */
     dyn_uconn_t *live;
 } dyn_uring_ctx;
 
-/* Get an SQE, flushing the backlog and retrying once if the SQ ring is full. */
+/* Get an SQE, flushing the backlog and retrying. If the ring is STILL full,
+   wait for one completion: harvesting a CQE is what frees its SQE -- without
+   this, exhaustion left recv/send silently un-armed and the connection
+   stalled forever with no event to recover it. The brief block lands on the
+   reactor thread only under genuine exhaustion. */
 static struct io_uring_sqe *dyn_ur_sqe(dyn_uring_ctx *u)
 {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&u->ring);
     if (!sqe) {
         io_uring_submit(&u->ring);
+        sqe = io_uring_get_sqe(&u->ring);
+    }
+    if (!sqe) {
+        io_uring_submit_and_wait(&u->ring, 1);
         sqe = io_uring_get_sqe(&u->ring);
     }
     return sqe;
@@ -3187,8 +3262,13 @@ static int dyn_ur_arm_accept(dyn_uring_ctx *u, int listen_fd)
 static void dyn_ur_arm_recv(dyn_uring_ctx *u, dyn_uconn_t *c)
 {
     struct io_uring_sqe *sqe = dyn_ur_sqe(u);
-    if (!sqe)
+    if (!sqe) {
+        /* No SQE even after harvesting: leave recv_armed clear so the next
+           completion on this connection re-arms, and mark it for close so a
+           fully-starved ring cannot strand it silent forever. */
+        c->closing = 1;
         return;
+    }
     io_uring_prep_recv_multishot(sqe, c->fd, NULL, 0, 0);
     sqe->flags |= IOSQE_BUFFER_SELECT;
     sqe->buf_group = DYN_URING_BGID;
@@ -3199,8 +3279,12 @@ static void dyn_ur_arm_recv(dyn_uring_ctx *u, dyn_uconn_t *c)
 static void dyn_ur_submit_send(dyn_uring_ctx *u, dyn_uconn_t *c)
 {
     struct io_uring_sqe *sqe = dyn_ur_sqe(u);
-    if (!sqe)
+    if (!sqe) {
+        /* The response stays in c->out; the close step below ends the
+           connection rather than stalling it with output pending. */
+        c->closing = 1;
         return;
+    }
     io_uring_prep_send(sqe, c->fd, c->out.data + c->out_off,
                        c->out.len - c->out_off, MSG_NOSIGNAL);
     io_uring_sqe_set_data64(sqe, (uint64_t)(uintptr_t)c | DYN_OP_SEND);
@@ -3263,8 +3347,14 @@ static void dyn_ur_on_accept(dyn_uring_ctx *u, dyn_http_async_t *s,
                              struct io_uring_cqe *cqe)
 {
     int res = cqe->res;
-    if (!(cqe->flags & IORING_CQE_F_MORE)) /* multishot accept ended: re-arm */
-        dyn_ur_arm_accept(u, s->listen_fd);
+    if (!(cqe->flags & IORING_CQE_F_MORE)) { /* multishot accept ended */
+        if (dyn_ur_arm_accept(u, s->listen_fd) < 0) {
+            /* No SQE even after harvesting: retry on a later loop tick
+               rather than go deaf -- any completion frees ring space. */
+            u->accept_needs_arm = 1;
+            return;
+        }
+    }
     if (res < 0) {
         /* A persistent failure (EMFILE...) re-arms into an immediate error:
            a CQE storm spinning the ring. Back off before the next arm. */
@@ -3432,6 +3522,9 @@ static int dyn_http_uring_try_run(dyn_http_async_t *s)
         struct io_uring_cqe *cqe;
         unsigned head, count = 0;
 
+        if (u->accept_needs_arm &&
+            dyn_ur_arm_accept(u, s->listen_fd) == 0)
+            u->accept_needs_arm = 0;
         ret = io_uring_submit_and_wait_timeout(&u->ring, &cqe, 1, &ts, NULL);
         if (ret < 0 && ret != -ETIME && ret != -EINTR && ret != -ETIMEDOUT)
             break;
@@ -3815,6 +3908,7 @@ typedef struct dyn_app {
     dyn_timer_id sweep;
     int compress;             /* gzip responses when the client accepts them */
     int metrics_http;         /* expose GET /metrics and /healthz */
+    char *listen_host;        /* NULL => "0.0.0.0"; a v6 literal binds dual-stack */
 } dyn_app_t;
 
 typedef struct dyn_ws dyn_ws_t;
@@ -3855,6 +3949,10 @@ typedef struct {
     /* 1 = the request explicitly refuses identity (identity;q=0 or *;q=0),
        so an uncompressed response would violate the negotiation. */
     int identity_refused;
+    /* 1 = this request asked to close (Connection: close, or HTTP/1.0 with
+       no keep-alive): the response's send completion closes the socket, and
+       no pipelined request behind it is answered. */
+    int close_after;
     /* Dispatch timestamp of the request being answered, for the duration
        histogram. 0 = none in flight (async handlers settle later). */
     uint64_t req_start_ms;
@@ -3990,6 +4088,12 @@ static void dyn_ws_send_frame(dyn_app_conn_t *c, int opcode, const uint8_t *data
     else { h[1]=127; for (i=0;i<8;i++) h[2+i]=(uint8_t)((uint64_t)len>>((7-i)*8)); hn=10; }
     dyn_iobuf_append(&f, h, hn);
     if (len) dyn_iobuf_append(&f, data, len);
+    /* Backpressure: a peer that never reads must not get an unbounded queue */
+    if (dyn_aio_queued(c->app->aio, c->fd) + f.len > DYN_HTTP_OUTBOUND_MAX) {
+        dyn_iobuf_free(&f);
+        dyn_app_conn_close(c);
+        return;
+    }
     dyn_aio_send(c->app->aio, c->fd, f.data, f.len, 0, NULL, NULL);
     dyn_iobuf_free(&f);
 }
@@ -4120,8 +4224,7 @@ static int dyn_app_ws_handshake(dyn_app_conn_t *c, const dyn_app_route_t *rt,
     oh = JS_GetPropertyStr(ctx, rt->handler, "open");
     if (JS_IsFunction(ctx, oh)) {
         JSValueConst a[1] = { obj };
-        JSValue r = JS_Call(ctx, oh, JS_UNDEFINED, 1, a);
-        JS_FreeValue(ctx, r);
+        dyn_call_drop(ctx, oh, JS_UNDEFINED, 1, a);
     }
     JS_FreeValue(ctx, oh);
     return 1;
@@ -4137,8 +4240,7 @@ static void dyn_app_ws_dispatch_msg(dyn_app_conn_t *c, int opcode,
             ? JS_NewArrayBufferCopy(ctx, payload, plen)
             : JS_NewStringLen(ctx, (const char *)payload, plen);
         JSValueConst args[3] = { c->ws_this, data, JS_NewBool(ctx, opcode == 2) };
-        JSValue r = JS_Call(ctx, mh, JS_UNDEFINED, 3, args);
-        JS_FreeValue(ctx, r);
+        dyn_call_drop(ctx, mh, JS_UNDEFINED, 3, args);
         JS_FreeValue(ctx, data);
     }
     JS_FreeValue(ctx, mh);
@@ -4343,6 +4445,10 @@ static JSValue dyn_sse_send(JSContext *ctx, JSValueConst this_val, int argc,
             /* OOM mid-frame: end the stream rather than send a frame that
                breaks the grammar the client's parser relies on. */
             dyn_app_conn_close(s->conn);
+        } else if (dyn_aio_queued(s->conn->app->aio, s->conn->fd) + f.len
+                   > DYN_HTTP_OUTBOUND_MAX) {
+            /* The peer stopped reading: bound the queue by ending the stream */
+            dyn_app_conn_close(s->conn);
         } else {
             dyn_aio_send(s->conn->app->aio, s->conn->fd, f.data, f.len, 0,
                          NULL, NULL);
@@ -4403,8 +4509,7 @@ static void dyn_app_sse_handshake(dyn_app_conn_t *c,
     oh = JS_GetPropertyStr(ctx, rt->handler, "open");
     if (JS_IsFunction(ctx, oh)) {
         JSValueConst a[1] = { obj };
-        JSValue r = JS_Call(ctx, oh, JS_UNDEFINED, 1, a);
-        JS_FreeValue(ctx, r);
+        dyn_call_drop(ctx, oh, JS_UNDEFINED, 1, a);
     }
     JS_FreeValue(ctx, oh);
 }
@@ -4507,6 +4612,18 @@ static int dyn_ae_q(const char *v, size_t n, const char *tok, size_t tl)
     return -1;
 }
 
+/* dyn_aio_close discards queued bytes, so "respond, then close" has to ride
+ * the send completion: the ref the caller held for udata dies here. */
+static void dyn_app_close_after_send(dyn_aio_t *aio, int res,
+                                     const uint8_t *buf, unsigned len,
+                                     void *udata)
+{
+    dyn_app_conn_t *c = (dyn_app_conn_t *)udata;
+    (void)aio; (void)res; (void)buf; (void)len;
+    dyn_app_conn_close(c);
+    dyn_app_conn_unref(c);
+}
+
 /* Queue a full HTTP response onto the connection. Every App response funnels
    here, which makes this the one place compression and response telemetry
    can live without per-route duplication. */
@@ -4577,7 +4694,14 @@ static void dyn_app_send_body(dyn_app_conn_t *c, int status, const char *ctype,
         dyn_iobuf_append(&out, head, (size_t)n);
         if (slen)
             dyn_iobuf_append(&out, sbody, slen);
-        dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0, NULL, NULL);
+        if (c->close_after) {
+            /* The close must not truncate THIS response: ride its completion */
+            c->refs++;
+            dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0,
+                         dyn_app_close_after_send, c);
+        } else {
+            dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0, NULL, NULL);
+        }
     }
     dyn_iobuf_free(&out);
     free(gz);
@@ -4944,6 +5068,13 @@ static void dyn_app_dispatch_rpc(dyn_app_conn_t *c, JSValueConst methods,
              ? NULL : JS_ToCString(ctx, idj);
       JS_FreeValue(ctx, idj); }
 
+    /* A request with NO id member is a notification: it never gets a
+       response, whatever the outcome -- the rule the batch path already
+       applies via has_id. (An explicit "id": null is answered with null.) */
+    if (JS_IsUndefined(id)) {
+        goto cleanup;
+    }
+
     method_s = JS_IsString(method_v) ? JS_ToCString(ctx, method_v) : NULL;
     if (!method_s) {
         dyn_app_rpc_error(c, 400, -32600, "Invalid Request", id_s);
@@ -5153,7 +5284,8 @@ static void dyn_app_send_err(dyn_app_conn_t *c, int status, const char *msg)
  * the SAME object that is sent: a stat/open race or a final-component symlink
  * swap cannot serve bytes other than the ones measured. */
 static void dyn_app_serve_static(dyn_app_conn_t *c, const dyn_app_route_t *rt,
-                                 const char *reqpath)
+                                 const char *reqpath,
+                                 const char *base, size_t head_len)
 {
     const char *sub = reqpath + strlen(rt->path);
     char fpath[2048];
@@ -5162,6 +5294,11 @@ static void dyn_app_serve_static(dyn_app_conn_t *c, const dyn_app_route_t *rt,
     dyn_iobuf_t out;
     char head[512];
     int n, ffd;
+    int head_only;
+    int64_t rstart = -1, rend = -1;   /* single Range; -1 = no/ignored range */
+    int range_unsat = 0;
+
+    head_only = (head_len >= 5 && memcmp(base, "HEAD ", 5) == 0);
 
     if (strstr(sub, "..")) { /* reject traversal outright */
         dyn_app_send_err(c, 403, "{\"error\":\"forbidden\"}");
@@ -5216,22 +5353,97 @@ static void dyn_app_serve_static(dyn_app_conn_t *c, const dyn_app_route_t *rt,
         dyn_app_send_err(c, 403, "{\"error\":\"type not allowed\"}");
         return;
     }
+    /* Single-range support. Multi-range requests fall back to a full 200 --
+       merging parts into multipart/byteranges buys complexity no consumer
+       here has asked for. An unparseable or unsatisfiable single range is a
+       416 with the RFC 9110 failure form. */
+    {
+        size_t rv_len = 0;
+        const char *rv = dyn_req_header(base, head_len, "range", &rv_len);
+        if (rv && rv_len > 6 && strncasecmp(rv, "bytes=", 6) == 0 &&
+            !memchr(rv, ',', rv_len)) {
+            size_t b = 6, e = rv_len;
+            int64_t S = -1, E = -1;
+            while (b < e && (rv[b] == ' ' || rv[b] == '\t')) b++;
+            while (e > b && (rv[e - 1] == ' ' || rv[e - 1] == '\t')) e--;
+            if (dyn_hm_one_range(rv, b, e, (int64_t)st.st_size, &S, &E) == 0) {
+                rstart = S;
+                rend = E;
+            } else {
+                range_unsat = 1;
+            }
+        }
+    }
+    if (range_unsat) {
+        n = snprintf(head, sizeof(head),
+                     "HTTP/1.1 416 Range Not Satisfiable\r\n"
+                     "Content-Range: bytes */%lld\r\nContent-Length: 0\r\n"
+                     "Connection: keep-alive\r\n\r\n",
+                     (long long)st.st_size);
+        close(ffd);   /* nothing to send from the file */
+        if (n > 0) {
+            dyn_iobuf_init(&out);
+            dyn_iobuf_append(&out, head, (size_t)n);
+            if (c->close_after) {
+                c->refs++;
+                dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0,
+                             dyn_app_close_after_send, c);
+            } else {
+                dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0, NULL, NULL);
+            }
+            dyn_iobuf_free(&out);
+            dyn_app_met_response(c, 0);
+        }
+        return;
+    }
     /* zero-copy: send the header, then sendfile the body straight from the page
      * cache (SIGBUS-safe, unlike mmap; the kernel handles a truncation). */
+    if (rstart >= 0)
+        n = snprintf(head, sizeof(head),
+                     "HTTP/1.1 206 Partial Content\r\nContent-Type: %s\r\n"
+                     "Content-Range: bytes %lld-%lld/%lld\r\n"
+                     "Accept-Ranges: bytes\r\nContent-Length: %lld\r\n"
+                     "Connection: keep-alive\r\n\r\n",
+                     dyn_app_content_type(fpath), (long long)rstart,
+                     (long long)rend, (long long)st.st_size,
+                     (long long)(rend - rstart + 1));
+    else
+        n = snprintf(head, sizeof(head),
+                     "HTTP/1.1 200 OK\r\nContent-Type: %s\r\n"
+                     "Accept-Ranges: bytes\r\nContent-Length: %lld\r\n"
+                     "Connection: keep-alive\r\n\r\n",
+                     dyn_app_content_type(fpath), (long long)st.st_size);
     dyn_iobuf_init(&out);
-    n = snprintf(head, sizeof(head),
-                 "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %lld\r\n"
-                 "Connection: keep-alive\r\n\r\n",
-                 dyn_app_content_type(fpath), (long long)st.st_size);
     if (n > 0) {
         dyn_iobuf_append(&out, head, (size_t)n);
-        dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0, NULL, NULL);
+        if (c->close_after) {
+            c->refs++;
+            dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0,
+                         dyn_app_close_after_send, c);
+        } else {
+            dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0, NULL, NULL);
+        }
     }
     dyn_iobuf_free(&out);
-    /* dyn_aio_sendfile owns ffd and closes it on completion or connection close */
-    dyn_aio_sendfile(c->app->aio, c->fd, ffd, 0, (size_t)st.st_size, NULL, NULL);
+    if (head_only) {
+        /* HEAD advertises the length but sends no bytes -- and therefore no
+           sendfile: the fd dies here instead of being owned by a transfer. */
+        close(ffd);
+        dyn_app_met_response(c, 0);
+        return;
+    }
+    /* dyn_aio_sendfile owns ffd and closes it on completion or connection close.
+       With close_after there is no completion callback to ride, so the
+       keep-alive close is left to the peer/idle sweep for this one path. */
+    if (rstart >= 0)
+        dyn_aio_sendfile(c->app->aio, c->fd, ffd, (off_t)rstart,
+                         (size_t)(rend - rstart + 1), NULL, NULL);
+    else
+        dyn_aio_sendfile(c->app->aio, c->fd, ffd, 0, (size_t)st.st_size,
+                         NULL, NULL);
     /* the zero-copy path bypasses dyn_app_send_body, so it reports itself */
-    dyn_app_met_response(c, (double)st.st_size);
+    dyn_app_met_response(c, (double)(rstart >= 0 ? rend - rstart + 1
+                                                 : st.st_size));
 }
 
 /* File upload: streamed straight to disk as the body arrives (no whole-body
@@ -5791,6 +6003,21 @@ static void dyn_app_process(dyn_app_conn_t *c)
             }
         }
 
+        /* keep-alive decision, the same rule as the other two servers:
+           HTTP/1.1 stays up unless Connection: close; HTTP/1.0 closes unless
+           it asks keep-alive. The response's own send completion closes. */
+        {
+            size_t cv_len = 0;
+            const char *cv = dyn_req_header(base, head_len, "connection",
+                                            &cv_len);
+            int keep = dyn_req_is_http11(base, head_len);
+            if (dyn_hdr_token(cv, cv_len, "close"))
+                keep = 0;
+            else if (dyn_hdr_token(cv, cv_len, "keep-alive"))
+                keep = 1;
+            c->close_after = !keep;
+        }
+
         if (dyn_parse_req_path(base, head_len, path, sizeof(path)) != 0) {
             dyn_app_send_err(c, 400, "{\"error\":\"bad request\"}");
             dyn_app_conn_close(c);
@@ -5853,7 +6080,7 @@ static void dyn_app_process(dyn_app_conn_t *c)
         } else if (route->type == APP_RPC) {
             dyn_app_dispatch_rpc(c, route->handler, base + head_len, body_len);
         } else if (route->type == APP_STATIC) {
-            dyn_app_serve_static(c, route, path);
+            dyn_app_serve_static(c, route, path, base, head_len);
         } else if (route->type == APP_PROXY) {
             dyn_app_proxy_start(c, route, base, head_len, path, (int64_t)body_len);
         } else if (route->type == APP_WS) {
@@ -5873,6 +6100,11 @@ static void dyn_app_process(dyn_app_conn_t *c)
         c->hdr_scan_from = 0;   /* next request starts its own scan */
         if (c->closed)
             return;
+        /* This request asked to close: nothing pipelined behind it is
+           answered (the same rule the thread-pool pump applies), and the
+           response's send completion closes the socket. */
+        if (c->close_after)
+            return;
     }
 }
 
@@ -5887,8 +6119,7 @@ static void dyn_app_conn_close(dyn_app_conn_t *c)
         if (JS_IsFunction(ctx, ch)) {
             JSValueConst a[3] = { c->ws_this, JS_NewInt32(ctx, 1000),
                                   JS_NewStringLen(ctx, "", 0) };
-            JSValue r = JS_Call(ctx, ch, JS_UNDEFINED, 3, a);
-            JS_FreeValue(ctx, r);
+            dyn_call_drop(ctx, ch, JS_UNDEFINED, 3, a);
             JS_FreeValue(ctx, a[2]);
         }
         JS_FreeValue(ctx, ch);
@@ -5900,8 +6131,7 @@ static void dyn_app_conn_close(dyn_app_conn_t *c)
         JSValue ch = JS_GetPropertyStr(ctx, c->sse_handlers, "close");
         if (JS_IsFunction(ctx, ch)) {
             JSValueConst a[1] = { c->sse_this };
-            JSValue r = JS_Call(ctx, ch, JS_UNDEFINED, 1, a);
-            JS_FreeValue(ctx, r);
+            dyn_call_drop(ctx, ch, JS_UNDEFINED, 1, a);
         }
         JS_FreeValue(ctx, ch);
         if (c->sse_native)
@@ -6049,6 +6279,7 @@ static void dyn_app_dispose(void *native)
         JS_FreeValue(app->ctx, app->routes[i].handler);
     }
     free(app->routes);
+    free(app->listen_host);
     /* A pending async handler may still hold a conn husk; its last unref
        frees the app. */
     app->dispose_called = 1;
@@ -6094,6 +6325,7 @@ static JSValue dyn_app_ctor(JSContext *ctx, JSValueConst new_target, int argc,
 {
     dyn_app_t *app;
     int64_t port = 0;
+    char *host_dup = NULL;
     /* Defaults to ON: the insecure behaviour is the old one, so leaving this
        off by default would mean the fix protects nobody (CWE-400). 0 disables
        it explicitly, for a caller who really wants unbounded idle peers. */
@@ -6125,6 +6357,15 @@ static JSValue dyn_app_ctor(JSContext *ctx, JSValueConst new_target, int argc,
             if (max_conns < 0) max_conns = 0;
         }
         JS_FreeValue(ctx, v);
+        v = JS_GetPropertyStr(ctx, argv[0], "host");
+        if (!JS_IsUndefined(v) && !JS_IsNull(v)) {
+            const char *h = JS_ToCString(ctx, v);
+            if (!h) { JS_FreeValue(ctx, v); return JS_EXCEPTION; }
+            host_dup = strdup(h);
+            JS_FreeCString(ctx, h);
+            if (!host_dup) { JS_FreeValue(ctx, v); return JS_ThrowOutOfMemory(ctx); }
+        }
+        JS_FreeValue(ctx, v);
         v = JS_GetPropertyStr(ctx, argv[0], "compress");
         if (!JS_IsUndefined(v)) compress_opt = JS_ToBool(ctx, v);
         JS_FreeValue(ctx, v);
@@ -6141,8 +6382,9 @@ static JSValue dyn_app_ctor(JSContext *ctx, JSValueConst new_target, int argc,
     app->max_conns = max_conns;
     app->compress = compress_opt;
     app->metrics_http = metrics_opt;
+    app->listen_host = host_dup;
     app->aio = dyn_net_reactor_acquire(ctx);
-    if (!app->aio) { free(app); return JS_ThrowOutOfMemory(ctx); }
+    if (!app->aio) { free(host_dup); free(app); return JS_ThrowOutOfMemory(ctx); }
     return dyn_res_wrap(ctx, dyn_app_class_id, app, dyn_app_dispose);
 }
 
@@ -6458,7 +6700,10 @@ static JSValue dyn_app_start(JSContext *ctx, JSValueConst this_val, int argc,
     (void)argc; (void)argv;
     if (!app) return JS_EXCEPTION;
     if (app->started) return JS_UNDEFINED;
-    app->listen_fd = dyn_aio_listen(app->aio, "0.0.0.0", app->port, 1024);
+    app->listen_fd = dyn_aio_listen(app->aio,
+                                    app->listen_host ? app->listen_host
+                                                     : "0.0.0.0",
+                                    app->port, 1024);
     if (app->listen_fd < 0)
         return JS_ThrowInternalError(ctx, "App: listen failed");
     /* port 0 binds an ephemeral port, and without this `.port` reports the 0
@@ -6564,6 +6809,13 @@ static void dyn_wsc_send_frame(dyn_wsc_t *w, int opcode, const uint8_t *data,
 
     if (w->closed)
         return;
+    /* Symmetric bound: a SERVER that never reads must not grow our queue.
+       Full teardown, not a silent flag: close_internal is what drops the
+       self-ref and counts the reactor release. */
+    if (dyn_aio_queued(w->aio, w->fd) + len + 16 > DYN_HTTP_OUTBOUND_MAX) {
+        dyn_wsc_close_internal(w, 1008, "output backpressure");
+        return;
+    }
     if (dyn_os_entropy(mask, sizeof mask) < 0) {
         /* RFC 6455: a client frame MUST be masked; an unmasked one is not
          * sendable, so the honest failure is to drop the frame and close. */
@@ -6616,8 +6868,7 @@ static void dyn_wsc_dispatch_msg(dyn_wsc_t *w, int opcode,
             ? JS_NewArrayBufferCopy(ctx, payload, plen)
             : JS_NewStringLen(ctx, (const char *)payload, plen);
         JSValueConst args[3] = { w->self, data, JS_NewBool(ctx, opcode == 2) };
-        JSValue r = JS_Call(ctx, mh, JS_UNDEFINED, 3, args);
-        JS_FreeValue(ctx, r);
+        dyn_call_drop(ctx, mh, JS_UNDEFINED, 3, args);
         JS_FreeValue(ctx, data);
     }
     JS_FreeValue(ctx, mh);
@@ -6762,8 +7013,7 @@ static void dyn_wsc_close_internal(dyn_wsc_t *w, int code, const char *reason)
     if (JS_IsFunction(ctx, ch)) {
         JSValueConst a[3] = { w->self, JS_NewInt32(ctx, code),
                               JS_NewString(ctx, reason) };
-        JSValue r = JS_Call(ctx, ch, JS_UNDEFINED, 3, a);
-        JS_FreeValue(ctx, r);
+        dyn_call_drop(ctx, ch, JS_UNDEFINED, 3, a);
         JS_FreeValue(ctx, a[1]);
         JS_FreeValue(ctx, a[2]);
     }
@@ -6977,8 +7227,7 @@ static void wsc_hs_done(void *arg)
         oh = JS_GetPropertyStr(ctx, w->handlers, "open");
         if (JS_IsFunction(ctx, oh)) {
             JSValueConst a[1] = { w->self };
-            JSValue r = JS_Call(ctx, oh, JS_UNDEFINED, 1, a);
-            JS_FreeValue(ctx, r);
+            dyn_call_drop(ctx, oh, JS_UNDEFINED, 1, a);
         }
         JS_FreeValue(ctx, oh);
         dyn_wsc_process(w);     /* frames that arrived with the 101 */

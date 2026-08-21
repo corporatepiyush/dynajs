@@ -1199,7 +1199,7 @@ declare module "dyna:http" {
 
     /** A routed HTTP application server. */
     class App implements DynResource {
-        constructor(opts?: { port?: number; idleTimeoutMs?: number; maxConns?: number; compress?: boolean; metrics?: boolean });
+        constructor(opts?: { port?: number; host?: string; idleTimeoutMs?: number; maxConns?: number; compress?: boolean; metrics?: boolean });
         /** Registers a strict JSON-RPC 2.0 endpoint. */
         rpc(path: string, methods: Record<string, (...args: unknown[]) => unknown>): this;
         /** Serves a static document root at a URL prefix. */
