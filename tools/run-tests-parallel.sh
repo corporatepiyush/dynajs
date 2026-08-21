@@ -17,7 +17,7 @@ fi
 }
 
 # Identify tests that must run solo (fixed port bindings, shared /tmp resources)
-SOLO_RE='(PostgreSQL|Redis|SQLite|TCPServer|HTTPServer|HTTPServerAsync|DNSServer|test_http_params|test_http_pentest|test_net_pentest|test_http_proxy)'
+SOLO_RE='(PostgreSQL|Redis|SQLite|TCPServer|HTTPServer|HTTPServerAsync|DNSServer|test_http_params|test_http_pentest|test_net_pentest|test_http_proxy|test_http_hardening)'
 
 solo_list=()
 parallel_list=()
