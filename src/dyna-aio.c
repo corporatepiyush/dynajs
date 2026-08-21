@@ -616,7 +616,7 @@ int dyn_aio_listen(dyn_aio_t *a, const char *host, uint16_t port, int backlog)
             size_t hl = strlen(host);
             if (hl >= sizeof(hbuf))
                 hl = sizeof(hbuf) - 1;
-            if (h[0] == '[') { h++; if (hl > 0) hl--; 
+            if (h[0] == '[') { h++; if (hl > 0) hl--;
                                if (hl > 0 && h[hl - 1] == ']') hl--; }
             memcpy(hbuf, h, hl);
             hbuf[hl] = '\0';

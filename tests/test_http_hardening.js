@@ -26,7 +26,7 @@
  *
  * Skips cleanly when python3 is unavailable.
  */
-import { HTTPClient, HTTPServer, HTTPServerAsync } from "dyna:net";
+import { App, HTTPClient, HTTPServer, HTTPServerAsync } from "dyna:net";
 import * as std from "std";
 import * as os from "os";
 
@@ -1291,6 +1291,57 @@ PYEOF`);
         ok(V.v4map === "ok", "⑤: the same socket serves 127.0.0.1 v4-mapped (got " +
            JSON.stringify(V.v4map) + ")");
         s.close();
+
+        /* App's listen goes through dyn_aio_listen, a DIFFERENT binder from
+           HTTPServerAsync's dyn_http_bind -- exercise ITS v6 branch too.
+           The App dispatches on the JS thread, so this probe must be a CHILD
+           process: an in-process os.exec blocks the very thread that would
+           serve it (the deadlock test_http_security.js documents). */
+        write(`${T}/app6.js`, `import { App } from "dyna:net";
+import { pid } from "dyna:sys";
+import * as std from "std";
+const f = std.open("${T}/app6.pid", "w"); f.puts(String(pid())); f.close();
+const app = new App({ port: 0, host: "::" });
+app.rpc("/h", { ok: () => "dual-app" });
+app.start();
+const g = std.open("${T}/app6.port", "w"); g.puts(String(app.port)); g.close();
+`);
+        sh(`${EXE} ${T}/app6.js >${T}/app6.log 2>&1 &`);
+        let app6Port = 0;
+        for (let i = 0; i < 100 && !(app6Port > 0); i++) {
+            app6Port = parseInt(cat(`${T}/app6.port`).trim(), 10) || 0;
+            if (!(app6Port > 0)) sh("sleep 0.05");
+        }
+        ok(app6Port > 0, "App v6 child started and bound");
+        write(`${T}/v6a.py`, `import socket, json
+R = {}
+for tag, host in (("v6", "::1"), ("v4map", "127.0.0.1")):
+    try:
+        sk = socket.create_connection((host, ${app6Port}), timeout=2)
+        body = b'{"method":"ok","id":1}'
+        sk.sendall(b"POST /h HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: %d\\r\\nConnection: close\\r\\n\\r\\n" % len(body) + body)
+        sk.settimeout(3)
+        out = b""
+        while True:
+            d = sk.recv(4096)
+            if not d: break
+            out += d
+        sk.close()
+        R[tag] = "ok" if b"dual-app" in out else "badbody"
+    except Exception as e:
+        R[tag] = "err:" + str(e)[:40]
+print(json.dumps(R))
+`);
+        sh(`rm -f ${T}/v6a.out`);
+        sh(`python3 ${T}/v6a.py > ${T}/v6a.out 2>&1`);
+        let VA = {};
+        try { VA = JSON.parse(cat(`${T}/v6a.out`).trim()); }
+        catch (e) { ok(false, "App v6 probe failed: " + cat(`${T}/v6a.out`).slice(0, 60)); }
+        ok(VA.v6 === "ok", "⑤: App host '::' serves ::1 through dyn_aio_listen (got " +
+           JSON.stringify(VA.v6) + ")");
+        ok(VA.v4map === "ok", "⑤: App dual-stack serves 127.0.0.1 too (got " +
+           JSON.stringify(VA.v4map) + ")");
+        sh(`pkill -f '${T}/app6.js' 2>/dev/null`);
     }
 
     sh(`rm -rf ${T}`);
