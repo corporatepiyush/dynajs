@@ -416,12 +416,13 @@ console.log(c.closed);                                                     // tr
 
 ### HTTPServer
 
-**`new HTTPServer({ port?, host?, workers?, backlog?, routes? })`**
+**`new HTTPServer({ port?, host?, workers?, backlog?, requestTimeoutMs?, routes? })`**
 
 - `port` *(number, optional)* — default 0; binds an ephemeral port, resolved into `.port` after construction.
 - `host` *(string, optional)* — default all interfaces.
 - `workers` *(number, optional)* — default the process-wide `--io-threads` setting, clamped to 1–64.
 - `backlog` *(number, optional)* — default the system `SOMAXCONN`.
+- `requestTimeoutMs` *(number, optional)* — default 30000; an absolute deadline for completing one request (head + body). The per-socket receive timeout resets on every byte, so without this a dribbling peer holds a worker forever. 0 disables.
 - `routes` *(object, optional)* — maps a path to a response; a route value is a string (served as `text/plain`) or `{ status, contentType, body }`.
 
 Constructs a multi-threaded HTTP/1.1 server serving static routes, one worker thread per connection from a pool. It binds in the constructor, so construction fails if the port is taken.
@@ -497,10 +498,12 @@ console.log(s.closed);                     // true
 
 ### App
 
-**`new App({ port?, idleTimeoutMs?, compress?, metrics? })`**
+**`new App({ port?, host?, idleTimeoutMs?, maxConns?, compress?, metrics? })`**
 
 - `port` *(number, optional)* — default 0.
+- `host` *(string, optional)* — default all interfaces; an IPv6 literal (`"::"`) binds dual-stack and also serves IPv4-mapped peers.
 - `idleTimeoutMs` *(number, optional)* — default 30000; 0 disables the idle sweep.
+- `maxConns` *(number, optional)* — default 8192; connections beyond the cap are accepted and closed immediately. 0 unbounded.
 - `compress` *(boolean, optional)* — default true; gzip only for clients that send `Accept-Encoding`.
 - `metrics` *(boolean, optional)* — default false.
 

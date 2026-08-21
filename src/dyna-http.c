@@ -4695,10 +4695,13 @@ static void dyn_app_send_body(dyn_app_conn_t *c, int status, const char *ctype,
         if (slen)
             dyn_iobuf_append(&out, sbody, slen);
         if (c->close_after) {
-            /* The close must not truncate THIS response: ride its completion */
+            /* The close must not truncate THIS response: ride its completion.
+               An INLINE send failure never runs the callback, so the held ref
+               and the close are handled here instead of stranding both. */
             c->refs++;
-            dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0,
-                         dyn_app_close_after_send, c);
+            if (dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0,
+                             dyn_app_close_after_send, c) < 0)
+                dyn_app_close_after_send(NULL, -ECONNRESET, NULL, 0, c);
         } else {
             dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0, NULL, NULL);
         }
@@ -5386,8 +5389,9 @@ static void dyn_app_serve_static(dyn_app_conn_t *c, const dyn_app_route_t *rt,
             dyn_iobuf_append(&out, head, (size_t)n);
             if (c->close_after) {
                 c->refs++;
-                dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0,
-                             dyn_app_close_after_send, c);
+                if (dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0,
+                                 dyn_app_close_after_send, c) < 0)
+                    dyn_app_close_after_send(NULL, -ECONNRESET, NULL, 0, c);
             } else {
                 dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0, NULL, NULL);
             }
@@ -5422,8 +5426,9 @@ static void dyn_app_serve_static(dyn_app_conn_t *c, const dyn_app_route_t *rt,
            200 by test_http_params before this move. */
         if (c->close_after && head_only) {
             c->refs++;
-            dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0,
-                         dyn_app_close_after_send, c);
+            if (dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0,
+                             dyn_app_close_after_send, c) < 0)
+                dyn_app_close_after_send(NULL, -ECONNRESET, NULL, 0, c);
         } else {
             dyn_aio_send(c->app->aio, c->fd, out.data, out.len, 0, NULL, NULL);
         }
