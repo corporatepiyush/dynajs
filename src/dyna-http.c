@@ -575,6 +575,16 @@ static char *dyn_headers_to_string(JSContext *ctx, JSValueConst headers,
 
     if (!JS_IsObject(headers))
         return NULL; /* numbers/bools etc.: treat as "no extra headers" */
+    if (JS_IsArray(ctx, headers)) {
+        /* An array's enumerable own names are "0","1",...: enumerated as
+           headers it emits numeric-named junk on the wire. A caller passing
+           a list meant name/value pairs -- refuse rather than mangle. */
+        *perr = 1;
+        JS_ThrowTypeError(ctx,
+            "headers must be an object of name/value pairs or a "
+            "pre-formatted string, not an array");
+        return NULL;
+    }
 
     if (JS_GetOwnPropertyNames(ctx, &tab, &len, headers,
                                JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY) < 0) {
@@ -5892,6 +5902,7 @@ static void dyn_app_upload_start(dyn_app_conn_t *c, const dyn_app_route_t *rt,
     snprintf(u->ctype, sizeof(u->ctype), "%s", ctbuf);
     c->up = u;
     dyn_iobuf_consume(&c->in, head_len); /* drop the request head */
+    c->hdr_scan_from = 0;                /* next parse starts at the buffer head */
     dyn_app_upload_drain(c);             /* write buffered body; finish if complete */
 }
 
@@ -6061,7 +6072,13 @@ static void dyn_app_process(dyn_app_conn_t *c)
         /* uploads stream to disk -- start before the whole body is buffered */
         if (route && route->type == APP_UPLOAD) {
             dyn_app_upload_start(c, route, base, head_len, clen);
-            return;
+            /* start() streams any already-buffered body and may FINISH
+               synchronously; a request pipelined behind the upload is in
+               the buffer NOW, so keep the loop going instead of waiting
+               for a wakeup that never comes (measured as a stall). */
+            if (c->up || c->closed)
+                return;
+            continue;
         }
 
         /* other routes need the full body buffered (bodies over the cap never
@@ -6173,6 +6190,20 @@ static void dyn_app_on_recv(dyn_aio_t *aio, int res, const uint8_t *buf,
         if (c->up) {
             dyn_app_upload_drain(c); /* stream the upload body to disk */
             c->last_ms = dyn_timer_now_ms();
+            /* The upload finished and left a PIPELINED request buffered
+               behind it: process() returned early when the upload started,
+               so without this the next request waits for a byte that never
+               comes -- measured as a stall with both in one packet. */
+            while (!c->closed && !c->up && dyn_iobuf_rlen(&c->in) > 0) {
+                size_t had = dyn_iobuf_rlen(&c->in);
+                dyn_iobuf_ensure_nul(&c->in);
+                dyn_app_process(c);
+                if (!c->closed && !c->up)
+                    dyn_iobuf_compact(&c->in);
+                /* A partial request consumes nothing: wait for more bytes */
+                if (dyn_iobuf_rlen(&c->in) >= had)
+                    break;
+            }
         } else if (c->is_ws) {
             dyn_app_ws_process(c);
         } else if (c->is_sse) {

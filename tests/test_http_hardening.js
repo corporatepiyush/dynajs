@@ -111,9 +111,20 @@ while True:
             b2 = cn.recv(4096)
             if not b2: break
             d += b2
-        line = d.split(b"\\r\\n")[0].decode("latin1")
+        # read the body too when Content-Length is declared
+        sep = d.find(b"\\r\\n\\r\\n")
+        if sep != -1:
+            head = d[:sep].decode("latin1")
+            for hl in head.split("\\r\\n"):
+                if hl.lower().startswith("content-length:"):
+                    need = int(hl.split(":", 1)[1].strip() or 0)
+                    while len(d) < sep + 4 + need:
+                        b3 = cn.recv(65536)
+                        if not b3: break
+                        d += b3
+        raw = d.decode("latin1").replace("\\r\\n", "\\n")
         cn.sendall(("HTTP/1.1 200 OK\\r\\nContent-Length: %d\\r\\n\\r\\n%s"
-                    % (len(line), line)).encode())
+                    % (len(raw), raw)).encode())
     except Exception: pass
     finally: cn.close()
 `);
@@ -127,6 +138,37 @@ while True:
         } catch (e) {
             ok(false, "PATCH request threw: " + e.message.slice(0, 60));
         }
+        /* object headers must reach the wire verbatim (the earlier control
+           only proved they were ACCEPTED -- this proves they were SENT) */
+        const r2 = c.get(`http://127.0.0.1:${CAP}/w`, { "X-One": "1", "X-Two": "b" });
+        ok(r2.body.indexOf("X-One: 1") >= 0 && r2.body.indexOf("X-Two: b") >= 0,
+           "client: object headers arrive on the wire verbatim (got '" +
+           r2.body.replace(/\n/g, "|").slice(0, 90) + "')");
+
+        /* binary body byte-exactness through POST */
+        const bytes = new Uint8Array(257);
+        for (let i = 0; i < 257; i++) bytes[i] = i & 0xff;
+        const r3 = c.post(`http://127.0.0.1:${CAP}/bin`, bytes);
+        ok(r3.body.indexOf("Content-Length: 257") >= 0,
+           "client: a 257-byte binary body declares CL 257 (got '" +
+           r3.body.slice(-60).replace(/\n/g, "|") + "')");
+
+        /* query string and fragment: the client sends what it was given */
+        const r4 = c.get(`http://127.0.0.1:${CAP}/q?a=1&b=two`);
+        ok(r4.body.indexOf("GET /q?a=1&b=two ") === 0,
+           "client: query strings are preserved verbatim");
+        const r5 = c.get(`http://127.0.0.1:${CAP}/p#frag`);
+        ok(r5.body.indexOf("GET /p#frag ") === 0,
+           "client: fragments are passed through unparsed (pinned behavior)");
+
+        /* an Array as headers is refused instead of emitting numeric junk */
+        let arrThrew = null;
+        try { c.get(`http://127.0.0.1:${CAP}/x`, ["X-Evil: 1"]); }
+        catch (e) { arrThrew = e; }
+        ok(arrThrew && /not an array/.test(arrThrew.message),
+           "client: an Array as headers is refused (numeric-named junk), got: " +
+           (arrThrew ? arrThrew.message.slice(0, 50) : "no throw"));
+
         c.close();
         sh("pkill -f capture.py 2>/dev/null");
     }
@@ -177,7 +219,8 @@ while True:
     {
         const AP = 18742;      /* App under test */
         const UP = 18743;      /* proxy upstream */
-        sh(`mkdir -p ${T}/www ${T}/updir`);
+        sh(`mkdir -p ${T}/www ${T}/updir ${T}/mtr`);
+        sh(`printf USER-METRICS > ${T}/mtr/index.html`);
         sh(`printf 'PREFIX-OK' > ${T}/www/oo.html`);
         write(`${T}/upstream.py`, `import socket, sys, threading as th
 th.Timer(120, lambda: sys.exit(0)).start()
@@ -217,7 +260,8 @@ import { Path } from "dyna:file";
 import { pid } from "dyna:sys";
 import * as std from "std";
 const f = std.open("${T}/app.pid", "w"); f.puts(String(pid())); f.close();
-const app = new App({ port: ${AP}, idleTimeoutMs: 8000, maxConns: 2 });
+const app = new App({ port: ${AP}, idleTimeoutMs: 8000, maxConns: 2,
+                   metrics: true });
 app.static("/f", new Path("${T}/www"));
 app.proxy("/api", { host: "127.0.0.1", port: ${UP} });
 app.ws("/ws", { open: () => {}, message: () => {}, close: () => {} });
@@ -231,6 +275,8 @@ app.upload("/up", { dir: new Path("${T}/updir"), maxFileSize: 1 << 22 },
            (p, m) => m.size);
 app.upload("/uptxt", { dir: new Path("${T}/updir"), maxFileSize: 65536,
                        allow: ["text/plain"] }, (p, m) => m.size);
+/* A user route at the built-ins' path wins: registration beats convention */
+app.static("/metrics", new Path("${T}/mtr"));
 /* ④ outbound backpressure: each open floods 6 MB at a peer that never
  * reads -- the 4 MB outbound cap must end the connection, not grow the
  * aio queue without bound. */
@@ -709,6 +755,33 @@ except Exception as e:
 # pipeline_after_close revisited: closer now ends the batch at itself
 r = hit(one + closer + one, want=3, hard=4.0)
 rec("pipeline_after_close", n=r["n"])
+# P1 REGRESSION: a request pipelined BEHIND an upload must be dispatched
+# when the upload finishes synchronously -- it used to stall until an
+# unrelated byte arrived.
+zero_up = (b"POST /up HTTP/1.1\\r\\nHost: x\\r\\nContent-Type: text/plain\\r\\n"
+           b"Content-Length: 0\\r\\n\\r\\n")
+rpcbody = json.dumps({"method": "add", "params": [5, 5], "id": 31}).encode()
+rpc = (b"POST /rpc HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: %d\\r\\n\\r\\n"
+       % len(rpcbody)) + rpcbody
+r = hit(zero_up + rpc, want=2, hard=4.0)
+raws = str(r.get("raw", ""))
+rec("upload_pipelined", n=r["n"], up='"ok":true' in raws,
+    rpc='"result":10' in raws, tail=raws[-120:])
+
+# HEAD combined with Range: headers advertise the PARTIAL length, no body
+import subprocess as _sp2
+def curl_raw2(args):
+    rr = _sp2.run(["curl", "-s", "--max-time", "4"] + args, capture_output=True)
+    return rr.stdout.decode("latin1")
+hd = curl_raw2(["-si", "-I", "-H", "Range: bytes=2-5",
+               "http://127.0.0.1:%d/f/oo.html" % P])
+rec("static_head_range", ok=("206" in hd.split("\\n")[0] and
+                            "Content-Length: 4" in hd and
+                            "PREFIX-OK" not in hd))
+
+# metrics override: a user route at /metrics beats the built-in
+mv = curl("/metrics")
+rec("metrics_override", ok=("USER-METRICS" in mv and "dyn_http_" not in mv))
 
 # --- ⑥ static HEAD + Range ---
 import subprocess as _sp
@@ -807,7 +880,9 @@ print(json.dumps(R))
                       "app_keepalive_control",
                       "static_head", "static_range_first4", "static_range_suffix",
                       "static_range_unsat", "static_range_multi_full",
-                      "ws_flood_bounded", "sse_flood_bounded"];
+                      "ws_flood_bounded", "sse_flood_bounded",
+                      "upload_pipelined", "static_head_range",
+                      "metrics_override"];
         const missing = need.filter(t => !R[t]);
         ok(missing.length === 0, "every probe recorded (missing means the probe died, not that a defence failed)"
            + (missing.length ? " -- missing: " + missing.join(",") + " stderr: " +
@@ -969,6 +1044,21 @@ print(json.dumps(R))
            R.sse_flood_bounded.waited < 9,
            "backpressure: same bound on the sse push path (" +
            JSON.stringify(R.sse_flood_bounded) + ")");
+
+        ok(R.upload_pipelined && R.upload_pipelined.n === 2 &&
+           R.upload_pipelined.up === true &&
+           R.upload_pipelined.rpc === true,
+           "P1: a request pipelined behind a synchronous upload is dispatched " +
+           "without waiting for another byte (n=" +
+           (R.upload_pipelined && R.upload_pipelined.n) + ", up=" +
+           (R.upload_pipelined && R.upload_pipelined.up) + ", rpc=" +
+           (R.upload_pipelined && R.upload_pipelined.rpc) + ")");
+        ok(R.static_head_range && R.static_head_range.ok === true,
+           "static HEAD+Range: 206 headers with the PARTIAL length and no body (got " +
+           JSON.stringify(R.static_head_range) + ")");
+        ok(R.metrics_override && R.metrics_override.ok === true,
+           "routing: a user route at /metrics beats the built-in -- " +
+           "registration beats convention (got " + JSON.stringify(R.metrics_override) + ")");
         ok(R.rpc_notification_silent && R.rpc_notification_silent.n === 0,
            "rpc: a single notification (no id) gets NO response, per JSON-RPC 2.0 " +
            "(n=" + (R.rpc_notification_silent && R.rpc_notification_silent.n) + ")");
@@ -1206,18 +1296,21 @@ print(json.dumps(R))
      * ================================================================ */
     {
         let evilSeq = 0;
-        const runEvil = (mode, resp) => {
+        const runEvil = (mode, resp, delay) => {
             const EP = 18746 + (++evilSeq);  /* one port per mode: pkill is
                                                 async and a shared port lets
                                                 the PREVIOUS mode answer */
-            write(`${T}/evil.py`, `import socket, sys, threading as th
+            write(`${T}/evil.py`, `import socket, sys, time, threading as th
 th.Timer(30, lambda: sys.exit(0)).start()
+DELAY = float(sys.argv[1]) if len(sys.argv) > 1 else 0.0
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(("127.0.0.1", ${EP})); s.listen(2)
 while True:
     cn, _ = s.accept()
     try:
-        cn.recv(4096); cn.sendall(b${resp}); cn.shutdown(socket.SHUT_WR)
+        cn.recv(4096)
+        if DELAY: time.sleep(DELAY)
+        cn.sendall(b"${resp}"); cn.shutdown(socket.SHUT_WR)
     except Exception: pass
     finally: cn.close()
 `);
@@ -1225,13 +1318,16 @@ while True:
                and its broken twin answers the probe (measured: a stale
                server from a failed run made both modes throw) */
             sh(`pkill -f '${T}/evil.py' 2>/dev/null; sleep 0.2`);
-            sh(`python3 ${T}/evil.py >${T}/evil.${mode}.log 2>&1 & sleep 0.4`);
+            sh(`python3 ${T}/evil.py ${delay} >${T}/evil.${mode}.log 2>&1 & sleep 0.4`);
             write(`${T}/cli.js`, `import { HTTPClient } from "dyna:net";
 import * as std from "std";
 const c = new HTTPClient();
 c.setTimeout(3000);
 let out = "";
-try { const r = c.get("http://127.0.0.1:${EP}/"); out = "ok:" + r.status + ":" + r.body.length; }
+try { const r = c.get("http://127.0.0.1:${EP}/");
+     out = "ok:" + r.status + ":" + r.body.length +
+           "|H=" + String(r.headers["X-Dup"] ?? r.headers["x-dup"] ?? "");
+}
 catch (e) { out = "threw:" + e.message.slice(0, 80); }
 const f = std.open("${T}/cli.out", "w"); f.puts(out); f.close();
 `);
@@ -1248,8 +1344,8 @@ const f = std.open("${T}/cli.out", "w"); f.puts(out); f.close();
            wrapped int, not a hang. A vacuous run (server never answered)
            would print threw:, which fails this equality. */
         let c = runEvil("long_status",
-            `"HTTP/1.1 00000000000000000000000000000000000000005 OK\\r\\nContent-Length: 2\\r\\n\\r\\nhi"`);
-        ok(c.rc !== 137 && c.out === "ok:0:2",
+            "HTTP/1.1 00000000000000000000000000000000000000005 OK\\r\\nContent-Length: 2\\r\\n\\r\\nhi", 0);
+        ok(c.rc !== 137 && c.out.indexOf("ok:0:2") === 0,
            "S3: a 40-digit status line clamps deterministically and cannot hang " +
            "(rc=" + c.rc + ", out='" + c.out.slice(0, 40) + "')");
 
@@ -1257,14 +1353,51 @@ const f = std.open("${T}/cli.out", "w"); f.puts(out); f.close();
            (RFC 9112 6.1 rejection arm) instead of silently preferring
            chunked -- a hostile server cannot desync us against a proxy. */
         c = runEvil("cl_and_te",
-            `"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nContent-Length: 5\\r\\n\\r\\n0\\r\\n\\r\\n"`);
+            "HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nContent-Length: 5\\r\\n\\r\\n0\\r\\n\\r\\n", 0);
         ok(c.rc !== 137 && c.out.indexOf("threw:") === 0,
            "③: TE+CL on one response is rejected, not silently dechunked (got '" +
            c.out.slice(0, 50) + "')");
 
-        c = runEvil("normal", `"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nhi"`);
+        c = runEvil("normal",
+            "HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nhi", 0);
         ok(c.out.indexOf("ok:200:2") === 0,
            "S3 control: a normal status still parses (got '" + c.out + "')");
+
+        // new hostile-server coverage
+        c = runEvil("dup_cl_same",
+            "HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nContent-Length: 2\\r\\n\\r\\nhi", 0);
+        ok(c.out.indexOf("ok:200:2") === 0,
+           "client: IDENTICAL duplicate Content-Length is accepted (asymmetric " +
+           "with the server's strict refusal, pinned here) (got '" + c.out + "')");
+
+        c = runEvil("chunked_ext",
+            "HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n5;ext=1\\r\\nHELLO\\r\\n0\\r\\nX-Trailer: t\\r\\n\\r\\n", 0);
+        ok(c.out.indexOf("ok:200:5") === 0,
+           "client: chunk extensions and a trailer section decode to the payload (got '" +
+           c.out + "')");
+
+        c = runEvil("no_reason",
+            "HTTP/1.1 200\\r\\nContent-Length: 2\\r\\n\\r\\nhi", 0);
+        ok(c.out.indexOf("ok:200:2") === 0,
+           "client: a status line with no reason phrase parses (got '" + c.out + "')");
+
+        c = runEvil("multi_cookie",
+            "HTTP/1.1 200 OK\\r\\nX-Dup: first\\r\\nX-Dup: second\\r\\nContent-Length: 2\\r\\n\\r\\nhi", 0);
+        ok(c.out.indexOf("|H=second") > 0,
+           "client: repeated response headers collapse last-wins (got '" + c.out + "')");
+
+        c = runEvil("nul_body",
+            "HTTP/1.1 200 OK\\r\\nContent-Length: 3\\r\\n\\r\\na\\x00b", 0);
+        ok(c.out.indexOf("ok:200:3") === 0,
+           "client: NUL inside the body keeps the declared length (got '" + c.out + "')");
+
+        c = runEvil("slow_headers",
+            "HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nhi", 4);
+        /* delay 4s > the client's own 3s setTimeout: the bound must fire */
+        ok(c.rc !== 137 && c.out.indexOf("threw:") === 0,
+           "client: setTimeout bounds a slow-response server (got '" +
+           c.out.slice(0, 40) + "')");
+
     }
 
     /* ---- ⑤ IPv6: host "::" binds dual-stack (v6 native + v4-mapped) ---- */
