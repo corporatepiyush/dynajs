@@ -262,6 +262,11 @@ let tlsCtorErr = null;
 try { new Redis({ port: 6379, tls: true }); }
 catch (e) { tlsCtorErr = String(e); }
 
+/* a negative port must be refused, not (uint16_t)-wrapped into range */
+let negPortErr = null;
+try { new Redis({ port: -1, host: "127.0.0.1" }); }
+catch (e) { negPortErr = String(e); }
+
 /* maxPending is a real bound */
 let pendErr = null;
 R.tiny = new Redis({ port: modern.port, host: "127.0.0.1", maxPending: 2 });
@@ -445,6 +450,8 @@ const t = setInterval(() => {
   /* 13. the refusals that happen synchronously */
   check(tlsCtorErr !== null && /TLS/.test(tlsCtorErr),
         "tls:true must be refused by name, got " + tlsCtorErr);
+  check(negPortErr !== null && /port must be/.test(negPortErr),
+        "a negative port must be refused, not wrapped into range: " + negPortErr);
   check(pendErr !== null && /maxPending|in flight/.test(pendErr),
         "maxPending must be enforced, got " + pendErr);
 

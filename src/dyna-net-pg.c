@@ -89,6 +89,19 @@ static int pg_oid_prefers_binary(uint32_t oid)
 #define PG_ST_READY      2
 #define PG_ST_DEAD       3
 
+/* A pipeline: K statements over ONE round trip. Each member settles into its
+ * slot independently (rows, or the Error that replaces it); when all K slots
+ * are decided the public promise resolves with the array. Redis-parity
+ * semantics: per-element errors RESOLVE into the array, they do not reject. */
+typedef struct dyn_pg_batch {
+    JSContext *ctx;
+    JSValue *slots;
+    int k, ndone;
+    int dead;               /* the connection died: reject instead */
+    int settled;
+    JSValue resolve, reject;
+} dyn_pg_batch_t;
+
 typedef struct dyn_pg_pending {
     struct dyn_pg_pending *next;
     JSValue resolve, reject;
@@ -97,8 +110,16 @@ typedef struct dyn_pg_pending {
     uint8_t *bytes;           /* encoded, while queued behind the handshake */
     size_t nbytes;
     char tag[64];             /* CommandComplete */
-    int rowcount, ncomplete;
+    int rowcount;
     uint64_t deadline_ms;
+    /* Which Sync ENDS this statement. Singles own one; every member of a
+     * batch shares the batch's. ReadyForQuery #N settles completed entries
+     * with esync <= N -- that is how K statements over one Sync stay in
+     * phase without ever guessing at a reply's owner. */
+    uint64_t esync;
+    int sync_end;             /* this entry is the last of its Sync */
+    dyn_pg_batch_t *batch;    /* NULL for a plain single query */
+    int bidx;
     /* The column name and type read ONCE per RowDescription instead of once
      * per column per row. The atom is what matters: without it every row
      * re-interns every column name, which is a hash of the name per cell. */
@@ -132,6 +153,12 @@ typedef struct {
     uint8_t *obuf; size_t ocap, olen;
 
     dyn_pg_pending_t *head, *tail, *wq_head, *wq_tail;
+    /* Completed statements awaiting their ReadyForQuery. CommandComplete
+     * moves an entry here so the NEXT statement's rows land on the right
+     * pending; RFQ settles what it owns and leaves later syncs untouched. */
+    dyn_pg_pending_t *dhead, *dtail;
+    uint64_t sync_seq, sync_recv;
+    int sync_closed;          /* this Sync's statements have all completed */
     int npending, nwait, maxpending;
     int flush_queued;         /* a coalescing flush job is pending */
 
@@ -315,6 +342,179 @@ static JSValue pg_conn_error(JSContext *ctx, const char *msg)
     return e;
 }
 
+/* ---- batches ------------------------------------------------------------- */
+
+static void pg_batch_assemble(dyn_pg_batch_t *b)
+{
+    JSContext *ctx = b->ctx;
+    JSValue arr = JS_NewArray(ctx);
+    int i;
+
+    if (JS_IsException(arr)) {
+        /* The slots hold K finished results: an array allocation failure
+         * must not strand them until runtime teardown. */
+        for (i = 0; i < b->k; i++)
+            JS_FreeValue(ctx, b->slots[i]);
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        arr = pg_conn_error(ctx, "PostgreSQL: out of memory assembling the pipeline result");
+        if (JS_IsFunction(ctx, b->reject)) {
+            JSValueConst a[1] = { arr };
+            JSValue r = JS_Call(ctx, b->reject, JS_UNDEFINED, 1, a);
+            JS_FreeValue(ctx, r);
+        }
+        JS_FreeValue(ctx, arr);
+    } else {
+        for (i = 0; i < b->k; i++)
+            JS_DefinePropertyValueUint32(ctx, arr, (uint32_t)i, b->slots[i],
+                                         JS_PROP_C_W_E);
+        if (JS_IsFunction(ctx, b->resolve)) {
+            JSValueConst a[1] = { arr };
+            JSValue r = JS_Call(ctx, b->resolve, JS_UNDEFINED, 1, a);
+            JS_FreeValue(ctx, r);
+        }
+        JS_FreeValue(ctx, arr);
+    }
+}
+
+/* One member's slot is decided: `v` is the value (or the Error that stands in
+ * for it). Assembles and resolves the public array on the last one. */
+static void pg_batch_fill(dyn_pg_t *g, dyn_pg_pending_t *p, JSValue v)
+{
+    dyn_pg_batch_t *b = p->batch;
+
+    p->batch = NULL;                    /* detach: this member is done */
+    if (!b || b->dead || b->settled) { JS_FreeValue(g->ctx, v); return; }
+    b->slots[p->bidx] = v;
+    if (++b->ndone == b->k) {
+        b->settled = 1;
+        pg_batch_assemble(b);
+        JS_FreeValue(b->ctx, b->resolve);
+        JS_FreeValue(b->ctx, b->reject);
+        free(b->slots);
+        free(b);
+    }
+}
+
+/* The connection died with the batch unresolved: detach every queued member
+ * (a later settle must never touch the box), reject the public promise once,
+ * and free it. */
+static void pg_batch_fail(dyn_pg_t *g, dyn_pg_batch_t *b, const char *msg)
+{
+    JSContext *ctx = b->ctx;
+    dyn_pg_pending_t *p;
+    JSValue e;
+    int i;
+
+    if (b->dead || b->settled)
+        return;
+    b->dead = 1;
+    for (p = g->head; p; p = p->next)
+        if (p->batch == b) p->batch = NULL;
+    for (p = g->dhead; p; p = p->next)
+        if (p->batch == b) p->batch = NULL;
+    for (p = g->wq_head; p; p = p->next)
+        if (p->batch == b) p->batch = NULL;
+    for (i = 0; i < b->k; i++)
+        JS_FreeValue(ctx, b->slots[i]);
+    free(b->slots);
+    e = pg_conn_error(ctx, msg);
+    if (JS_IsFunction(ctx, b->reject)) {
+        JSValueConst a[1] = { e };
+        JSValue r = JS_Call(ctx, b->reject, JS_UNDEFINED, 1, a);
+        JS_FreeValue(ctx, r);
+    }
+    JS_FreeValue(ctx, e);
+    JS_FreeValue(ctx, b->resolve);
+    JS_FreeValue(ctx, b->reject);
+    free(b);
+}
+
+/* Rows affected for a DML tag ("INSERT 0 3" -> 3), read from the LAST space.
+ * Consulted only when no data rows came back -- for a SELECT the row count
+ * already IS rowCount, and "SELECT 1"'s trailing digit must not invent one. */
+static int32_t pg_tag_rowcount(const char *tag)
+{
+    const char *sp = strrchr(tag, ' ');
+    const char *d;
+    long v = 0;
+
+    if (!sp || !sp[1])
+        return -1;
+    for (d = sp + 1; *d; d++) {
+        if (*d < '0' || *d > '9')
+            return -1;
+        v = v * 10 + (*d - '0');
+    }
+    return (int32_t)v;
+}
+
+/* Settle one entry that has all its data: a batch member fills its slot, a
+ * single query resolves its own promise with the result object. */
+static void pg_settle_entry(dyn_pg_t *g, dyn_pg_pending_t *p)
+{
+    JSContext *ctx = g->ctx;
+    int32_t affected;
+    {
+        int32_t t = p->rowcount > 0 ? p->rowcount : pg_tag_rowcount(p->tag);
+        affected = t < 0 ? 0 : t;      /* a tag with no count (BEGIN) is 0 */
+    }
+
+    if (p->batch) {
+        JSValue res = JS_NewObject(ctx);
+        if (JS_IsException(res)) {
+            JS_FreeValue(ctx, JS_GetException(ctx));
+            res = pg_conn_error(ctx,
+                "PostgreSQL: out of memory building a pipeline result");
+        } else {
+            JS_SetPropertyStr(ctx, res, "rows",
+                              JS_IsUndefined(p->rows) ? JS_NewArray(ctx)
+                                                      : p->rows);
+            p->rows = JS_UNDEFINED;
+            JS_SetPropertyStr(ctx, res, "fields",
+                              JS_IsUndefined(p->fields) ? JS_NewArray(ctx)
+                                                        : p->fields);
+            p->fields = JS_UNDEFINED;
+            JS_SetPropertyStr(ctx, res, "command", JS_NewString(ctx, p->tag));
+            JS_SetPropertyStr(ctx, res, "rowCount",
+                              JS_NewInt32(ctx, affected));
+        }
+        pgp_free_fields(ctx, p);
+        free(p->bytes); p->bytes = NULL;
+        pg_batch_fill(g, p, res);
+        pgp_free(ctx, p);
+        return;
+    }
+
+    {
+        JSValue res = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, res, "rows",
+                          JS_IsUndefined(p->rows) ? JS_NewArray(ctx) : p->rows);
+        p->rows = JS_UNDEFINED;
+        JS_SetPropertyStr(ctx, res, "fields",
+                          JS_IsUndefined(p->fields) ? JS_NewArray(ctx) : p->fields);
+        p->fields = JS_UNDEFINED;
+        JS_SetPropertyStr(ctx, res, "command", JS_NewString(ctx, p->tag));
+        JS_SetPropertyStr(ctx, res, "rowCount", JS_NewInt32(ctx, affected));
+        pg_settle(ctx, p, 0, res);
+    }
+}
+
+/* Settle one entry with an error: a batch member stores the Error in its
+ * slot; a single query rejects. `e` is consumed either way. */
+static void pg_settle_entry_err(dyn_pg_t *g, dyn_pg_pending_t *p, JSValue e)
+{
+    JSContext *ctx = g->ctx;
+
+    if (p->batch) {
+        pgp_free_fields(ctx, p);
+        free(p->bytes); p->bytes = NULL;
+        pg_batch_fill(g, p, e);
+        pgp_free(ctx, p);
+        return;
+    }
+    pg_settle(ctx, p, 1, e);
+}
+
 /* ---- writing ------------------------------------------------------------ */
 
 static int pg_flush(dyn_pg_t *g)
@@ -463,10 +663,12 @@ static void pg_md5_auth(const char *pass, const char *user,
     memcpy(tmp, h1, 32);
     memcpy(tmp + 32, salt, 4);
     dyn_md5(tmp, 36, d2);
+    /* tmp held the raw password through the first hash; clear it before free. */
+    memset(tmp, 0, n1 + n2 + 16);
+    free(tmp);
     memcpy(out, "md5", 3);
     dyn_codec_hex_encode(d2, 16, out + 3);
     out[35] = '\0';
-    free(tmp);
 }
 
 static void pg_handle_auth(dyn_pg_t *g, const uint8_t *body, size_t len)
@@ -1066,9 +1268,49 @@ static void pg_data_row(dyn_pg_t *g, dyn_pg_pending_t *p,
 
 /* ---- the message loop --------------------------------------------------- */
 
-static void pg_ready_for_query(dyn_pg_t *g, char status)
+/* The head of the queue holds the ErrorResponse that ended THIS sync. Settle
+ * it, then abort the rest of its batch: past an ErrorResponse the server
+ * skips every remaining statement up to the Sync, so those members get NO
+ * replies of their own -- they are failed HERE, by name, rather than left
+ * pending for ever. Members of LATER syncs stop the walk untouched. */
+static void pg_sync_failed(dyn_pg_t *g, dyn_pg_pending_t *p)
 {
     JSContext *ctx = g->ctx;
+    dyn_pg_batch_t *b = p->batch;
+    JSValue e = p->error;
+    /* Settling frees the entry: everything read after that call must be
+     * saved here first. */
+    int settled_last = !b || p->sync_end;
+
+    if (p->stmt_name[0]) {
+        /* Whatever the error was, this named statement is now suspect: evict
+         * so the next call re-Parses instead of failing the same way. */
+        pg_stmt_evict_named(g, p->stmt_name);
+        p->stmt_name[0] = '\0';
+    }
+    p->error = JS_UNDEFINED;
+    pgp_pop(&g->head, &g->tail);
+    g->npending--;
+    pg_settle_entry_err(g, p, e);
+    if (!settled_last) {
+        while ((p = g->head) != NULL && p->batch == b) {
+            int qlast = p->sync_end;
+            JSValue ae = JS_NewError(ctx);
+            JS_SetPropertyStr(ctx, ae, "message",
+                JS_NewString(ctx,
+                    "PostgreSQL: an earlier statement of the pipeline "
+                    "failed; the server skipped this one"));
+            pgp_pop(&g->head, &g->tail);
+            g->npending--;
+            pg_settle_entry_err(g, p, ae);
+            if (qlast)
+                break;
+        }
+    }
+}
+
+static void pg_ready_for_query(dyn_pg_t *g, char status)
+{
     dyn_pg_pending_t *p;
 
     g->tx_status = status;
@@ -1095,28 +1337,21 @@ static void pg_ready_for_query(dyn_pg_t *g, char status)
         return;
     }
 
-    /* ReadyForQuery ends exactly one query, simple or extended. */
-    p = pgp_pop(&g->head, &g->tail);
-    if (!p)
-        return;
-    g->npending--;
-    if (!JS_IsUndefined(p->error)) {
-        JSValue e = p->error;
-        p->error = JS_UNDEFINED;
-        pg_settle(ctx, p, 1, e);
-        return;
-    }
+    /* ReadyForQuery ends exactly one Sync: a single query, or a whole
+     * pipeline. Settle the completed entries this sync owns; an errored head
+     * owns THIS sync and everything behind it in the same batch. */
     {
-        JSValue res = JS_NewObject(ctx);
-        JS_SetPropertyStr(ctx, res, "rows",
-                          JS_IsUndefined(p->rows) ? JS_NewArray(ctx) : p->rows);
-        p->rows = JS_UNDEFINED;
-        JS_SetPropertyStr(ctx, res, "fields",
-                          JS_IsUndefined(p->fields) ? JS_NewArray(ctx) : p->fields);
-        p->fields = JS_UNDEFINED;
-        JS_SetPropertyStr(ctx, res, "command", JS_NewString(ctx, p->tag));
-        JS_SetPropertyStr(ctx, res, "rowCount", JS_NewInt32(ctx, p->rowcount));
-        pg_settle(ctx, p, 0, res);
+        uint64_t r = ++g->sync_recv;
+
+        g->sync_closed = 0;
+        while (g->dhead && g->dhead->esync <= r) {
+            p = pgp_pop(&g->dhead, &g->dtail);
+            g->npending--;
+            pg_settle_entry(g, p);
+        }
+        p = g->head;
+        if (p && !JS_IsUndefined(p->error))
+            pg_sync_failed(g, p);
     }
 }
 
@@ -1180,18 +1415,26 @@ static void pg_message(dyn_pg_t *g, char type, const uint8_t *b, size_t len)
         /* A second result set in one query. `rows` would concatenate while
          * `fields` described only the last, so the caller gets one array whose
          * shape changes partway through. Refusing names the cause. */
-        if (p && !JS_IsUndefined(p->fields)) {
+        if ((p && !JS_IsUndefined(p->fields)) || g->sync_closed) {
             pg_fail_all(g, "PostgreSQL: this client runs ONE statement per query; "
                            "the server returned a second result set");
             return;
         }
         if (p) pg_row_description(g, p, b, len);
         return;
-    case 'D': if (p) pg_data_row(g, p, b, len); return;
+    case 'D':
+        if (g->sync_closed) {
+            pg_fail_all(g, "PostgreSQL: this client runs ONE statement per "
+                           "query; the server sent data after the statement "
+                           "completed");
+            return;
+        }
+        if (p) pg_data_row(g, p, b, len);
+        return;
     case 'C':
-        if (p && ++p->ncomplete > 1) {
-            pg_fail_all(g, "PostgreSQL: this client runs ONE statement per query; "
-                           "the server completed a second command");
+        if (g->sync_closed) {
+            pg_fail_all(g, "PostgreSQL: this client runs ONE statement per "
+                           "query; the server completed a second command");
             return;
         }
         if (p) {
@@ -1200,19 +1443,33 @@ static void pg_message(dyn_pg_t *g, char type, const uint8_t *b, size_t len)
             if (n >= sizeof(p->tag)) n = sizeof(p->tag) - 1;
             memcpy(p->tag, b, n);
             p->tag[n] = '\0';
+            /* Complete: off the main queue, onto the done list, so the next
+             * statement's rows land on the right pending. Its promise (or
+             * batch slot) is filled by its own ReadyForQuery. */
+            pgp_pop(&g->head, &g->tail);
+            pgp_push(&g->dhead, &g->dtail, p);
+            /* A single query, or the last member of a batch: anything but
+             * ReadyForQuery before the next Sync is now a violation. */
+            if (!p->batch || p->sync_end)
+                g->sync_closed = 1;
         }
         return;
-    case 'I': if (p) { p->tag[0] = '\0'; } return;
+    case 'I':
+        if (g->sync_closed) {
+            pg_fail_all(g, "PostgreSQL: this client runs ONE statement per "
+                           "query; the server completed a second command");
+            return;
+        }
+        if (p) {
+            p->tag[0] = '\0';
+            pgp_pop(&g->head, &g->tail);
+            pgp_push(&g->dhead, &g->dtail, p);
+            if (!p->batch || p->sync_end)
+                g->sync_closed = 1;
+        }
+        return;
     case 'E': {
         JSValue e = pg_error_value(ctx, b, len);
-        /* Whatever the error was, this named statement is now suspect: a
-         * schema change makes the server refuse a cached plan, and the name
-         * may not exist at all. Evicting means the next call re-Parses;
-         * keeping it means failing identically for ever. */
-        if (p && p->stmt_name[0]) {
-            pg_stmt_evict_named(g, p->stmt_name);
-            p->stmt_name[0] = '\0';
-        }
         if (p && JS_IsUndefined(p->error)) {
             /* Held until ReadyForQuery: the server keeps sending until then,
              * and settling early would leave those messages for the NEXT
@@ -1336,10 +1593,17 @@ static void pg_fail_all(dyn_pg_t *g, const char *msg)
     if (g->fd >= 0) { dyn_aio_close(g->aio, g->fd); g->fd = -1; }
     while ((p = pgp_pop(&g->head, &g->tail)) != NULL) {
         g->npending--;
+        if (p->batch) pg_batch_fail(g, p->batch, msg);
+        pg_settle(ctx, p, 1, pg_conn_error(ctx, msg));
+    }
+    while ((p = pgp_pop(&g->dhead, &g->dtail)) != NULL) {
+        g->npending--;
+        if (p->batch) pg_batch_fail(g, p->batch, msg);
         pg_settle(ctx, p, 1, pg_conn_error(ctx, msg));
     }
     while ((p = pgp_pop(&g->wq_head, &g->wq_tail)) != NULL) {
         g->nwait--;
+        if (p->batch) pg_batch_fail(g, p->batch, msg);
         pg_settle(ctx, p, 1, pg_conn_error(ctx, msg));
     }
     if (JS_IsFunction(ctx, g->h_error))
@@ -1509,23 +1773,14 @@ static struct pg_stmt *pg_stmt_get(dyn_pg_t *g, const char *sql, size_t n)
 
 static int pg_encode_query(pgw_t *w, const char *sql, int nparam,
                            const char **pv, const size_t *plen,
-                           const uint8_t *pnull, int extended,
+                           const uint8_t *pnull,
                            const char *stmt_name, int stmt_prepared,
                            const uint8_t *rfmt, int nrfmt)
 {
     int i;
-    /* Branch on whether the CALLER supplied a parameter array, not on how many
-     * it held. The two protocols differ in more than parameters: the simple
-     * one runs several statements separated by semicolons, the extended one
-     * refuses them. Choosing by length means `query(sql, [])` silently takes
-     * the multi-statement path, which is exactly where a caller believes they
-     * are parameterised and are not. */
-    if (!extended) {
-        size_t at = pgw_begin(w, 'Q');
-        pgw_str(w, sql);
-        pgw_end(w, at);
-        return w->bad ? -1 : 0;
-    }
+    /* EXTENDED PROTOCOL ONLY: the simple path ('Q') lives in dyn_pg_query.
+     * The two differ in more than parameters -- the simple one runs several
+     * statements separated by semicolons, this one refuses them. */
     /* Parse ONLY when the server does not already hold this statement. That
      * skip is the whole win: the server stops re-parsing and re-planning the
      * same SQL. `stmt_name` is "" for the one-shot arm, which is byte-for-byte
@@ -1566,8 +1821,178 @@ static int pg_encode_query(pgw_t *w, const char *sql, int nparam,
       pgw_end(w, at); }
     { size_t at = pgw_begin(w, 'D'); pgw_u8(w, 'P'); pgw_u8(w, 0); pgw_end(w, at); }
     { size_t at = pgw_begin(w, 'E'); pgw_u8(w, 0); pgw_u32(w, 0); pgw_end(w, at); }
-    { size_t at = pgw_begin(w, 'S'); pgw_end(w, at); }
+    /* NO Sync here. The Sync ends a ROUND TRIP, and its owner decides where
+     * that is: query() sends one after this, pipeline() exactly one for the
+     * whole batch. A Sync per statement would end the failed state after
+     * every member, so an error mid-batch would NOT skip the rest -- the
+     * later members would run anyway while the client had already aborted
+     * them, and their replies would be read by the next query. MEASURED on
+     * PostgreSQL 16 via a wire trace: exactly that corruption. */
     return w->bad ? -1 : 0;
+}
+
+/* ---- strategy + encoding, shared by query() and pipeline() --------------- */
+
+/* Coerce a JS parameter array into C strings. Returns 0; on failure returns
+ * -1 with everything freed and the exception set. `what` names the entry
+ * point in the refusal messages ("query" / "pipeline"). */
+static int pg_coerce_params(JSContext *ctx, JSValueConst params,
+                            const char ***out_pv, size_t **out_plen,
+                            uint8_t **out_pnull, uint8_t **out_pfree,
+                            uint32_t *out_n, const char *what)
+{
+    const char **pv = NULL;
+    size_t *plen = NULL;
+    uint8_t *pnull = NULL, *pfree = NULL;
+    uint32_t nparam = 0, i;
+    JSValue lv;
+
+    if (!JS_IsArray(ctx, params)) {
+        JS_ThrowTypeError(ctx, "%s: parameters must be an array", what);
+        return -1;
+    }
+    lv = JS_GetPropertyStr(ctx, params, "length");
+    if (JS_ToUint32(ctx, &nparam, lv) < 0) {
+        JS_FreeValue(ctx, lv);
+        return -1;
+    }
+    JS_FreeValue(ctx, lv);
+    if (nparam > 65535) {
+        JS_ThrowRangeError(ctx, "%s: at most 65535 parameters", what);
+        return -1;
+    }
+    *out_n = nparam;
+    if (nparam == 0)
+        return 0;
+    pv = (const char **)calloc(nparam, sizeof(*pv));
+    plen = (size_t *)calloc(nparam, sizeof(*plen));
+    pnull = (uint8_t *)calloc(nparam, 1);
+    pfree = (uint8_t *)calloc(nparam, 1);
+    if (!pv || !plen || !pnull || !pfree) {
+        free(pv); free(plen); free(pnull); free(pfree);
+        JS_ThrowOutOfMemory(ctx);
+        return -1;
+    }
+    for (i = 0; i < nparam; i++) {
+        JSValue e = JS_GetPropertyUint32(ctx, params, i);
+        if (JS_IsUndefined(e) || JS_IsNull(e)) {
+            pnull[i] = 1;
+            JS_FreeValue(ctx, e);
+            continue;
+        }
+        /* A byte view is the one object with an exact text form: the server
+         * parses "\x<hex>" as bytea whatever bytea_output says. */
+        if (JS_IsObject(e)) {
+            int enc = pg_param_bytea(ctx, e, &pv[i], &plen[i]);
+            if (enc > 0) { pfree[i] = PG_PF_MALLOC; JS_FreeValue(ctx, e); continue; }
+            if (enc < 0) { JS_FreeValue(ctx, e); goto fail; }
+            /* Everything else stringifies to "[object Object]" or "1,2":
+             * both store cleanly and both are wrong. Refuse, and name the
+             * conversion, so the cost lands on a line the caller wrote. */
+            JS_FreeValue(ctx, e);
+            pg_free_params(ctx, pv, pfree, i);
+            free(pv); free(plen); free(pnull); free(pfree);
+            JS_ThrowTypeError(ctx,
+                "%s: parameter %u is an object; a parameter is a value. "
+                "Pass a Uint8Array or ArrayBuffer for bytea, "
+                "JSON.stringify(v) for json/jsonb, "
+                "or an ISO string for a timestamp", what, (unsigned)i + 1);
+            return -1;
+        }
+        pv[i] = JS_ToCStringLen(ctx, &plen[i], e);
+        pfree[i] = PG_PF_CSTR;
+        JS_FreeValue(ctx, e);
+        if (!pv[i])
+            goto fail;
+    }
+    *out_pv = pv;
+    *out_plen = plen;
+    *out_pnull = pnull;
+    *out_pfree = pfree;     /* the caller frees the strings through it */
+    return 0;
+
+fail:
+    pg_free_params(ctx, pv, pfree, i);
+    free(pv); free(plen); free(pnull); free(pfree);
+    return -1;
+}
+
+/* Pick the arm for ONE statement and encode it: Parse (skipped when the
+ * server already holds the named statement), Bind, Describe, Execute. NO
+ * Sync -- that belongs to whoever owns the round trip. Returns 0, or -1 with
+ * w->bad set (out of memory). The chosen statement NAME goes to name_out so
+ * the caller's pending can track eviction. */
+static int pg_encode_member(dyn_pg_t *g, pgw_t *w, const char *sql,
+                            int nparam, const char **pv, const size_t *plen,
+                            const uint8_t *pnull, char *name_out,
+                            size_t name_outcap)
+{
+    struct pg_stmt *stmt = NULL;
+    const char *stmt_name = NULL;
+    int stmt_prepared = 0;
+    uint8_t *rfmt = NULL;
+    int nrfmt = 0;
+
+    stmt = pg_stmt_get(g, sql, strlen(sql));
+    if (stmt && stmt->uses >= g->prepare_after) {
+        stmt_name = stmt->name;
+        stmt_prepared = stmt->prepared;
+        /* Per-column binary needs the result types, which only a previous
+         * execution's RowDescription can supply -- so this arm exists only
+         * because the statement cache does. */
+        if (g->binary_results && stmt->oids && stmt->noids > 0) {
+            rfmt = (uint8_t *)malloc((size_t)stmt->noids);
+            if (rfmt) {
+                int k;
+                nrfmt = stmt->noids;
+                for (k = 0; k < nrfmt; k++)
+                    rfmt[k] = (uint8_t)pg_oid_prefers_binary(stmt->oids[k]);
+            }
+        }
+        /* Optimistic: the Parse is pipelined with the Bind, so a failure
+         * arrives as one ErrorResponse and the error path evicts. */
+        stmt->prepared = 1;
+        g->n_prepared_hits++;
+    } else {
+        g->n_unnamed++;
+    }
+
+    if (name_out && stmt_name)
+        snprintf(name_out, name_outcap, "%s", stmt_name);
+    {
+        int rc = pg_encode_query(w, sql, nparam, pv, plen, pnull,
+                                 stmt_name, stmt_prepared, rfmt, nrfmt);
+        free(rfmt);
+        return rc;
+    }
+}
+
+/* Queue an encoded statement under `p`. Takes ownership of `bytes` on both
+ * branches (the ready arm copies into obuf; the wait arm keeps them). */
+static void pg_submit(dyn_pg_t *g, dyn_pg_pending_t *p, uint8_t *bytes,
+                      size_t nbytes, uint64_t esync, int sync_end)
+{
+    p->bytes = bytes;
+    p->nbytes = nbytes;
+    p->esync = esync;
+    p->sync_end = sync_end;
+    if (g->state == PG_ST_READY) {
+        if (pg_write(g, bytes, nbytes) < 0) {
+            /* Caller detects the failure through p->bytes staying set and
+             * cleans up -- see dyn_pg_query. */
+            return;
+        }
+        free(bytes); p->bytes = NULL; p->nbytes = 0;
+        if (g->query_timeout_ms)
+            p->deadline_ms = dyn_timer_now_ms() + g->query_timeout_ms;
+        pgp_push(&g->head, &g->tail, p);
+        g->npending++;
+    } else {
+        /* Held until ReadyForQuery: a query written during authentication
+         * would be read by the server as part of the handshake. */
+        pgp_push(&g->wq_head, &g->wq_tail, p);
+        g->nwait++;
+    }
 }
 
 static JSValue dyn_pg_query(JSContext *ctx, JSValueConst this_val,
@@ -1578,13 +2003,9 @@ static JSValue dyn_pg_query(JSContext *ctx, JSValueConst this_val,
     const char **pv = NULL;
     size_t *plen = NULL;
     uint8_t *pnull = NULL, *pfree = NULL;
-    uint32_t nparam = 0, i;
-    struct pg_stmt *stmt = NULL;
-    const char *stmt_name = NULL;
-    int stmt_prepared = 0;
-    uint8_t *rfmt = NULL;
-    int nrfmt = 0;
+    uint32_t nparam = 0;
     int have_params = 0;
+    char pending_name[24];
     pgw_t w;
     dyn_pg_pending_t *p;
     JSValue funcs[2], promise;
@@ -1598,69 +2019,15 @@ static JSValue dyn_pg_query(JSContext *ctx, JSValueConst this_val,
     if (!sql)
         return JS_EXCEPTION;
     if (argc > 1 && !JS_IsUndefined(argv[1]) && !JS_IsNull(argv[1])) {
-        JSValue lv;
-        if (!JS_IsArray(ctx, argv[1])) {
+        if (pg_coerce_params(ctx, argv[1], &pv, &plen, &pnull, &pfree,
+                             &nparam, "query") < 0) {
             JS_FreeCString(ctx, sql);
-            return JS_ThrowTypeError(ctx, "query: parameters must be an array");
+            return JS_EXCEPTION;
         }
+        /* Branch on whether the CALLER supplied a parameter array, not on
+         * how many it held: `query(sql, [])` must still take the extended
+         * path, which refuses multi-statement text. */
         have_params = 1;
-        lv = JS_GetPropertyStr(ctx, argv[1], "length");
-        if (JS_ToUint32(ctx, &nparam, lv) < 0) {
-            JS_FreeValue(ctx, lv); JS_FreeCString(ctx, sql); return JS_EXCEPTION;
-        }
-        JS_FreeValue(ctx, lv);
-        if (nparam > 65535) {
-            JS_FreeCString(ctx, sql);
-            return JS_ThrowRangeError(ctx, "query: at most 65535 parameters");
-        }
-    }
-    if (nparam) {
-        pv = (const char **)calloc(nparam, sizeof(*pv));
-        plen = (size_t *)calloc(nparam, sizeof(*plen));
-        pnull = (uint8_t *)calloc(nparam, 1);
-        pfree = (uint8_t *)calloc(nparam, 1);
-        if (!pv || !plen || !pnull || !pfree) {
-            free(pv); free(plen); free(pnull); free(pfree);
-            JS_FreeCString(ctx, sql);
-            return JS_ThrowOutOfMemory(ctx);
-        }
-        for (i = 0; i < nparam; i++) {
-            JSValue e = JS_GetPropertyUint32(ctx, argv[1], i);
-            if (JS_IsUndefined(e) || JS_IsNull(e)) {
-                pnull[i] = 1;
-                JS_FreeValue(ctx, e);
-                continue;
-            }
-            /* A byte view is the one object with an exact text form: the
-             * server parses "\x<hex>" as bytea whatever bytea_output says. */
-            if (JS_IsObject(e)) {
-                int enc = pg_param_bytea(ctx, e, &pv[i], &plen[i]);
-                if (enc > 0) { pfree[i] = PG_PF_MALLOC; JS_FreeValue(ctx, e); continue; }
-                if (enc < 0) { JS_FreeValue(ctx, e); goto param_fail; }
-                /* Everything else stringifies to "[object Object]" or "1,2":
-                 * both store cleanly and both are wrong. Refuse, and name the
-                 * conversion, so the cost lands on a line the caller wrote. */
-                JS_FreeValue(ctx, e);
-                pg_free_params(ctx, pv, pfree, i);
-                free(pv); free(plen); free(pnull); free(pfree);
-                JS_FreeCString(ctx, sql);
-                return JS_ThrowTypeError(ctx,
-                    "query: parameter %u is an object; a parameter is a value. "
-                    "Pass a Uint8Array or ArrayBuffer for bytea, "
-                    "JSON.stringify(v) for json/jsonb, "
-                    "or an ISO string for a timestamp", (unsigned)i + 1);
-            }
-            pv[i] = JS_ToCStringLen(ctx, &plen[i], e);
-            pfree[i] = PG_PF_CSTR;
-            JS_FreeValue(ctx, e);
-            if (!pv[i]) {
-param_fail:
-                pg_free_params(ctx, pv, pfree, i);
-                free(pv); free(plen); free(pnull); free(pfree);
-                JS_FreeCString(ctx, sql);
-                return JS_EXCEPTION;
-            }
-        }
     }
 
     g = pg_this(ctx, this_val);
@@ -1686,67 +2053,245 @@ param_fail:
      * sighting would pay for server state that a one-shot query never uses.
      * The extended path only; a simple query has no Parse to skip. */
     if (have_params) {
-        stmt = pg_stmt_get(g, sql, strlen(sql));
-        if (stmt && stmt->uses >= g->prepare_after) {
-            stmt_name = stmt->name;
-            stmt_prepared = stmt->prepared;
-            /* Per-column binary needs the result types, which only a previous
-             * execution's RowDescription can supply -- so this arm exists only
-             * because the statement cache does. */
-            if (g->binary_results && stmt->oids && stmt->noids > 0) {
-                rfmt = (uint8_t *)malloc((size_t)stmt->noids);
-                if (rfmt) {
-                    int k;
-                    nrfmt = stmt->noids;
-                    for (k = 0; k < nrfmt; k++)
-                        rfmt[k] = (uint8_t)pg_oid_prefers_binary(stmt->oids[k]);
-                }
-            }
-            /* Optimistic: the Parse is pipelined with the Bind, so a failure
-             * arrives as one ErrorResponse and the error path evicts. */
-            stmt->prepared = 1;
-            if (stmt_prepared) g->n_prepared_hits++;
-        } else {
-            g->n_unnamed++;
+        char name[24];
+        name[0] = '\0';
+        if (pg_encode_member(g, &w, sql, (int)nparam, pv, plen, pnull,
+                             name, sizeof(name)) < 0) {
+            pg_free_params(ctx, pv, pfree, nparam);
+            free(pv); free(plen); free(pnull); free(pfree); JS_FreeCString(ctx, sql);
+            return JS_ThrowOutOfMemory(ctx);
         }
+        /* This query's own Sync. */
+        { size_t at = pgw_begin(&w, 'S'); pgw_end(&w, at); }
+        snprintf(pending_name, sizeof(pending_name), "%s", name);
+    } else {
+        size_t at = pgw_begin(&w, 'Q');
+        pgw_str(&w, sql);
+        pgw_end(&w, at);
+        { size_t at2 = pgw_begin(&w, 'S'); pgw_end(&w, at2); }
+        pending_name[0] = '\0';
     }
-    { int rc = pg_encode_query(&w, sql, (int)nparam, pv, plen, pnull,
-                               have_params, stmt_name, stmt_prepared,
-                               rfmt, nrfmt);
-      free(rfmt);
-      pg_free_params(ctx, pv, pfree, nparam);
-      free(pv); free(plen); free(pnull); free(pfree); JS_FreeCString(ctx, sql);
-      if (rc < 0) { free(w.b); return JS_ThrowOutOfMemory(ctx); } }
+    pg_free_params(ctx, pv, pfree, nparam);
+    free(pv); free(plen); free(pnull); free(pfree); JS_FreeCString(ctx, sql);
 
     p = pgp_new();
     if (!p) { free(w.b); return JS_ThrowOutOfMemory(ctx); }
-    if (stmt_name)
-        snprintf(p->stmt_name, sizeof(p->stmt_name), "%s", stmt_name);
+    snprintf(p->stmt_name, sizeof(p->stmt_name), "%s", pending_name);
     promise = JS_NewPromiseCapability(ctx, funcs);
     if (JS_IsException(promise)) { free(w.b); pgp_free(ctx, p); return promise; }
     p->resolve = funcs[0];
     p->reject = funcs[1];
 
+    pg_submit(g, p, w.b, w.len, ++g->sync_seq, 1);
     if (g->state == PG_ST_READY) {
-        if (pg_write(g, w.b, w.len) < 0) {
-            free(w.b); pgp_free(ctx, p); JS_FreeValue(ctx, promise);
+        if (p->bytes) {                 /* the write failed inside submit */
+            free(p->bytes);
+            pgp_free(ctx, p);
+            JS_FreeValue(ctx, promise);
             return JS_ThrowOutOfMemory(ctx);
         }
-        free(w.b);
-        if (g->query_timeout_ms)
-            p->deadline_ms = dyn_timer_now_ms() + g->query_timeout_ms;
-        pgp_push(&g->head, &g->tail, p);
-        g->npending++;
         pg_flush_soon(g);
-    } else {
-        /* Held until ReadyForQuery: a query written during authentication
-         * would be read by the server as part of the handshake. */
-        p->bytes = w.b;
-        p->nbytes = w.len;
-        pgp_push(&g->wq_head, &g->wq_tail, p);
-        g->nwait++;
     }
     return promise;
+}
+
+/* K statements over ONE round trip: every member's Parse/Bind/Describe/
+ * Execute goes out together with a single Sync at the tail. Resolves with an
+ * ARRAY of per-statement results; a failed statement leaves an Error in its
+ * slot, and the server's skip-to-Sync behaviour aborts the members after it,
+ * each named as such -- redis-pipeline semantics on a protocol that cannot
+ * answer past an error. Each element is [sql] or [sql, params]. */
+static JSValue dyn_pg_pipeline(JSContext *ctx, JSValueConst this_val,
+                               int argc, JSValueConst *argv)
+{
+    dyn_pg_t *g;
+    uint32_t n = 0, i, coerced = 0, encoded = 0, submitted = 0;
+    JSValue lv, promise;
+    JSValue funcs[2];
+    pgw_t *ws = NULL;
+    char (*names)[24];
+    const char **sqls = NULL;
+    const char ***pvs = NULL;
+    size_t **plens = NULL;
+    uint8_t **pnulls = NULL, **pfrees = NULL;
+    uint32_t *nparams = NULL;
+    dyn_pg_batch_t *b;
+    dyn_pg_pending_t *p;
+    uint64_t esync;
+
+    if (argc < 1 || !JS_IsArray(ctx, argv[0]))
+        return JS_ThrowTypeError(ctx,
+            "pipeline: expects an array of [sql, params?] elements");
+    lv = JS_GetPropertyStr(ctx, argv[0], "length");
+    if (JS_ToUint32(ctx, &n, lv) < 0) { JS_FreeValue(ctx, lv); return JS_EXCEPTION; }
+    JS_FreeValue(ctx, lv);
+    if (n == 0)
+        return JS_ThrowTypeError(ctx, "pipeline: at least one statement");
+    if (n > 65535)
+        return JS_ThrowRangeError(ctx, "pipeline: at most 65535 statements");
+
+    sqls = (const char **)calloc(n, sizeof(*sqls));
+    pvs = (const char ***)calloc(n, sizeof(*pvs));
+    plens = (size_t **)calloc(n, sizeof(*plens));
+    pnulls = (uint8_t **)calloc(n, sizeof(*pnulls));
+    pfrees = (uint8_t **)calloc(n, sizeof(*pfrees));
+    nparams = (uint32_t *)calloc(n, sizeof(*nparams));
+    ws = (pgw_t *)calloc(n, sizeof(*ws));
+    names = (char (*)[24])calloc(n, sizeof(*names));
+    if (!sqls || !pvs || !plens || !pnulls || !pfrees || !nparams || !ws ||
+        !names)
+        goto oom_pre;
+
+#define PGPIPE_MEMBER_FREE(k) do { \
+        if (sqls[k]) JS_FreeCString(ctx, sqls[k]); \
+        pg_free_params(ctx, pvs[k], pfrees[k], nparams[k]); \
+        /* pg_coerce_params allocates four arrays PER ELEMENT; the strings \
+           they release are not the whole ownership. */ \
+        free(pvs[k]); free(plens[k]); free(pnulls[k]); free(pfrees[k]); \
+        free(ws[k].b); ws[k].b = NULL; \
+    } while (0)
+
+    /* Pass 1: coerce EVERYTHING before the handle is resolved -- element
+     * coercion runs arbitrary JS that may close this connection. */
+    for (i = 0; i < n; i++) {
+        JSValue el = JS_GetPropertyUint32(ctx, argv[0], i);
+        JSValue sqlv, par;
+        uint32_t m = 0;
+
+        if (!JS_IsArray(ctx, el)) {
+            JS_FreeValue(ctx, el);
+            JS_ThrowTypeError(ctx, "pipeline: element %u is not [sql, params?]",
+                              i);
+            goto fail_coerced;
+        }
+        { JSValue l2 = JS_GetPropertyStr(ctx, el, "length");
+          int rc = JS_ToUint32(ctx, &m, l2);
+          JS_FreeValue(ctx, l2);
+          if (rc < 0) { JS_FreeValue(ctx, el); goto fail_coerced; } }
+        if (m < 1) {
+            JS_FreeValue(ctx, el);
+            JS_ThrowTypeError(ctx, "pipeline: element %u is empty", i);
+            goto fail_coerced;
+        }
+        sqlv = JS_GetPropertyUint32(ctx, el, 0);
+        { size_t slen = 0;
+          sqls[i] = JS_ToCStringLen(ctx, &slen, sqlv); }
+        JS_FreeValue(ctx, sqlv);
+        if (!sqls[i]) { JS_FreeValue(ctx, el); goto fail_coerced; }
+        par = m > 1 ? JS_GetPropertyUint32(ctx, el, 1) : JS_UNDEFINED;
+        if (!JS_IsUndefined(par) && !JS_IsNull(par)) {
+            if (pg_coerce_params(ctx, par, &pvs[i], &plens[i], &pnulls[i],
+                                 &pfrees[i], &nparams[i], "pipeline") < 0) {
+                JS_FreeValue(ctx, par);
+                JS_FreeValue(ctx, el);
+                goto fail_coerced;
+            }
+        }
+        JS_FreeValue(ctx, par);
+        JS_FreeValue(ctx, el);
+        coerced = i + 1;
+    }
+
+    g = pg_this(ctx, this_val);
+    if (!g || g->state == PG_ST_DEAD) {
+        JS_ThrowInternalError(ctx, "PostgreSQL: the connection is closed");
+        goto fail_ready;
+    }
+    /* The batch occupies K queue slots as one unit. */
+    if ((uint64_t)g->npending + g->nwait + n > (uint64_t)g->maxpending) {
+        JS_ThrowInternalError(ctx,
+            "PostgreSQL: %d queries already in flight (maxPending)",
+            g->maxpending);
+        goto fail_ready;
+    }
+
+    /* Pass 2: encode each member; the LAST carries the batch's single Sync. */
+    for (i = 0; i < n; i++) {
+        if (pg_encode_member(g, &ws[i], sqls[i], (int)nparams[i], pvs[i],
+                             plens[i], pnulls[i], names[i], sizeof(names[0]))
+            < 0)
+            break;
+        encoded = i + 1;
+        if (i == n - 1) {
+            size_t at = pgw_begin(&ws[i], 'S');
+            pgw_end(&ws[i], at);
+        }
+    }
+    if (encoded < n) {                  /* out of memory encoding */
+        JS_ThrowOutOfMemory(ctx);
+        goto fail_ready;
+    }
+
+    b = (dyn_pg_batch_t *)calloc(1, sizeof(*b));
+    if (!b) { JS_ThrowOutOfMemory(ctx); goto fail_ready; }
+    b->ctx = ctx;
+    b->slots = (JSValue *)calloc(n, sizeof(*b->slots));
+    if (!b->slots) { free(b); b = NULL; JS_ThrowOutOfMemory(ctx); goto fail_ready; }
+    promise = JS_NewPromiseCapability(ctx, funcs);
+    if (JS_IsException(promise)) {
+        free(b->slots); free(b);
+        goto fail_ready;
+    }
+    b->resolve = funcs[0];
+    b->reject = funcs[1];
+    b->k = (int)n;
+    for (i = 0; i < n; i++)
+        b->slots[i] = JS_UNDEFINED;
+
+    esync = ++g->sync_seq;
+    for (i = 0; i < n; i++) {
+        p = pgp_new();
+        if (!p)
+            break;
+        snprintf(p->stmt_name, sizeof(p->stmt_name), "%s", names[i]);
+        p->batch = b;
+        p->bidx = (int)i;
+        pg_submit(g, p, ws[i].b, ws[i].len, esync, /*sync_end=*/i == n - 1);
+        ws[i].b = NULL;                 /* submit took ownership, one way or another */
+        if (g->state == PG_ST_READY && p->bytes) {
+            /* the write failed inside submit */
+            free(p->bytes);
+            pgp_free(ctx, p);
+            break;
+        }
+        submitted = i + 1;
+    }
+    if (submitted < n && !b->dead && !b->settled)
+        pg_batch_fail(g, b, "PostgreSQL: out of memory queueing the pipeline");
+
+    if (g->state == PG_ST_READY)
+        pg_flush_soon(g);
+    for (i = 0; i < n; i++)
+        PGPIPE_MEMBER_FREE(i);
+    free(sqls); free(pvs); free(plens); free(pnulls); free(pfrees);
+    free(nparams); free(ws); free(names);
+    return promise;
+
+fail_coerced:
+    {
+        /* coerced counts COMPLETE elements; the failing one may hold a
+         * half-built entry (its SQL string) that must go too. */
+        uint32_t k;
+        for (k = 0; k < n && k <= coerced; k++)
+            PGPIPE_MEMBER_FREE(k);
+    }
+    free(sqls); free(pvs); free(plens); free(pnulls); free(pfrees);
+    free(nparams); free(ws); free(names);
+    return JS_EXCEPTION;
+
+fail_ready:
+    for (i = 0; i < coerced; i++)
+        PGPIPE_MEMBER_FREE(i);
+    free(sqls); free(pvs); free(plens); free(pnulls); free(pfrees);
+    free(nparams); free(ws); free(names);
+    return JS_EXCEPTION;
+
+oom_pre:
+    free(sqls); free(pvs); free(plens); free(pnulls); free(pfrees);
+    free(nparams); free(ws); free(names);
+    return JS_ThrowOutOfMemory(ctx);
+
+#undef PGPIPE_MEMBER_FREE
 }
 
 /* A cancel goes on a FRESH connection -- the busy one is not reading it -- and
@@ -1937,10 +2482,18 @@ static void dyn_pg_dispose(void *native)
     }
     if (g->state != PG_ST_DEAD) {
         g->state = PG_ST_DEAD;
-        while ((p = pgp_pop(&g->head, &g->tail)) != NULL)
+        while ((p = pgp_pop(&g->head, &g->tail)) != NULL) {
+            if (p->batch) pg_batch_fail(g, p->batch, "PostgreSQL: client closed");
             pg_settle(g->ctx, p, 1, pg_conn_error(g->ctx, "PostgreSQL: client closed"));
-        while ((p = pgp_pop(&g->wq_head, &g->wq_tail)) != NULL)
+        }
+        while ((p = pgp_pop(&g->dhead, &g->dtail)) != NULL) {
+            if (p->batch) pg_batch_fail(g, p->batch, "PostgreSQL: client closed");
             pg_settle(g->ctx, p, 1, pg_conn_error(g->ctx, "PostgreSQL: client closed"));
+        }
+        while ((p = pgp_pop(&g->wq_head, &g->wq_tail)) != NULL) {
+            if (p->batch) pg_batch_fail(g, p->batch, "PostgreSQL: client closed");
+            pg_settle(g->ctx, p, 1, pg_conn_error(g->ctx, "PostgreSQL: client closed"));
+        }
     }
     if (g->aio) {
         if (g->fd >= 0)
@@ -2036,7 +2589,14 @@ static JSValue dyn_pg_ctor(JSContext *ctx, JSValueConst new_target,
         g->pass = pg_opt_str(ctx, opt, "password");
         g->database = pg_opt_str(ctx, opt, "database");
         g->appname = pg_opt_str(ctx, opt, "applicationName");
-        g->port = (uint16_t)pg_opt_int(ctx, opt, "port", 5432);
+        /* Validate in int BEFORE the cast: (uint16_t) would wrap a negative
+         * port into the valid range and connect somewhere unexpected. */
+        { int pi = pg_opt_int(ctx, opt, "port", 5432);
+          if ((pi < 1 || pi > 65535) && !g->path) {
+              dyn_pg_dispose(g);
+              return JS_ThrowRangeError(ctx, "PostgreSQL: port must be 1..65535");
+          }
+          g->port = (uint16_t)(pi > 0 ? pi : 0); }
         g->raw = pg_opt_bool(ctx, opt, "raw");
         g->bytes_out = pg_opt_bool(ctx, opt, "bytes");
         g->binary_results = !pg_opt_bool(ctx, opt, "textResults");
@@ -2054,10 +2614,6 @@ static JSValue dyn_pg_ctor(JSContext *ctx, JSValueConst new_target,
         if (qt > 0) g->query_timeout_ms = (uint64_t)qt;
         ct = pg_opt_int(ctx, opt, "connectTimeoutMs", PG_CONNECT_TIMEOUT);
         if (ct > 0) g->connect_deadline_ms = dyn_timer_now_ms() + (uint64_t)ct;
-        if (g->port == 0 && !g->path) {
-            dyn_pg_dispose(g);
-            return JS_ThrowRangeError(ctx, "PostgreSQL: port must be 1..65535");
-        }
     } else {
         g->connect_deadline_ms = dyn_timer_now_ms() + PG_CONNECT_TIMEOUT;
     }
@@ -2128,6 +2684,7 @@ static JSValue dyn_pg_get_stmt_stats(JSContext *ctx, JSValueConst this_val)
 
 static const JSCFunctionListEntry dyn_pg_proto[] = {
     JS_CFUNC_DEF("query", 1, dyn_pg_query),
+    JS_CFUNC_DEF("pipeline", 1, dyn_pg_pipeline),
     JS_CFUNC_DEF("cancel", 0, dyn_pg_cancel),
     JS_CFUNC_DEF("on", 2, dyn_pg_on),
     JS_CGETSET_DEF("ready", dyn_pg_get_ready, NULL),

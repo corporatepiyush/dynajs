@@ -1358,6 +1358,7 @@ NATIVE_TESTS=tests/test_algo_blackbox.js tests/test_http_security.js tests/test_
   tests/test_net_pentest.js tests/test_proxy.js tests/test_http_proxy.js tests/test_watch.js tests/test_html_text.js tests/test_xml_text.js tests/test_yaml_scalar.js tests/test_scrape_robots.js tests/test_crypto_otp.js tests/test_crypto_jwt.js tests/test_scrape_extract.js \
    tests/test_net_redis.js tests/test_net_pg.js tests/test_net_pg_stmt.js \
    tests/test_net_pg_binary.js \
+   tests/test_net_e2e.js \
    tests/test_net_fragment.js \
    tests/test_net_rss.js \
    tests/test_net_eyeballs.js \

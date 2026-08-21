@@ -73,6 +73,7 @@ typedef struct {
     int hooked;             /* a drain hook is armed */
     char *host, *path, *user, *pass;
     uint16_t port;
+    int port_i;             /* pre-cast option value; validated before use */
     int db;
     size_t maxbulk;
     int maxpending;
@@ -908,19 +909,25 @@ static int args_build(JSContext *ctx, redis_args_t *a, int argc,
     }
     for (i = 0; i < argc; i++) {
         size_t off = 0, blen = 0, bpe = 0;
-        JSValue ab = JS_GetArrayBufferView(ctx, argv[i], &off, &blen, &bpe);
-        if (!JS_IsException(ab)) {
-            size_t total = 0;
-            uint8_t *base = JS_GetArrayBuffer(ctx, &total, ab);
-            if (!base) { JS_FreeValue(ctx, ab); args_free(ctx, a); return -1; }
-            a->keep[a->nkeep++] = ab;
-            a->argv[i] = (const char *)(base + off);
-            a->lens[i] = blen;
-            a->is_cstr[i] = 0;
-            a->n = i + 1;
-            continue;
+        /* MEASURED: this probe ran on EVERY argument and JS_GetArrayBufferView
+         * refuses a string by THROWING -- the discarded TypeError builds a
+         * backtrace, which sampled at ~60% of a pipelined workload. Only
+         * objects can be byte views, so only objects pay for the probe. */
+        if (JS_IsObject(argv[i])) {
+            JSValue ab = JS_GetArrayBufferView(ctx, argv[i], &off, &blen, &bpe);
+            if (!JS_IsException(ab)) {
+                size_t total = 0;
+                uint8_t *base = JS_GetArrayBuffer(ctx, &total, ab);
+                if (!base) { JS_FreeValue(ctx, ab); args_free(ctx, a); return -1; }
+                a->keep[a->nkeep++] = ab;
+                a->argv[i] = (const char *)(base + off);
+                a->lens[i] = blen;
+                a->is_cstr[i] = 0;
+                a->n = i + 1;
+                continue;
+            }
+            JS_FreeValue(ctx, JS_GetException(ctx));
         }
-        JS_FreeValue(ctx, JS_GetException(ctx));
         {
             size_t l = 0;
             const char *s = JS_ToCStringLen(ctx, &l, argv[i]);
@@ -1301,7 +1308,10 @@ static void dyn_redis_dispose(void *native)
     }
     JS_FreeValue(r->ctx, r->h_push);
     JS_FreeValue(r->ctx, r->h_error);
-    free(r->host); free(r->path); free(r->user); free(r->pass);
+    free(r->host); free(r->path); free(r->user);
+    /* The password is its OWN allocation: clear the bytes before the free, or
+     * they stay in the heap after dispose. Same rule as dyn_pg_dispose. */
+    if (r->pass) { memset(r->pass, 0, strlen(r->pass)); free(r->pass); }
     free(r->rbuf); free(r->obuf);
     free(r);
 }
@@ -1373,7 +1383,11 @@ static JSValue dyn_redis_ctor(JSContext *ctx, JSValueConst new_target,
         r->path = opt_str(ctx, opt, "path");
         r->user = opt_str(ctx, opt, "username");
         r->pass = opt_str(ctx, opt, "password");
-        r->port = (uint16_t)opt_int(ctx, opt, "port", 6379);
+        /* Validate in int BEFORE the cast: (uint16_t) would wrap a negative
+         * port into the valid range and connect somewhere unexpected. */
+        r->port_i = opt_int(ctx, opt, "port", 6379);
+        if (r->port_i >= 0 && r->port_i <= 65535)
+            r->port = (uint16_t)r->port_i;
         r->db = opt_int(ctx, opt, "db", 0);
         r->binary = opt_bool(ctx, opt, "binary");
         r->bigint = opt_bool(ctx, opt, "bigint");
@@ -1389,7 +1403,7 @@ static JSValue dyn_redis_ctor(JSContext *ctx, JSValueConst new_target,
             free(r->host); free(r->path); free(r->user); free(r->pass); free(r);
             return JS_ThrowRangeError(ctx, "Redis: db must be 0..255");
         }
-        if (r->port == 0 && !r->path) {
+        if ((r->port_i < 1 || r->port_i > 65535) && !r->path) {
             free(r->host); free(r->path); free(r->user); free(r->pass); free(r);
             return JS_ThrowRangeError(ctx, "Redis: port must be 1..65535");
         }

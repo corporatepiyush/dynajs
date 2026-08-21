@@ -1545,6 +1545,14 @@ A PostgreSQL client (wire protocol 3.0) running on the JS thread. `tls: true` is
 
 Runs one statement. Without a params array it uses the simple protocol (several semicolon-separated statements allowed). At most 65535 parameters; a statement taking N parameters must be given exactly N. A parameter that is an object is refused (pass a `Uint8Array`/`ArrayBuffer` for `bytea`, `JSON.stringify(v)` for JSON, or an ISO string for a timestamp), because a silently stringified object stores cleanly and wrongly.
 
+The promise resolves to `{ rows, fields, command, rowCount }`: `rows` is one object per row (a column named `__proto__` is a key like any other), `fields` describes each result column, `command` is the server's completion tag (`"SELECT 1"`, `"INSERT 0 3"`), and `rowCount` is the number of rows returned, or — when the statement returns none — the affected-row count from the tag. An `ErrorResponse` rejects with `code` (the SQLSTATE), `severity`, `message` and, where the server sent them, `detail`, `hint`, `position`, `schema`, `table`, `column` and `constraint`.
+
+**`pg.pipeline(statements) -> Promise<Array>`**
+
+- `statements` *(array)* — an array of `[sql]` or `[sql, params]`; at least one, at most 65535.
+
+One round trip for the whole batch: every statement's Parse/Bind/Describe/Execute goes out together with a single Sync at the tail. Resolves to one result per statement, in order; a statement that fails leaves an `Error` in its slot, and the statements after it are each rejected with an error naming them as skipped — the server answers nothing past an `ErrorResponse` until the Sync. The batch counts each member against `maxPending`.
+
 **`pg.cancel()`**
 
 Asks the server to cancel the running query. It goes on a fresh connection (the busy one is not reading it), and the server sends no reply by design.
@@ -1601,17 +1609,13 @@ A SQLite database handle. Not a network client at all — SQLite is a disk libra
 
 **`db.query(sql, params?) -> object[]`**
 
-- `sql` *(string)* — the statement.
-- `params` *(array)* — bound parameters.
-
-Runs a statement and returns one object per result row, keyed by column name.
+Runs exactly one statement and returns one plain object per row; text carrying a second statement (beyond trailing `;` and whitespace) is refused rather than answered with rows whose shape changes partway through. A statement taking N parameters must be given exactly N — an unbound parameter turns a WHERE into a no-op, so a mismatch throws. BLOB columns come back as `Uint8Array`; integers past 2^53 stay text unless `bigint` is set; every other object parameter is refused rather than stringified.
 
 **`db.exec(sql, params?) -> number`**
 
-- `sql` *(string)* — the statement.
-- `params` *(array)* — bound parameters.
+Like `query`, but runs EVERY semicolon-separated statement and returns the total changed rows; only the first may take parameters, and a later statement declaring any is refused. Repeated single-statement text reuses a prepared-statement cache (reset between uses), so parse+plan are paid once per distinct statement, not once per call.
 
-Runs a statement without result rows; returns the number of rows changed.
+On a `readonly` handle SQLite's authorizer denies `ATTACH`, which would otherwise open a second database file writable and write through it.
 
 **`db.lastInsertRowId`**
 
