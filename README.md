@@ -207,12 +207,19 @@ server.listen();
 ### Cryptography & X.509
 
 ```js
-import { RSA, ECDSA, X509, Bcrypt } from "dyna:crypto";
+import { Bcrypt } from "dyna:crypto";
 
-// Password hashing
+// Password hashing (shipped in every build)
 const hash = Bcrypt.hash("my_secure_password", 10);
 const valid = Bcrypt.verify("my_secure_password", hash);
 console.log("Bcrypt valid:", valid);
+```
+
+RSA/ECDSA/X.509 exist only in `CONFIG_TLS=y` builds:
+
+<!-- check:skip -->
+```js
+import { RSA, X509 } from "dyna:crypto";
 
 // Key generation and self-signed X.509 certificate
 const keypair = RSA.generate(2048);

@@ -137,7 +137,7 @@ import { pid } from "dyna:sys";
 import * as std from "std";
 const f = std.open("${T}/srv.pid", "w"); f.puts(String(pid())); f.close();
 const app = new App({ port: ${SPORT}, idleTimeoutMs: 5000 });
-app.rpc("/rpc", { add: ([a, b]) => a + b, echo: (a) => a });
+app.rpc("/rpc", { add: (a, b) => a + b, echo: (a) => a });
 app.static("/s", new Path("${T}/static"));
 app.start();
 `);
@@ -150,9 +150,9 @@ const f = std.open("${T}/up.pid", "w"); f.puts(String(pid())); f.close();
 const app = new App({ port: ${UPORT}, idleTimeoutMs: 5000 });
 /* Registered at BOTH paths: whether app.proxy() strips its prefix before
    forwarding is the behaviour under test, not an assumption to bake in. */
-app.rpc("/rpc", { add: ([a, b]) => a + b });
-app.rpc("/", { add: ([a, b]) => a + b });
-app.rpc("/up/rpc", { add: ([a, b]) => a + b });
+app.rpc("/rpc", { add: (a, b) => a + b });
+app.rpc("/", { add: (a, b) => a + b });
+app.rpc("/up/rpc", { add: (a, b) => a + b });
 app.start();
 `);
 write(`${T}/prox.js`, `import { App } from "dyna:net";

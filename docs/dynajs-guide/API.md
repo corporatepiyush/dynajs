@@ -416,12 +416,13 @@ console.log(c.closed);                                                     // tr
 
 ### HTTPServer
 
-**`new HTTPServer({ port?, host?, workers?, backlog?, routes? })`**
+**`new HTTPServer({ port?, host?, workers?, backlog?, requestTimeoutMs?, routes? })`**
 
 - `port` *(number, optional)* — default 0; binds an ephemeral port, resolved into `.port` after construction.
 - `host` *(string, optional)* — default all interfaces.
 - `workers` *(number, optional)* — default the process-wide `--io-threads` setting, clamped to 1–64.
 - `backlog` *(number, optional)* — default the system `SOMAXCONN`.
+- `requestTimeoutMs` *(number, optional)* — default 30000; an absolute deadline for completing one request (head + body). The per-socket receive timeout resets on every byte, so without this a dribbling peer holds a worker forever. 0 disables.
 - `routes` *(object, optional)* — maps a path to a response; a route value is a string (served as `text/plain`) or `{ status, contentType, body }`.
 
 Constructs a multi-threaded HTTP/1.1 server serving static routes, one worker thread per connection from a pool. It binds in the constructor, so construction fails if the port is taken.
@@ -497,10 +498,12 @@ console.log(s.closed);                     // true
 
 ### App
 
-**`new App({ port?, idleTimeoutMs?, compress?, metrics? })`**
+**`new App({ port?, host?, idleTimeoutMs?, maxConns?, compress?, metrics? })`**
 
 - `port` *(number, optional)* — default 0.
+- `host` *(string, optional)* — default all interfaces; an IPv6 literal (`"::"`) binds dual-stack and also serves IPv4-mapped peers.
 - `idleTimeoutMs` *(number, optional)* — default 30000; 0 disables the idle sweep.
+- `maxConns` *(number, optional)* — default 8192; connections beyond the cap are accepted and closed immediately. 0 unbounded.
 - `compress` *(boolean, optional)* — default true; gzip only for clients that send `Accept-Encoding`.
 - `metrics` *(boolean, optional)* — default false.
 
@@ -1542,6 +1545,14 @@ A PostgreSQL client (wire protocol 3.0) running on the JS thread. `tls: true` is
 
 Runs one statement. Without a params array it uses the simple protocol (several semicolon-separated statements allowed). At most 65535 parameters; a statement taking N parameters must be given exactly N. A parameter that is an object is refused (pass a `Uint8Array`/`ArrayBuffer` for `bytea`, `JSON.stringify(v)` for JSON, or an ISO string for a timestamp), because a silently stringified object stores cleanly and wrongly.
 
+The promise resolves to `{ rows, fields, command, rowCount }`: `rows` is one object per row (a column named `__proto__` is a key like any other), `fields` describes each result column, `command` is the server's completion tag (`"SELECT 1"`, `"INSERT 0 3"`), and `rowCount` is the number of rows returned, or — when the statement returns none — the affected-row count from the tag. An `ErrorResponse` rejects with `code` (the SQLSTATE), `severity`, `message` and, where the server sent them, `detail`, `hint`, `position`, `schema`, `table`, `column` and `constraint`.
+
+**`pg.pipeline(statements) -> Promise<Array>`**
+
+- `statements` *(array)* — an array of `[sql]` or `[sql, params]`; at least one, at most 65535.
+
+One round trip for the whole batch: every statement's Parse/Bind/Describe/Execute goes out together with a single Sync at the tail. Resolves to one result per statement, in order; a statement that fails leaves an `Error` in its slot, and the statements after it are each rejected with an error naming them as skipped — the server answers nothing past an `ErrorResponse` until the Sync. The batch counts each member against `maxPending`.
+
 **`pg.cancel()`**
 
 Asks the server to cancel the running query. It goes on a fresh connection (the busy one is not reading it), and the server sends no reply by design.
@@ -1598,17 +1609,13 @@ A SQLite database handle. Not a network client at all — SQLite is a disk libra
 
 **`db.query(sql, params?) -> object[]`**
 
-- `sql` *(string)* — the statement.
-- `params` *(array)* — bound parameters.
-
-Runs a statement and returns one object per result row, keyed by column name.
+Runs exactly one statement and returns one plain object per row; text carrying a second statement (beyond trailing `;` and whitespace) is refused rather than answered with rows whose shape changes partway through. A statement taking N parameters must be given exactly N — an unbound parameter turns a WHERE into a no-op, so a mismatch throws. BLOB columns come back as `Uint8Array`; integers past 2^53 stay text unless `bigint` is set; every other object parameter is refused rather than stringified.
 
 **`db.exec(sql, params?) -> number`**
 
-- `sql` *(string)* — the statement.
-- `params` *(array)* — bound parameters.
+Like `query`, but runs EVERY semicolon-separated statement and returns the total changed rows; only the first may take parameters, and a later statement declaring any is refused. Repeated single-statement text reuses a prepared-statement cache (reset between uses), so parse+plan are paid once per distinct statement, not once per call.
 
-Runs a statement without result rows; returns the number of rows changed.
+On a `readonly` handle SQLite's authorizer denies `ATTACH`, which would otherwise open a second database file writable and write through it.
 
 **`db.lastInsertRowId`**
 
@@ -2879,6 +2886,7 @@ Returns a PKCS#1 v1.5 signature with the given digest.
 
 Returns true when the signature checks against the public key.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { RSA } from "dyna:crypto";
 const key = RSA.generate(2048);
@@ -2902,6 +2910,7 @@ Returns `{ subject, issuer, serialNumber, version, notBefore, notAfter, fingerpr
 
 Returns a v3 self-signed certificate signed with SHA-256, as a PEM string.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { RSA, X509 } from "dyna:crypto";
 const key = RSA.generate(2048);
@@ -2941,6 +2950,7 @@ Returns a raw `R||S` signature (64 bytes for P-256, each half padded to the coor
 
 Returns true for a valid raw or DER signature. A raw signature of the wrong length is a plain false.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { ECDSA } from "dyna:crypto";
 const key = ECDSA.generate("P-256");
@@ -2963,6 +2973,7 @@ Returns an EC key pair as PEM strings.
 
 Returns the raw X9.63 shared secret. A small-order peer point makes derivation fail and is refused; an all-zero secret is not a secret.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { ECDH } from "dyna:crypto";
 const alice = ECDH.generate("P-256"), bob = ECDH.generate("P-256");
@@ -2992,6 +3003,7 @@ Returns a 64-byte signature over the whole message. Ed25519 is one-shot by const
 
 Returns true when the signature is valid. A wrong-size signature returns false, indistinguishable from any other forgery.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { Ed25519Generate, Ed25519Sign, Ed25519Verify } from "dyna:crypto";
 const k = Ed25519Generate();
@@ -3012,6 +3024,7 @@ No parameters. Returns raw 32-byte keys for X25519 (curve25519) key agreement.
 
 Returns the 32-byte shared secret. A small-order peer point is refused; OpenSSL reports the derivation as a failure rather than handing back an all-zero secret.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { X25519Generate, X25519Derive } from "dyna:crypto";
 const a = X25519Generate(), b = X25519Generate();
@@ -3048,6 +3061,7 @@ Returns the plaintext. A forged tag (or a wrong nonce/aad) throws `authenticatio
 
 No parameters. Zero the key material in native memory; `closed` is true afterwards. Use `for`-with-`finally` or `using` for the key's lifetime.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { AESGCM } from "dyna:crypto";
 const key = new Uint8Array(32).fill(7);
@@ -3072,6 +3086,7 @@ try {
 
 `seal`, `open`, `close`, `dispose` and `closed` behave exactly as `AESGCM`'s, with the same 12-byte nonce, 16-byte tag, and throw-on-forgery rule.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { ChaCha20Poly1305 } from "dyna:crypto";
 const chacha = new ChaCha20Poly1305(new Uint8Array(32).fill(9));
@@ -3196,6 +3211,7 @@ print("pbkdf2:", key.length);
 
 Returns the RFC 7914 derived key. The memory product `128*N*r` is capped at 1 GiB.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { Scrypt } from "dyna:crypto";
 const dk = Scrypt("password", "salt");
@@ -4600,12 +4616,87 @@ Returns the full href.
 
 Returns the full href.
 
+**`URL.searchParams -> URLSearchParams`**
+
+Returns a fresh URLSearchParams BOUND to this URL: mutating it changes `url.search` and `url.href`.
+
 ```js
 import { URL } from "dyna:url";
 
 const u = new URL("https://user:pass@example.com:8080/p/a?q=1#frag");
 const joined = new URL("/p", "https://base.example:99/x");
 const host = u.hostname;
+u.searchParams.set("q", "2");
+```
+
+### URLSearchParams
+
+The WHATWG query list. A BOUND instance (from `url.searchParams`) writes through to the URL's query slot, so a mutation changes `url.search` and `url.href`; a STANDALONE instance owns its query. A searchParams created from another URLSearchParams copies its list. `entries()`/`keys()`/`values()` return ARRAYS rather than iterator objects — spread, `for..of`, `Array.from` and destructuring work, `it.next()` does not.
+
+**`new URLSearchParams([init]) -> URLSearchParams`**
+
+- `init` *(string | URLSearchParams | Array<[string, string]> | Record<string, string>)* — optional; the query list. A leading `?` on a string is not part of the list.
+
+**`URLSearchParams.size -> number`**
+
+The number of name/value pairs.
+
+**`URLSearchParams.append(name, value)`**
+
+Appends a pair; a name that already exists keeps its other values.
+
+**`URLSearchParams.delete(name)`**
+
+Removes every pair with that name.
+
+**`URLSearchParams.get(name) -> string | null`**
+
+The first value for the name, or `null` when absent.
+
+**`URLSearchParams.getAll(name) -> string[]`**
+
+Every value for the name.
+
+**`URLSearchParams.has(name) -> boolean`**
+
+Whether the name has at least one value.
+
+**`URLSearchParams.set(name, value)`**
+
+Replaces every pair with that name with a single pair.
+
+**`URLSearchParams.sort()`**
+
+Orders pairs by the DECODED key's byte order, in place.
+
+**`URLSearchParams.toString() -> string`**
+
+The `name=value&...` form, re-encoded.
+
+**`URLSearchParams.forEach(callback)`**
+
+- `callback` *(function)* — called as `(value, key, params)` per pair, in order.
+
+**`URLSearchParams.keys() -> string[]`**
+
+The names in order.
+
+**`URLSearchParams.values() -> string[]`**
+
+The values in order.
+
+**`URLSearchParams.entries() -> Array<[string, string]>`**
+
+The pairs in order.
+
+```js
+import { URLSearchParams } from "dyna:url";
+
+const p = new URLSearchParams("a=1&b=x%20y&a=2");
+p.size;              // 3
+p.getAll("a");       // ["1", "2"]
+p.set("b", "z");
+p.toString();        // "a=1&a=2&b=z"
 ```
 
 ### IDNA & Punycode

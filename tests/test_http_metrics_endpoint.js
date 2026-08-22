@@ -30,7 +30,7 @@ const rpc = (n) => JSON.stringify({ jsonrpc: "2.0", method: "echo", params: [n],
 {
     Metrics.reset();
     const app = new App({ port: 0, idleTimeoutMs: 5000, metrics: true });
-    app.rpc("/rpc", { echo: ([n]) => n });
+    app.rpc("/rpc", { echo: (n) => n });
     app.start();
     const c = new HTTPClient();
     try {
@@ -76,7 +76,7 @@ const rpc = (n) => JSON.stringify({ jsonrpc: "2.0", method: "echo", params: [n],
 /* ---- opt-OUT by default: no metrics:true, no endpoint ---- */
 {
     const app = new App({ port: 0, idleTimeoutMs: 5000 });
-    app.rpc("/rpc", { echo: ([n]) => n });
+    app.rpc("/rpc", { echo: (n) => n });
     app.start();
     const c = new HTTPClient();
     try {
@@ -89,7 +89,7 @@ const rpc = (n) => JSON.stringify({ jsonrpc: "2.0", method: "echo", params: [n],
 /* ---- registration beats convention: a user route owns the path ---- */
 {
     const app = new App({ port: 0, idleTimeoutMs: 5000, metrics: true });
-    app.rpc("/healthz", { echo: ([n]) => n });   /* squats on the built-in */
+    app.rpc("/healthz", { echo: (n) => n });   /* squats on the built-in */
     app.start();
     const c = new HTTPClient();
     try {
@@ -106,7 +106,7 @@ const rpc = (n) => JSON.stringify({ jsonrpc: "2.0", method: "echo", params: [n],
 {
     Metrics.reset();
     const app = new App({ port: 0, idleTimeoutMs: 5000 });
-    app.rpc("/rpc", { echo: ([n]) => n });
+    app.rpc("/rpc", { echo: (n) => n });
     app.start();
     const c = new HTTPClient();
     try {

@@ -45,6 +45,18 @@ STAMP=.obj/.dev_cfg
 TREES=${DEV_TREES:-/tmp/build$$}
 export DEV_TREES="$TREES"
 
+# The TLS stack was compiled by NO gate: the native build does not set
+# CONFIG_TLS, so dyna-tls.c, HTTPS and the AEAD ciphers were never built or
+# run while asan/ubsan reported ok. Detect OpenSSL >= 3.0 the same way the
+# Makefile's CONFIG_TLS block does and gate WITH it when present.
+OPENSSL_PC="$(brew --prefix openssl@3 2>/dev/null || brew --prefix openssl 2>/dev/null)/lib/pkgconfig"
+GATE_TLS=""
+PKG_CONFIG_PATH="$OPENSSL_PC:${PKG_CONFIG_PATH:-}" \
+  pkg-config --exists 'openssl >= 3.0' 2>/dev/null && GATE_TLS="y"
+# Every native stage carries the same TLS decision as the tree it runs in.
+NATIVE_CFG="CONFIG_NATIVE_MODULES=y"
+[ "$GATE_TLS" = y ] && NATIVE_CFG="$NATIVE_CFG CONFIG_TLS=y"
+
 die(){ echo "FAIL: $*" >&2; exit 1; }
 have(){ command -v "$1" >/dev/null 2>&1; }
 need_file(){ [ -f "$1" ] || die "no such file: $1"; }
@@ -87,8 +99,12 @@ _clone_probe(){
 }
 
 # _tree NAME: a pristine build tree at $TREES/NAME. test262/ is 265 MB and
-# only the t262 stage reads it; .obj/ and .git/ are rebuilt or unused. Copy on
-# write, so a tree costs ~0.35 s of metadata rather than 69 MB of copying.
+# the t262 stage reads only the main-tree copy, but api-inventory's standard
+# name classification reads it too: a clone WITHOUT it marks every ES builtin
+# "non-standard" and check-types reports 214 phantom drifts. Symlink it in
+# (read-only usage) rather than copying 265 MB per tree. .obj/ and .git/ are
+# rebuilt or unused. Copy on write, so a tree costs ~0.35 s of metadata
+# rather than 69 MB of copying.
 _tree(){
   local d="$TREES/$1" e b
   rm -rf "$d" && mkdir -p "$d" || return 1
@@ -98,6 +114,7 @@ _tree(){
     case "$b" in test262|.obj|.git) continue ;; esac
     $CLONE "$e" "$d/" || return 1
   done
+  ln -s "$ROOT/test262" "$d/test262" || return 1
   # The clone carries the last build's ./dynajs and ./libdynajs.a. Ask the
   # Makefile what an output is rather than listing them here, where they rot.
   ( cd "$d" && make clean >/dev/null 2>&1 )
@@ -343,6 +360,9 @@ _stage(){
             make $cfg test-api || return 1
             make $cfg test-security || return 1 ;;
     tsan)   for t in "$@"; do env $env_kv ./dynajs "$t" </dev/null >/dev/null || return 1; done ;;
+    tls)    [ -z "$env_kv" ] || export $env_kv
+            make $cfg test-x509 test-tls-conn test-tls test-crypto-aead \
+              || return 1 ;;
     *)      echo "FAIL: unknown stage kind $kind"; return 1 ;;
   esac
 }
@@ -475,13 +495,15 @@ case "$cmd" in
             # The NATIVE surface -- dyna-aio, dyna-evloop, the whole dyna:net
             # stack, http, structures, dataframe, ml -- is behind
             # CONFIG_NATIVE_MODULES, so a default build compiles NONE of it: 37
-            # objects, not one of them a module.
+            # objects, not one of them a module. When OpenSSL >= 3.0 is present
+            # the native builds also enable CONFIG_TLS, or the TLS stack, HTTPS
+            # and the AEAD ciphers are compiled by no gate at all.
             _queue  "build: asan (native modules)"  asan-nat \
-                    "CONFIG_ASAN=y CONFIG_NATIVE_MODULES=y"  build
+                    "CONFIG_ASAN=y ${NATIVE_CFG}"  build
             _queue  "build: ubsan (native modules)" ubsan-nat \
-                    "CONFIG_UBSAN=y CONFIG_NATIVE_MODULES=y" build
+                    "CONFIG_UBSAN=y ${NATIVE_CFG}" build
             _queue  "build: tsan (native modules)"  tsan \
-                    "CONFIG_TSAN=y CONFIG_NATIVE_MODULES=y" build
+                    "CONFIG_TSAN=y ${NATIVE_CFG}" build
             _queue  "fuzz targets link" fuzz "" fuzz
             _build "" || die "build"; echo "build: ok"
             _pwait || exit 1
@@ -499,16 +521,27 @@ case "$cmd" in
             fi
             make test >/dev/null 2>&1 || die "make test"; echo "make test: ok"
             _serial "asan (native modules)"  asan-nat \
-                    "CONFIG_ASAN=y CONFIG_NATIVE_MODULES=y"  native || rc=1
+                    "${NATIVE_CFG}"  native || rc=1
             _serial "ubsan (native modules)" ubsan-nat \
-                    "CONFIG_UBSAN=y CONFIG_NATIVE_MODULES=y" native || rc=1
+                    "${NATIVE_CFG}" native || rc=1
             # ThreadSanitizer over the code that actually spawns threads. The
             # HTTP acceptor/worker path has three pthread_create sites and was
             # under TSan in NO target. Proved live by injecting an
             # unsynchronised counter into dyn_http_worker_main.
             _serial "tsan (threaded http)" tsan \
-                    "CONFIG_TSAN=y CONFIG_NATIVE_MODULES=y" tsan \
+                    "CONFIG_TSAN=y ${NATIVE_CFG}" tsan \
                     tests/test_http.js tests/test_http_keepalive.js || rc=1
+            # The TLS-requiring tests are NOT in NATIVE_TESTS (that build has
+            # no TLS), so they run here only when OpenSSL was detected. Without
+            # them the TLS seam is proven by no gate.
+            if [ "$GATE_TLS" = y ]; then
+              _serial "tls (native, asan)" asan-nat \
+                      "CONFIG_ASAN=y ${NATIVE_CFG}" tls || rc=1
+              _serial "tls (native, ubsan)" ubsan-nat \
+                      "CONFIG_UBSAN=y ${NATIVE_CFG}" tls || rc=1
+            else
+              echo "tls (native): SKIPPED -- no OpenSSL >= 3.0 (brew install openssl@3)"
+            fi
 
             _pwait || rc=1
             [ "$rc" = 0 ] || exit 1

@@ -1438,6 +1438,7 @@ static JSValue js_string_toLowerCase(JSContext *ctx, JSValueConst this_val,
                     d8[k] = ch - ((uint8_t)(ch - 'a') < 26 ? 0x20 : 0);
                 }
             }
+            d8[n] = '\0';
             JS_FreeValue(ctx, val);
             return JS_MKPTR(JS_TAG_STRING, r);
         }

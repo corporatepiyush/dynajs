@@ -7,7 +7,7 @@
  *
  * Run: dynajs (built with CONFIG_NATIVE_MODULES=y) tests/test_url.js
  */
-import { URL, formEncode, formDecode, encodeURIComponentStrict } from "dyna:url";
+import { URL, URLSearchParams, formEncode, formDecode, encodeURIComponentStrict } from "dyna:url";
 
 let n = 0, fails = 0;
 function assert(c, msg) { n++; if (!c) { fails++; print("FAIL: " + msg); } }
@@ -215,6 +215,34 @@ assert(encodeURIComponent("!'()~") === "!'()~",
        "fault injection: the builtin really does leave them alone");
 eq(encodeURIComponentStrict("a b"), "a+b", "strict encoding uses + for space");
 throws(() => encodeURIComponentStrict(42), "strict encoding refuses a non-string");
+
+/* URLSearchParams double-free regression: array pair with nested array ToString.
+ * The 200-round fuzzer hit heap-use-after-free at round 40 with this shape:
+ * outer = [[inner2, "\\", "\0"], {toString:fn}, {0:128,...}], inner2 is itself
+ * an array. dyn_sp_enc_pair freed the inner2 dup twice (once inside enc_pair
+ * via ToString, once again in the caller). The free made inner2's wrapper-slot
+ * stale, and the finalizer's use-after-free crashed at list_del. */
+{
+    const inner2 = ["<!--[if<img src=x onerror=javascript:alert(205)//]> -->", -0.5, "`\"'><img src=xxx:x \\x22onerror=javascript:alert(119)>"];
+    const wrapper = [inner2, "\\", "\u0000"];
+    const outer = [wrapper, {toString: () => "x"}, {"0":128,"1":65534,"2":65535,"3":1,"4":65534,"5":65535}];
+    for (let i = 0; i < 100; i++) {
+        const a = [outer, {}, function(){}];
+        const sp = new URLSearchParams(...a);
+        assert(typeof sp.toString() === "string", "URLSearchParams spread should not crash");
+        const sp2 = new URLSearchParams(outer);
+        assert(typeof sp2.toString() === "string", "direct outer");
+    }
+    for (let i = 0; i < 200; i++) {
+        const sp = new URLSearchParams({a:"1", b:"2"});
+        assert(sp.get("a") === "1", "plain record");
+    }
+    // also stress the mixed ToString path
+    {
+        const sp = new URLSearchParams([ [1,2], [true, null], [{toString:()=>"k"},"v"] ]);
+        assert(typeof sp.toString() === "string", "mixed ToString");
+    }
+}
 
 if (fails) {
     print("test_url: " + fails + " FAILED of " + n + " assertions");

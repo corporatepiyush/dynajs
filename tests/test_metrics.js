@@ -36,6 +36,30 @@ Metrics.gauge("queue_depth", 7);
 eq(line(Metrics.scrape(), "queue_depth "), "queue_depth 7", "a gauge is the last value");
 ok(Metrics.scrape().indexOf("queue_depth{}") < 0, "no empty braces without labels");
 
+/* --- non-finite gauges emit the exposition tokens, never %.17g's inf/nan ---
+   The Prometheus grammar accepts +Inf/-Inf/NaN only; emitting `inf` or `nan`
+   makes a collector drop the whole scrape. */
+Metrics.reset();
+Metrics.gauge("g_nan", NaN);
+Metrics.gauge("g_pinf", Infinity);
+Metrics.gauge("g_ninf", -Infinity);
+{
+    const s = Metrics.scrape();
+    eq(line(s, "g_nan "), "g_nan NaN", "NaN emits the NaN token");
+    eq(line(s, "g_pinf "), "g_pinf +Inf", "+Inf emits the +Inf token");
+    eq(line(s, "g_ninf "), "g_ninf -Inf", "-Inf emits the -Inf token");
+    /* the VALUE token must be the exact exposition spelling: any lowercase
+       inf/nan at a value position makes a collector drop the whole scrape
+       (metric NAMES legitimately contain "inf"/"nan", so scan value cols) */
+    ok(s.split("\n").filter((l) => l && !l.startsWith("#")).every((l) => {
+        const v = l.slice(l.lastIndexOf(" ") + 1);
+        return !/^[+-]?inf$/.test(v) && !/^[+-]?nan$/.test(v);
+    }), "no bare inf/nan spelling leaks");
+}
+Metrics.reset();
+Metrics.gauge("g_ok", 1.5);
+eq(line(Metrics.scrape(), "g_ok "), "g_ok 1.5", "finite values still format as before");
+
 /* --- histogram buckets are CUMULATIVE, which is what the format means --- */
 Metrics.reset();
 for (const v of [0.003, 0.07, 2.5]) Metrics.histogram("lat", v);

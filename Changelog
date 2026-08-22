@@ -1,3 +1,30 @@
+2026-08-21:
+
+- HTTP hardening pass (dyna:net client, App, HTTPServer, HTTPServerAsync):
+  header/method CRLF injection refused; hostile status lines clamp instead
+  of overflowing; WS opening handshake enforces RFC 6455 4.2.1; route
+  status/contentType validated at registration; prefix routes end at a
+  path segment; static files served from an O_NOFOLLOW fd with HEAD and
+  single-range (206/416) support; upload holds its handler by value;
+  async RPC settles through a promise capability; JSON-RPC error bodies
+  are escaped and bounded; notifications (no id) get no response.
+- Connection lifetime: App honors Connection: close and the HTTP/1.0
+  default-close, closing on the response's own send completion; requests
+  pipelined behind a close go unanswered. Client rejects responses with
+  both Transfer-Encoding and Content-Length.
+- Resource bounds: App maxConns (default 8192); over-cap declared bodies
+  answer 413; HTTPServerAsync answers 431 at the header cap; ws/sse/ws-
+  client outbound queues bounded at 4 MB via dyn_aio_queued(); thread-pool
+  server gains an absolute requestTimeoutMs deadline (default 30s);
+  accept-error storms pause instead of spinning; io_uring SQE exhaustion
+  harvests completions instead of stalling connections.
+- IO: one writev per thread-pool response (+7-8% req/s vs prior tree at
+  c=64/256); client threads the chunked framing flag instead of rescanning
+  headers; connect poll timeout clamped; IPv6 literals bind dual-stack
+  (App grows a host option).
+- Tests: tests/test_http_hardening.js (94 assertions) added to the native
+  suite; pentest suite updated for notification semantics.
+
 2026-06-04:
 
 - added custom malloc for small blocks (11% faster on bench-v8)

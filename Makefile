@@ -580,7 +580,7 @@ endif
 	test-io-atomic test-dns-codec test-resp-codec test-scram test-timer \
 	test-regexp-prefilter test-dtoa-subnormal test-simd-bitmap test-ds-core \
 	test-crc32c-hw test-crc32c-race test-sha256-hw \
-	test-tls test-tls-conn test-tls-server test-http-tls \
+	test-tls test-tls-conn test-x509 test-tls-server test-http-tls \
 	test-crypto-aead test-crypto-curve test-jwt-asym \
 	test-static-traversal test-html-pentest test-bytes-accessors \
 	test-crawl test-fetcher test-connect-resolve \
@@ -995,6 +995,11 @@ test-crypto-curve: dynajs$(EXE)
 test-tls-conn: dynajs$(EXE)
 	@./dynajs$(EXE) tests/test_tls_conn.js
 
+# X509/RSA/ECDSA exports are CONFIG_TLS=y only, so this test sits beside
+# test-tls-conn instead of in NATIVE_TESTS: the gate's native build has no TLS.
+test-x509: dynajs$(EXE)
+	@./dynajs$(EXE) tests/test_x509.js
+
 # Same reasoning for the LZ4 decoders: a raw block has no header to reject on,
 # so the bounds checks are the entire defence. Rebuilt from source every time.
 fuzz_lz4: src/fuzz/fuzz_lz4.c src/core/dyn-compress.c src/core/dyn-hash.c
@@ -1353,6 +1358,7 @@ NATIVE_TESTS=tests/test_algo_blackbox.js tests/test_http_security.js tests/test_
   tests/test_net_pentest.js tests/test_proxy.js tests/test_http_proxy.js tests/test_watch.js tests/test_html_text.js tests/test_xml_text.js tests/test_yaml_scalar.js tests/test_scrape_robots.js tests/test_crypto_otp.js tests/test_crypto_jwt.js tests/test_scrape_extract.js \
    tests/test_net_redis.js tests/test_net_pg.js tests/test_net_pg_stmt.js \
    tests/test_net_pg_binary.js \
+   tests/test_net_e2e.js \
    tests/test_net_fragment.js \
    tests/test_net_rss.js \
    tests/test_net_eyeballs.js \
@@ -1364,6 +1370,7 @@ NATIVE_TESTS=tests/test_algo_blackbox.js tests/test_http_security.js tests/test_
   tests/test_http_sse.js \
   tests/test_http_compress.js \
   tests/test_http_metrics_endpoint.js \
+  tests/test_http_hardening.js \
   tests/test_ws_client.js \
   tests/test_encoding.js \
   tests/test_file.js tests/test_file_handle.js tests/test_file_async.js \
@@ -1389,7 +1396,10 @@ NATIVE_TESTS=tests/test_algo_blackbox.js tests/test_http_security.js tests/test_
   tests/test_sys.js tests/test_text_kernels.js tests/test_text_simd.js \
   tests/test_time.js tests/test_rrule.js tests/test_utf16.js tests/test_uuid.js \
   tests/test_schema.js tests/test_crypto_standalone.js \
-  tests/test_fetch.js tests/test_x509.js
+  tests/test_fetch.js \
+  tests/test_fetch_body.js tests/test_module_interop.js \
+  tests/test_rpc_params.js tests/test_keepalive.js tests/test_url_host.js \
+  tests/test_module_surface.js tests/test_route_static.js tests/test_worker_native.js
 
 # NB: deliberately NOT dependent on dynajs$(EXE). Making it a prerequisite lets a
 # bare `make test-native` RELINK the binary with the default flags -- which drops
@@ -1802,7 +1812,7 @@ prepush:
 	 echo "[10/10] TLS & AEAD verification..."; \
 	 s0=$$(date +%s); \
 	 $(if $(PREPUSH_TLS), \
-	   $(MAKE) --no-print-directory CONFIG_NATIVE_MODULES=y CONFIG_TLS=y test-tls test-tls-conn test-crypto-aead || { echo "FAIL: TLS tests failed"; exit 1; }; \
+	   $(MAKE) --no-print-directory CONFIG_NATIVE_MODULES=y CONFIG_TLS=y test-tls test-tls-conn test-x509 test-crypto-aead || { echo "FAIL: TLS tests failed"; exit 1; }; \
 	   s1=$$(date +%s); echo "        TLS tests passed in $$((s1 - s0))s -- OK", \
 	   echo "        SKIPPED -- no OpenSSL >= 3.0"); \
 	 t1=$$(date +%s); \

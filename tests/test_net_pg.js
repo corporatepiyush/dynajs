@@ -129,6 +129,13 @@ function dataRow(vals) {
 
 let lastSql = null;
 function handle(type, body, srv, opts) {
+  /* A real server, having hit an ErrorResponse in the extended protocol,
+   * SKIPS everything up to the Sync. Model that, or the mock would answer
+   * statements no server would. */
+  if (srv.skipping) {
+    if (type === "S") { srv.skipping = false; return msg("Z", "I"); }
+    return null;
+  }
   if (type === "Q") {
     const sql = body.slice(0, body.length - 1);
     srv.queries.push({ kind: "simple", sql: sql });
@@ -159,7 +166,16 @@ function handle(type, body, srv, opts) {
     return msg("2", "");
   }
   if (type === "D") return msg("n", "");    /* Describe -> NoData by default */
-  if (type === "E") return reply(lastSql, srv.lastParams || [], opts, true);
+  if (type === "E") {
+    if (/^PIPEFAIL/.test(lastSql)) {
+      /* error + skip-to-Sync, like any real server past an ErrorResponse */
+      srv.skipping = true;
+      return msg("E", "S" + cstr("ERROR") + "V" + cstr("ERROR") +
+                      "C" + cstr("42601") + "M" + cstr("syntax error in pipe") +
+                      "\0");
+    }
+    return reply(lastSql, srv.lastParams || [], opts, true);
+  }
   if (type === "S") return msg("Z", "I");   /* Sync */
   if (type === "X") return null;            /* Terminate */
   return null;
@@ -293,6 +309,36 @@ rec("sevOnly", D.sev.query("SEVONLY"));
  * refuses multiple statements -- choosing by length is how a caller believes
  * they are parameterised and is not */
 rec("emptyParams", D.db.query("SELECT 1", []));
+
+/* ---- pipeline: K statements, one round trip ---- */
+const pipeSrv = makeBackend({});
+D.pipe2 = new PostgreSQL({ port: pipeSrv.port, host: "127.0.0.1", user: "u" });
+const pfSrv = makeBackend({});
+D.pf = new PostgreSQL({ port: pfSrv.port, host: "127.0.0.1", user: "u" });
+
+rec("pipe", D.pipe2.pipeline([
+  ["SELECT one"],
+  ["SELECT param", ["frompipe"]],
+  ["INSERT INTO t VALUES (1)"],
+  /* bytea through the batch: the ORACLE is the mock's Bind parser, same as
+   * the single-query bytea case -- both must encode identically */
+  ["SELECT param", [new Uint8Array([0xde, 0xad, 0x00, 0x01])]],
+]));
+/* issued while the batch is in flight: it must queue BEHIND the batch's
+ * members and settle after them -- the FIFO is the whole contract */
+rec("afterPipe", D.pipe2.query("SELECT one"));
+rec("pipefail", D.pf.pipeline([
+  ["SELECT one"],
+  ["PIPEFAIL"],
+  ["SELECT one"],
+]));
+let pipeEmptyErr = null;
+try { D.pf.pipeline([]); } catch (e) { pipeEmptyErr = String(e); }
+let pipeNotArrErr = null;
+try { D.pf.pipeline("nope"); } catch (e) { pipeNotArrErr = String(e); }
+let pgPortErr = null;
+try { new PostgreSQL({ port: -1, host: "127.0.0.1", user: "u" }); }
+catch (e) { pgPortErr = String(e); }
 
 D.dead = new PostgreSQL({ port: 1, host: "127.0.0.1", user: "u" });
 rec("dead", D.dead.query("SELECT 1"));
@@ -505,6 +551,55 @@ const t = setInterval(() => {
         "tls:true must be refused by name, got " + tlsErr);
   check(paramErr !== null && /must be an array/.test(paramErr),
         "non-array parameters must be refused, got " + paramErr);
+  check(pgPortErr !== null && /port must be 1\.\.65535/.test(pgPortErr),
+        "a negative port must be refused, not wrapped into range: " + pgPortErr);
+
+  /* 11. pipeline: one round trip for K statements */
+  {
+    const pr = val("pipe");
+    check(Array.isArray(pr) && pr.length === 4,
+          "pipeline resolves with one result PER statement, got " +
+          JSON.stringify(pr && pr.length));
+    check(pr && pr[0] && (pr[0].rows[0] || {}).one === 1,
+          "member 0 answered, got " + JSON.stringify(pr && pr[0]));
+    check(pr && pr[1] && (pr[1].rows[0] || {}).p === "frompipe",
+          "member 1's parameters travelled with IT, not another member: " +
+          JSON.stringify(pr && pr[1]));
+    check(pr && pr[2] && pr[2].command === "INSERT 0 3" &&
+          pr[2].rows.length === 0,
+          "member 2 is the INSERT's tag, got " + JSON.stringify(pr && pr[2]));
+    {
+      const pb = pipeSrv.queries.filter((q) => q.kind === "extended" &&
+          q.sql === "SELECT param" &&
+          /^\\x/.test(q.params[0] || ""));
+      check(pb.length === 1 && pb[0].params[0] === "\\xdead0001",
+            "bytea through a batch encodes as the same \\x literal the " +
+            "single-query path sends, got " +
+            JSON.stringify(pb.map((q) => q.params[0])));
+    }
+    const ap = val("afterPipe");
+    check(ap && (ap.rows[0] || {}).one === 1,
+          "the single query issued behind the batch gets its OWN answer, got " +
+          JSON.stringify(ap));
+    const pf = val("pipefail");
+    check(Array.isArray(pf) && pf.length === 3,
+          "the failed batch still settles all THREE slots, got " +
+          JSON.stringify(pf));
+    check(pf && pf[0] && (pf[0].rows[0] || {}).one === 1,
+          "the member BEFORE the error resolved normally");
+    check(pf && pf[1] instanceof Error && pf[1].code === "42601",
+          "the failing member leaves an Error in ITS slot, got " +
+          JSON.stringify(pf && String(pf[1])));
+    check(pf && pf[2] instanceof Error &&
+          /skipped this one/.test(String(pf[2].message || pf[2])),
+          "and the member AFTER the error is named as skipped (the server " +
+          "answers nothing past an ErrorResponse), got " +
+          JSON.stringify(pf && String(pf[2])));
+    check(pipeEmptyErr !== null && /at least one/.test(pipeEmptyErr),
+          "an empty pipeline must be refused, got " + pipeEmptyErr);
+    check(pipeNotArrErr !== null && /array/.test(pipeNotArrErr),
+          "a non-array pipeline argument must be refused, got " + pipeNotArrErr);
+  }
 
   setTimeout(() => {
     check(good.cancels.length === 1 && good.cancels[0].pid === 4242,
@@ -528,6 +623,7 @@ const t = setInterval(() => {
       noFinal.close(); twoSets.close(); shortRow.close();
       twoDesc.close(); twoTags.close();
       copyOut.close(); sevOnly.close();
+      pipeSrv.close(); pfSrv.close();
       if (fails === 0) print("test_net_pg: all " + n + " checks passed");
       else print("test_net_pg: " + fails + " FAILED of " + n);
     }, 80);

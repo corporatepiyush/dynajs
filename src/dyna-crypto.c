@@ -3986,8 +3986,8 @@ static JSValue dyn_x509_generate(JSContext *ctx, JSValueConst this_val, int argc
 
     ASN1_INTEGER_set(X509_get_serialNumber(x), 1);
     X509_set_version(x, 2); /* v3 */
-    X509_gmtime_adj(X509_get0_notBefore(x), 0);
-    X509_gmtime_adj(X509_get0_notAfter(x), (long)days * 86400L);
+    X509_gmtime_adj(X509_getm_notBefore(x), 0);
+    X509_gmtime_adj(X509_getm_notAfter(x), (long)days * 86400L);
     X509_set_pubkey(x, pkey);
 
     {

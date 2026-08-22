@@ -29,12 +29,114 @@
 #endif
 
 typedef struct {
+    char *sql;              /* the exact query text, its own copy */
+    size_t sqllen;
+    uint32_t hash;
+    sqlite3_stmt *st;       /* prepared once; reset between uses */
+    uint64_t lastuse;       /* LRU clock */
+} sql_cache_ent_t;
+
+typedef struct {
     JSContext *ctx;
     sqlite3 *db;
     int bigint;             /* 64-bit integers as BigInt rather than text */
+    /* Prepared-statement cache. MEASURED: sqlite3_prepare_v2 sampled at 79%
+     * of db.query() -- parse and plan dominate a small statement. A hit skips
+     * both: reset + rebind + step. Keyed by EXACT text, LRU-evicted. A cached
+     * statement is reset whenever it is not mid-use, so an error or a JS
+     * exception can never leak a half-stepped read transaction. */
+    sql_cache_ent_t *ents;
+    int nents, cap_ents;
+    int cache_max;          /* entries; 0 disables */
+    uint64_t use_clock;
 } dyn_sqlite_t;
 
 static JSClassID dyn_sqlite_class_id;
+
+#define SQL_CACHE_DEFAULT 32
+
+static uint32_t sql_hash(const char *s, size_t n)
+{
+    uint32_t h = 2166136261u;
+    size_t i;
+    for (i = 0; i < n; i++) h = (h ^ (uint8_t)s[i]) * 16777619u;
+    return h;
+}
+
+static sql_cache_ent_t *sql_cache_find(dyn_sqlite_t *s, const char *sql,
+                                       size_t n, uint32_t h)
+{
+    int i;
+    for (i = 0; i < s->nents; i++)
+        if (s->ents[i].hash == h && s->ents[i].sqllen == n &&
+            memcmp(s->ents[i].sql, sql, n) == 0) {
+            s->ents[i].lastuse = ++s->use_clock;
+            return &s->ents[i];
+        }
+    return NULL;
+}
+
+/* Insert a freshly prepared statement, taking ownership of it. The cache is
+ * a fixed-size working set: full means evict the LRU entry, not grow. */
+static void sql_cache_put(dyn_sqlite_t *s, const char *sql, size_t n,
+                          uint32_t h, sqlite3_stmt *st)
+{
+    sql_cache_ent_t *e;
+
+    if (s->cache_max <= 0 || n > (size_t)s->cache_max * 4096)
+        return;             /* disabled, or absurdly large key text */
+    if (s->nents >= s->cache_max) {
+        int i, victim = 0;
+        for (i = 1; i < s->nents; i++)
+            if (s->ents[i].lastuse < s->ents[victim].lastuse)
+                victim = i;
+        free(s->ents[victim].sql);
+        sqlite3_finalize(s->ents[victim].st);
+        s->ents[victim] = s->ents[--s->nents];
+    } else if (s->nents == s->cap_ents) {
+        int cap = s->cap_ents ? s->cap_ents * 2 : 8;
+        sql_cache_ent_t *ne = (sql_cache_ent_t *)realloc(s->ents,
+                                (size_t)cap * sizeof(*ne));
+        if (!ne)
+            return;
+        s->ents = ne;
+        s->cap_ents = cap;
+    }
+    e = &s->ents[s->nents++];
+    e->sql = (char *)malloc(n + 1);
+    if (!e->sql) { s->nents--; return; }
+    memcpy(e->sql, sql, n);
+    e->sql[n] = '\0';
+    e->sqllen = n;
+    e->hash = h;
+    e->st = st;
+    e->lastuse = ++s->use_clock;
+}
+
+/* Drop ONE cached entry by statement pointer (used when an error leaves the
+ * statement suspect), without finalizing it -- the caller owns the step. */
+static void sql_cache_drop_stmt(dyn_sqlite_t *s, sqlite3_stmt *st)
+{
+    int i;
+    for (i = 0; i < s->nents; i++)
+        if (s->ents[i].st == st) {
+            free(s->ents[i].sql);
+            s->ents[i] = s->ents[--s->nents];
+            return;
+        }
+}
+
+static void sql_cache_clear(dyn_sqlite_t *s)
+{
+    int i;
+    for (i = 0; i < s->nents; i++) {
+        free(s->ents[i].sql);
+        sqlite3_finalize(s->ents[i].st);
+    }
+    free(s->ents);
+    s->ents = NULL;
+    s->nents = s->cap_ents = 0;
+}
 static const JSClassDef dyn_sqlite_class = {
     "SQLite", .finalizer = dyn_res_finalizer,
 };
@@ -44,6 +146,7 @@ static void dyn_sqlite_dispose(void *native)
     dyn_sqlite_t *s = (dyn_sqlite_t *)native;
     if (!s)
         return;
+    sql_cache_clear(s);        /* finalize every cached statement first */
     if (s->db)
         sqlite3_close_v2(s->db);   /* _v2 tolerates unfinalised statements */
     free(s);
@@ -53,6 +156,18 @@ static JSValue sqlite_throw(JSContext *ctx, dyn_sqlite_t *s, const char *what)
 {
     return JS_ThrowInternalError(ctx, "SQLite: %s: %s", what,
                                  s->db ? sqlite3_errmsg(s->db) : "no database");
+}
+
+/* A readonly handle must be unable to write ANYWHERE. ATTACH would open a
+ * second database file -- writable, since the authorizer's notion of the
+ * connection is per-main -- and every statement through it would bypass the
+ * flag the caller was promised. Deny ATTACH outright; deny nothing else. */
+static int sqlite_ro_authorizer(void *ud, int action, const char *a1,
+                                const char *a2, const char *db,
+                                const char *trigger)
+{
+    (void)ud; (void)a1; (void)a2; (void)db; (void)trigger;
+    return action == SQLITE_ATTACH ? SQLITE_DENY : SQLITE_OK;
 }
 
 static JSValue dyn_sqlite_ctor(JSContext *ctx, JSValueConst new_target,
@@ -84,6 +199,7 @@ static JSValue dyn_sqlite_ctor(JSContext *ctx, JSValueConst new_target,
     if (!s) { JS_FreeCString(ctx, path); return JS_ThrowOutOfMemory(ctx); }
     s->ctx = ctx;
     s->bigint = big;
+    s->cache_max = SQL_CACHE_DEFAULT;
     /* NOMUTEX: this handle is used from ONE thread (the JS thread). Saying so
      * skips SQLite's own locking; it also means a handle must never be shared
      * with the IO pool without changing this. */
@@ -98,6 +214,10 @@ static JSValue dyn_sqlite_ctor(JSContext *ctx, JSValueConst new_target,
         free(s);
         return e;
     }
+    /* The authorizer is what makes `readonly` a promise SQLite itself
+     * enforces, not just an open flag on the main database. */
+    if (ro)
+        sqlite3_set_authorizer(s->db, sqlite_ro_authorizer, NULL);
     JS_FreeCString(ctx, path);
     return dyn_res_wrap(ctx, dyn_sqlite_class_id, s, dyn_sqlite_dispose);
 }
@@ -125,6 +245,11 @@ static int sqlite_bind_bytes(JSContext *ctx, sqlite3_stmt *st, int idx,
     }
     /* A NULL pointer binds SQL NULL, not an empty blob, so an empty view has
      * to hand sqlite something non-NULL to stay distinguishable from NULL. */
+    if (len > 0x7fffffff) {
+        JS_ThrowRangeError(ctx, "SQLite: blob parameter exceeds 2GiB");
+        *rc = SQLITE_TOOBIG;
+        return 1;
+    }
     *rc = sqlite3_bind_blob(st, idx, len ? (const void *)(base + off) : "",
                             (int)len, SQLITE_TRANSIENT);
     return 1;
@@ -172,6 +297,13 @@ static int sqlite_bind_one(JSContext *ctx, sqlite3_stmt *st, int idx,
         const char *str = JS_ToCStringLen(ctx, &len, v);
         if (!str)
             return -1;
+        /* sqlite3_bind_text takes an int; a size_t past INT_MAX would wrap
+         * negative and hand SQLite a nonsense length. */
+        if (len > 0x7fffffff) {
+            JS_FreeCString(ctx, str);
+            JS_ThrowRangeError(ctx, "SQLite: text parameter exceeds 2GiB");
+            return -1;
+        }
         /* SQLITE_TRANSIENT: SQLite copies, because `str` is freed below. */
         rc = sqlite3_bind_text(st, idx, str, (int)len, SQLITE_TRANSIENT);
         JS_FreeCString(ctx, str);
@@ -237,29 +369,114 @@ static JSValue sqlite_column(JSContext *ctx, dyn_sqlite_t *s, sqlite3_stmt *st,
     }
 }
 
-/* Prepare, bind and step. `want_rows` selects query() from exec(). */
+/* Does `p` hold nothing but semicolons and whitespace? The tail after the
+ * first statement is then "no second statement", so a trailing ';' keeps the
+ * single-statement fast path. */
+static int sql_tail_empty(const char *p)
+{
+    while (*p) {
+        if (*p == ';') { p++; continue; }
+        if (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') { p++; continue; }
+        return 0;
+    }
+    return 1;
+}
+
+/* Run every remaining statement of a multi-statement exec(). They take no
+ * parameters -- a parameter array binds to the FIRST statement only, and
+ * silently ignoring parameters a later statement declared would turn a WHERE
+ * into a no-op. Returns accumulated changes, or -1 having thrown. */
+static int64_t sql_run_rest(JSContext *ctx, dyn_sqlite_t *s, const char *tail)
+{
+    sqlite3_stmt *st = NULL;
+    const char *p = tail;
+    int64_t changes = 0;
+    int rc;
+
+    while (p && *p) {
+        while (*p == ';') p++;
+        if (!*p)
+            break;
+        if (sqlite3_prepare_v2(s->db, p, -1, &st, &p) != SQLITE_OK) {
+            sqlite_throw(ctx, s, "prepare failed");
+            return -1;
+        }
+        if (!st)
+            continue;
+        if (sqlite3_bind_parameter_count(st) > 0) {
+            sqlite3_finalize(st);
+            JS_ThrowRangeError(ctx,
+                "SQLite: only the first statement of a multi-statement exec "
+                "can take parameters");
+            return -1;
+        }
+        while ((rc = sqlite3_step(st)) == SQLITE_ROW)
+            continue;
+        if (rc != SQLITE_DONE) {
+            sqlite_throw(ctx, s, "step failed");
+            sqlite3_finalize(st);
+            return -1;
+        }
+        changes += sqlite3_changes(s->db);
+        sqlite3_finalize(st);
+    }
+    return changes;
+}
+
+/* Prepare, bind and step. `want_rows` selects query() from exec().
+ *
+ * query() runs exactly ONE statement: the first, refusing input whose tail
+ * carries a second one rather than returning rows whose shape changes partway
+ * through. exec() runs ALL of them. Repeated single-statement text hits the
+ * prepared-statement cache and skips parse+plan entirely. */
 static JSValue sqlite_run(JSContext *ctx, JSValueConst this_val, int argc,
                           JSValueConst *argv, int want_rows)
 {
     dyn_sqlite_t *s;
     sqlite3_stmt *st = NULL;
     const char *sql;
+    size_t sqllen;
+    uint32_t hash;
+    sql_cache_ent_t *ent;
+    int cached = 0;
+    const char *tail = NULL;
     JSValue rows = JS_UNDEFINED;
     uint32_t nrow = 0;
     int rc, i, nparam = 0;
 
     if (argc < 1)
         return JS_ThrowTypeError(ctx, "sql string required");
-    sql = JS_ToCString(ctx, argv[0]);
+    sql = JS_ToCStringLen(ctx, &sqllen, argv[0]);
     if (!sql)
         return JS_EXCEPTION;
     s = (dyn_sqlite_t *)dyn_res_native(ctx, this_val, dyn_sqlite_class_id);
     if (!s) { JS_FreeCString(ctx, sql); return JS_EXCEPTION; }
 
-    if (sqlite3_prepare_v2(s->db, sql, -1, &st, NULL) != SQLITE_OK) {
-        JSValue e = sqlite_throw(ctx, s, "prepare failed");
-        JS_FreeCString(ctx, sql);
-        return e;
+    hash = sql_hash(sql, sqllen);
+    ent = sql_cache_find(s, sql, sqllen, hash);
+    if (ent) {
+        /* Reset FIRST: a cached statement must never be entered mid-use, and
+         * reset also clears any error state a previous run left behind. */
+        st = ent->st;
+        sqlite3_reset(st);
+        cached = 1;
+    } else {
+        if (sqlite3_prepare_v2(s->db, sql, -1, &st, &tail) != SQLITE_OK) {
+            JSValue e = sqlite_throw(ctx, s, "prepare failed");
+            JS_FreeCString(ctx, sql);
+            return e;
+        }
+        if (!st) {                      /* "", ";" -- nothing to run */
+            JS_FreeCString(ctx, sql);
+            return want_rows ? JS_NewArray(ctx) : JS_NewInt32(ctx, 0);
+        }
+        if (want_rows && !sql_tail_empty(tail)) {
+            sqlite3_finalize(st);
+            JS_FreeCString(ctx, sql);
+            return JS_ThrowRangeError(ctx,
+                "SQLite: query runs one statement; this text carries a "
+                "second -- split them or use exec()");
+        }
     }
     JS_FreeCString(ctx, sql);
 
@@ -270,10 +487,15 @@ static JSValue sqlite_run(JSContext *ctx, JSValueConst this_val, int argc,
         JS_FreeValue(ctx, lenv);
         nparam = (int)n;
         /* Refuse a mismatch rather than leaving parameters NULL: a silently
-         * unbound parameter turns a WHERE into a no-op. */
+         * unbound parameter turns a WHERE into a no-op. The PLAN is not in
+         * question, so the cached entry stays -- a reset returns it to
+         * pristine and the next call pays nothing. */
         if (nparam != sqlite3_bind_parameter_count(st)) {
             int want = sqlite3_bind_parameter_count(st);
-            sqlite3_finalize(st);
+            if (cached)
+                sqlite3_reset(st);
+            else
+                sqlite3_finalize(st);
             return JS_ThrowRangeError(ctx,
                 "SQLite: statement takes %d parameters, %d given", want, nparam);
         }
@@ -281,18 +503,23 @@ static JSValue sqlite_run(JSContext *ctx, JSValueConst this_val, int argc,
             JSValue v = JS_GetPropertyUint32(ctx, argv[1], (uint32_t)i);
             int bad = sqlite_bind_one(ctx, st, i + 1, v);
             JS_FreeValue(ctx, v);
-            if (bad) { sqlite3_finalize(st); return JS_EXCEPTION; }
+            if (bad) {
+                if (cached) sqlite3_reset(st);
+                else sqlite3_finalize(st);
+                return JS_EXCEPTION;
+            }
         }
     } else if (sqlite3_bind_parameter_count(st) > 0) {
         int want = sqlite3_bind_parameter_count(st);
-        sqlite3_finalize(st);
+        if (cached) sqlite3_reset(st);
+        else sqlite3_finalize(st);
         return JS_ThrowRangeError(ctx,
             "SQLite: statement takes %d parameters, none given", want);
     }
 
     if (want_rows) {
         rows = JS_NewArray(ctx);
-        if (JS_IsException(rows)) { sqlite3_finalize(st); return rows; }
+        if (JS_IsException(rows)) goto fail;
     }
     while ((rc = sqlite3_step(st)) == SQLITE_ROW) {
         if (!want_rows)
@@ -300,7 +527,7 @@ static JSValue sqlite_run(JSContext *ctx, JSValueConst this_val, int argc,
         {
             int ncol = sqlite3_column_count(st);
             JSValue o = JS_NewObject(ctx);
-            if (JS_IsException(o)) { sqlite3_finalize(st); JS_FreeValue(ctx, rows); return o; }
+            if (JS_IsException(o)) goto fail;
             for (i = 0; i < ncol; i++) {
                 /* DEFINE, not set: JS_SetPropertyStr walks the prototype
                  * chain, so a column named __proto__ retargets the row's
@@ -317,14 +544,48 @@ static JSValue sqlite_run(JSContext *ctx, JSValueConst this_val, int argc,
     }
     if (rc != SQLITE_DONE) {
         JSValue e = sqlite_throw(ctx, s, "step failed");
-        sqlite3_finalize(st);
-        JS_FreeValue(ctx, rows);
+        /* An error leaves the plan suspect (a schema may have moved under
+         * it); evicting costs one re-prepare and cannot compound. */
+        if (cached) { sql_cache_drop_stmt(s, st); sqlite3_finalize(st); }
+        else sqlite3_finalize(st);
+        if (want_rows)
+            JS_FreeValue(ctx, rows);
         return e;
     }
-    sqlite3_finalize(st);
+
+    if (cached) {
+        sqlite3_reset(st);          /* clean for the next hit */
+    } else {
+        if (!want_rows && tail && !sql_tail_empty(tail)) {
+            /* Multi-statement exec: run the rest, summing changes. NOT cached
+             * -- a cache key is the full text, and a hit must never mean
+             * "run only the first statement again". */
+            int64_t first = sqlite3_changes(s->db);
+            int64_t more;
+            sqlite3_finalize(st);
+            more = sql_run_rest(ctx, s, tail);
+            if (more < 0)
+                return JS_EXCEPTION;
+            return JS_NewInt64(ctx, first + more);
+        }
+        if (tail && sql_tail_empty(tail))
+            sql_cache_put(s, sqlite3_sql(st), sqllen, hash, st);  /* cache owns it */
+        else
+            sqlite3_finalize(st);
+    }
     if (want_rows)
         return rows;
     return JS_NewInt32(ctx, sqlite3_changes(s->db));
+
+fail:
+    /* A JS exception mid-loop leaves the statement mid-iteration, not
+     * suspect: reset returns it to pristine and the cache keeps it. */
+    if (cached)
+        sqlite3_reset(st);
+    else
+        sqlite3_finalize(st);
+    JS_FreeValue(ctx, rows);
+    return JS_EXCEPTION;
 }
 
 static JSValue dyn_sqlite_query(JSContext *ctx, JSValueConst this_val, int argc,

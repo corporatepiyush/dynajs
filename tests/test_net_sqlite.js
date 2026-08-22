@@ -154,8 +154,129 @@ threw = false;
 try { db.query("SELECT * FROM no_such_table"); } catch (e) { threw = true; }
 check(threw, "a bad statement must throw");
 
-/* ---- readonly is enforced by SQLite, not by us ---- */
+/* and the SAME failing text twice in a row -- the second run goes through
+   different code (cache eviction on error) and must fail identically */
+threw = false;
+try { db.query("SELECT * FROM no_such_table"); } catch (e) { threw = true; }
+check(threw, "the identical bad statement must still throw on repeat");
+
 db.close();
+
+/* ---- multi-statement exec runs EVERY statement, not just the first ----
+ * prepare_v2 compiles ONE statement; everything after the ';' used to be
+ * dropped SILENTLY -- tables the caller believed created were not there. */
+{
+  const m = new SQLite(":memory:");
+  m.exec("CREATE TABLE a1 (x); CREATE TABLE a2 (y); INSERT INTO a1 VALUES (7)");
+  const t2 = m.query("SELECT count(*) AS c FROM sqlite_master WHERE name IN ('a1','a2')");
+  check(t2[0].c === 2,
+        "multi-statement exec must create BOTH tables, saw " + t2[0].c);
+  const ins = m.exec(
+    "INSERT INTO a1 VALUES (1); INSERT INTO a1 VALUES (2); INSERT INTO a1 VALUES (3)");
+  check(ins === 3, "exec must sum changes across statements, got " + ins);
+  check(m.query("SELECT count(*) AS c FROM a1")[0].c === 4,
+        "all three inserts must have run");
+
+  /* trailing semicolons and whitespace are NOT a second statement */
+  const one = m.query("SELECT 40+2 AS n;");
+  check(one.length === 1 && one[0].n === 42,
+        "a trailing ';' must keep the single-statement path, got " +
+        JSON.stringify(one));
+
+  /* query() refuses text carrying a SECOND statement rather than returning
+     rows whose shape changes partway through */
+  let multiThrew = null;
+  try { m.query("SELECT 1 AS a; SELECT 2 AS b"); }
+  catch (e) { multiThrew = String(e); }
+  check(multiThrew !== null && /one statement/.test(multiThrew),
+        "query must refuse multi-statement text, got " + multiThrew);
+
+  /* parameters bind to the FIRST statement only; a later one declaring
+     parameters would be silently unbound -- refused, not ignored */
+  let paramThrew = null;
+  try { m.exec("INSERT INTO a1 VALUES (?); INSERT INTO a1 VALUES (?)", [5]); }
+  catch (e) { paramThrew = String(e); }
+  check(paramThrew !== null && /first statement/.test(paramThrew),
+        "parameters past the first statement must be refused, got " + paramThrew);
+
+  /* empty input is a clean no-op, not a crash on a NULL statement */
+  check(m.exec("") === 0, "exec('') must be a no-op");
+  check(m.exec("; ; ;") === 0, "exec(';;;') must be a no-op");
+  check(JSON.stringify(m.query("")) === "[]", "query('') returns no rows");
+  m.close();
+}
+
+/* ---- the prepared-statement cache must never change an ANSWER ----
+ * Repeated identical SQL hits the cache; every value below is checked against
+ * the SAME text run repeatedly, including across a schema change that forces
+ * SQLite to recompile under the cached handle. */
+{
+  const c = new SQLite(":memory:");
+  c.exec("CREATE TABLE ck (id INTEGER PRIMARY KEY, v TEXT)");
+  c.exec("CREATE TABLE other (v TEXT)");
+  const q = "SELECT v FROM ck WHERE id = ?";
+  for (let i = 1; i <= 5; i++)
+    c.exec("INSERT INTO ck (v) VALUES (?)", ["row" + i]);
+  for (let i = 1; i <= 10; i++) {
+    const r = c.query(q, [3]);
+    check(r.length === 1 && r[0].v === "row3",
+          "cached hit " + i + " must answer row3, got " + JSON.stringify(r));
+    /* an interleaved DIFFERENT cached statement must not cross wires */
+    if (i % 3 === 0)
+      check(c.query("SELECT v FROM other WHERE v = ?", ["none"]).length === 0,
+            "interleaved cache entry " + i);
+  }
+  /* a MISS (distinct text) interleaved with hits */
+  check(c.query(q + " ", [4])[0].v === "row4",
+        "a distinct text must prepare fresh and still answer");
+  /* schema change under the cache: DROP forces recompilation */
+  c.exec("DROP TABLE ck");
+  c.exec("CREATE TABLE ck (id INTEGER PRIMARY KEY, v TEXT)");
+  c.exec("INSERT INTO ck (v) VALUES (?)", ["fresh"]);
+  check(c.query(q, [1])[0].v === "fresh",
+        "a cached statement must survive a schema change (recompiled), got " +
+        JSON.stringify(c.query(q, [1])));
+  /* writes stay exact through the cache */
+  c.exec("INSERT INTO ck (v) VALUES (?)", ["more"]);
+  check(c.query("SELECT count(*) AS c FROM ck")[0].c === 2,
+        "inserts through the cache land exactly once");
+  /* parameter COUNT mismatch is still refused on a cached hit */
+  let cntThrew = false;
+  try { c.query(q); } catch (e) { cntThrew = true; }
+  check(cntThrew, "missing parameters must throw even on a cache hit");
+  /* and the refusal must NOT have poisoned the cached entry: the answer must
+     still be the CURRENT contents of the row (id 2 was re-keyed when the
+     table was rebuilt above -- the point is that it answers at all) */
+  const afterRefusal = c.query(q, [2]);
+  check(afterRefusal.length === 1 && afterRefusal[0].v === "more",
+        "the statement still answers after a refused call, got " +
+        JSON.stringify(afterRefusal));
+  /* LRU churn: cycle far more DISTINCT statements than the cache holds, then
+     prove an evicted entry re-prepares and still answers -- against a row
+     that exists in the REBUILT table (ids 1 and 2 only) */
+  for (let i = 0; i < 100; i++) {
+    const r = c.query("SELECT " + i + " AS n");
+    check(r[0].n === i, "churn statement " + i + " answered " + JSON.stringify(r));
+  }
+  const evicted = c.query(q, [1]);
+  check(evicted.length === 1 && evicted[0].v === "fresh",
+        "an evicted statement re-prepares and still answers, got " +
+        JSON.stringify(evicted));
+  c.close();
+}
+
+/* ---- readonly must be enforced by SQLite, ATTACH included ----
+ * Without an authorizer, a readonly main database can ATTACH a second file
+ * WRITABLE and mutate through it -- the flag promised nothing. */
+{
+  const ro = new SQLite(":memory:", { readonly: true });
+  let attachThrew = null;
+  try { ro.exec("ATTACH ':memory:' AS evil"); }
+  catch (e) { attachThrew = String(e); }
+  check(attachThrew !== null && attachThrew !== "null",
+        "ATTACH must be denied on a readonly connection, ran clean");
+  ro.close();
+}
 
 if (fails === 0) print("test_net_sqlite: all " + n + " checks passed");
 else print("test_net_sqlite: " + fails + " FAILED");
