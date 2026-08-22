@@ -2359,6 +2359,15 @@ static int dyn_route_copy(JSContext *ctx, const char *path, JSValueConst val,
         if (!body)
             return -1;
         ct = NULL; /* default text/plain */
+    } else if (JS_IsFunction(ctx, val)) {
+        /* A function here is an App-shaped handler aimed at the wrong
+           server: accepting it (a function IS an object) silently compiled
+           to an empty-body 200 forever. */
+        JS_ThrowTypeError(ctx,
+            "route value must be a string or {status, contentType, body}; "
+            "dyna:http servers serve static routes only -- use App.rpc/App "
+            "handlers for dynamic responses");
+        return -1;
     } else if (JS_IsObject(val)) {
         JSValue vs = JS_GetPropertyStr(ctx, val, "status");
         JSValue vc = JS_GetPropertyStr(ctx, val, "contentType");

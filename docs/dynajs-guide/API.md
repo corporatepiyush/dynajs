@@ -2886,6 +2886,7 @@ Returns a PKCS#1 v1.5 signature with the given digest.
 
 Returns true when the signature checks against the public key.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { RSA } from "dyna:crypto";
 const key = RSA.generate(2048);
@@ -2909,6 +2910,7 @@ Returns `{ subject, issuer, serialNumber, version, notBefore, notAfter, fingerpr
 
 Returns a v3 self-signed certificate signed with SHA-256, as a PEM string.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { RSA, X509 } from "dyna:crypto";
 const key = RSA.generate(2048);
@@ -2948,6 +2950,7 @@ Returns a raw `R||S` signature (64 bytes for P-256, each half padded to the coor
 
 Returns true for a valid raw or DER signature. A raw signature of the wrong length is a plain false.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { ECDSA } from "dyna:crypto";
 const key = ECDSA.generate("P-256");
@@ -2970,6 +2973,7 @@ Returns an EC key pair as PEM strings.
 
 Returns the raw X9.63 shared secret. A small-order peer point makes derivation fail and is refused; an all-zero secret is not a secret.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { ECDH } from "dyna:crypto";
 const alice = ECDH.generate("P-256"), bob = ECDH.generate("P-256");
@@ -2999,6 +3003,7 @@ Returns a 64-byte signature over the whole message. Ed25519 is one-shot by const
 
 Returns true when the signature is valid. A wrong-size signature returns false, indistinguishable from any other forgery.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { Ed25519Generate, Ed25519Sign, Ed25519Verify } from "dyna:crypto";
 const k = Ed25519Generate();
@@ -3019,6 +3024,7 @@ No parameters. Returns raw 32-byte keys for X25519 (curve25519) key agreement.
 
 Returns the 32-byte shared secret. A small-order peer point is refused; OpenSSL reports the derivation as a failure rather than handing back an all-zero secret.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { X25519Generate, X25519Derive } from "dyna:crypto";
 const a = X25519Generate(), b = X25519Generate();
@@ -3055,6 +3061,7 @@ Returns the plaintext. A forged tag (or a wrong nonce/aad) throws `authenticatio
 
 No parameters. Zero the key material in native memory; `closed` is true afterwards. Use `for`-with-`finally` or `using` for the key's lifetime.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { AESGCM } from "dyna:crypto";
 const key = new Uint8Array(32).fill(7);
@@ -3079,6 +3086,7 @@ try {
 
 `seal`, `open`, `close`, `dispose` and `closed` behave exactly as `AESGCM`'s, with the same 12-byte nonce, 16-byte tag, and throw-on-forgery rule.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { ChaCha20Poly1305 } from "dyna:crypto";
 const chacha = new ChaCha20Poly1305(new Uint8Array(32).fill(9));
@@ -3203,6 +3211,7 @@ print("pbkdf2:", key.length);
 
 Returns the RFC 7914 derived key. The memory product `128*N*r` is capped at 1 GiB.
 
+<!-- check:skip: needs CONFIG_TLS=y -->
 ```js
 import { Scrypt } from "dyna:crypto";
 const dk = Scrypt("password", "salt");

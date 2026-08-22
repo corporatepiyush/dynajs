@@ -1398,7 +1398,8 @@ NATIVE_TESTS=tests/test_algo_blackbox.js tests/test_http_security.js tests/test_
   tests/test_schema.js tests/test_crypto_standalone.js \
   tests/test_fetch.js \
   tests/test_fetch_body.js tests/test_module_interop.js \
-  tests/test_rpc_params.js tests/test_keepalive.js tests/test_url_host.js
+  tests/test_rpc_params.js tests/test_keepalive.js tests/test_url_host.js \
+  tests/test_module_surface.js tests/test_route_static.js tests/test_worker_native.js
 
 # NB: deliberately NOT dependent on dynajs$(EXE). Making it a prerequisite lets a
 # bare `make test-native` RELINK the binary with the default flags -- which drops

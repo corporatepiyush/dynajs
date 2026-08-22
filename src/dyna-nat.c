@@ -182,8 +182,22 @@ int dyn_register_plain_class(JSContext *ctx, JSModuleDef *m, JSClassID *pid,
     JSValue proto, ctor;
 
     JS_NewClassID(pid);
-    if (JS_NewClass(rt, *pid, def) < 0)
-        return -1;
+    if (JS_NewClass(rt, *pid, def) < 0) {
+        /* UNREACHED today: no two modules share a register fn except
+         * dyn_http_register, which has its own recovery. Kept because the
+         * shape recurs (dyna:http/dyna:net was exactly this) and the failure
+         * it prevents -- dead exports in TDZ -- fails silently. */
+        proto = JS_GetClassProto(ctx, *pid);
+        if (!JS_IsObject(proto))
+            return -1;
+        ctor = JS_GetPropertyStr(ctx, proto, "constructor");
+        JS_FreeValue(ctx, proto);
+        if (!JS_IsFunction(ctx, ctor)) {
+            JS_FreeValue(ctx, ctor);
+            return -1;
+        }
+        return JS_SetModuleExport(ctx, m, name, ctor);
+    }
     proto = JS_NewObject(ctx);
     if (JS_IsException(proto))
         return -1;
@@ -204,8 +218,18 @@ int dyn_register_class(JSContext *ctx, JSModuleDef *m, JSClassID *pid,
     JSValue proto, ctor;
 
     JS_NewClassID(pid);
-    if (JS_NewClass(rt, *pid, def) < 0)
-        return -1;
+    if (JS_NewClass(rt, *pid, def) < 0) {
+        proto = JS_GetClassProto(ctx, *pid);
+        if (!JS_IsObject(proto))
+            return -1;
+        ctor = JS_GetPropertyStr(ctx, proto, "constructor");
+        JS_FreeValue(ctx, proto);
+        if (!JS_IsFunction(ctx, ctor)) {
+            JS_FreeValue(ctx, ctor);
+            return -1;
+        }
+        return JS_SetModuleExport(ctx, m, name, ctor);
+    }
     proto = JS_NewObject(ctx);
     if (JS_IsException(proto))
         return -1;

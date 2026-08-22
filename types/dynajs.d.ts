@@ -428,6 +428,9 @@ declare module "dyna:config" {
 /* ================================================================== *
  *  dyna:crypto
  * ================================================================== */
+// The Ed25519*/X25519*/Scrypt functions, the AESGCM/ChaCha20Poly1305 classes
+// and the RSA/X509/ECDSA/ECDH namespaces exist only in CONFIG_TLS=y builds;
+// in a default build those names are absent from the module at runtime.
 declare module "dyna:crypto" {
     /** A PEM key pair. */
     interface KeyPair {
@@ -1173,9 +1176,19 @@ declare module "dyna:http" {
         body: string;
     }
 
+    /** A route table: path -> literal body, or {status, contentType, body}. Static only. */
+    type StaticRoutes = Record<string, string | { status?: number; contentType?: string; body?: string }>;
+
     /** A thread-pool HTTP server serving static routes. */
     class HTTPServer implements DynResource {
-        constructor(opts?: { port?: number; requestTimeoutMs?: number });
+        constructor(opts?: {
+            port?: number;
+            host?: string;
+            workers?: number;
+            backlog?: number;
+            requestTimeoutMs?: number;
+            routes?: StaticRoutes;
+        });
         start(): void;
         stop(): void;
         get port(): number;
@@ -1187,7 +1200,14 @@ declare module "dyna:http" {
 
     /** A single-threaded reactor HTTP server. */
     class HTTPServerAsync implements DynResource {
-        constructor(opts?: { port?: number; backlog?: number; maxConns?: number });
+        constructor(opts?: {
+            port?: number;
+            host?: string;
+            backlog?: number;
+            idleTimeoutMs?: number;
+            maxConns?: number;
+            routes?: StaticRoutes;
+        });
         start(): void;
         stop(): void;
         get port(): number;
@@ -1203,15 +1223,17 @@ declare module "dyna:http" {
         /** Registers a strict JSON-RPC 2.0 endpoint. */
         rpc(path: string, methods: Record<string, (...args: unknown[]) => unknown>): this;
         /** Serves a static document root at a URL prefix. */
-        static(prefix: string, root: import("dyna:file").Path, opts?: { maxFileSize?: number }): this;
+        static(prefix: string, root: import("dyna:file").Path, opts?: { maxFileSize?: number; allow?: string[] }): this;
         /** Proxies a URL prefix to a host/port. */
         proxy(prefix: string, opts: { host?: string; port?: number }): this;
-        /** Registers an upload endpoint. */
-        upload(path: string, opts: { dir?: import("dyna:file").Path; maxFileSize?: number }, handler: (req: unknown, res: unknown) => void): this;
-        /** Registers a WebSocket endpoint. */
-        ws(path: string, handler: (socket: WsClient) => void): this;
-        /** Registers a server-sent events endpoint. */
-        sse(path: string, handler: (req: unknown, res: unknown) => void): this;
+        /** Registers an upload endpoint; the handler receives the saved path
+         * and {size, contentType} once the body is fully written. */
+        upload(path: string, opts: { dir?: import("dyna:file").Path; maxFileSize?: number; allow?: string[] }, handler: (savedPath: string, meta: { size: number; contentType: string }) => void): this;
+        /** Registers a WebSocket endpoint; handlers receive the connection. */
+        ws(path: string, handlers: { open?: (socket: WsConn) => void; message?: (socket: WsConn, data: string | Uint8Array, isBinary: boolean) => void; close?: (socket: WsConn, code: number, reason: string) => void }): this;
+        /** Registers a server-sent events endpoint; open and close receive
+         * the stream. */
+        sse(path: string, handlers: { open?: (stream: SseConn) => void; close?: (stream: SseConn) => void }): this;
         start(): void;
         get port(): number;
         close(): void;
@@ -1220,9 +1242,21 @@ declare module "dyna:http" {
         readonly [Symbol.dispose]: () => void;
     }
 
+    /** Server-side WebSocket connection, handed to App.ws handlers. */
+    interface WsConn {
+        send(data: BytesInput): void;
+        close(): void;
+    }
+
+    /** Server-side SSE stream, handed to the App.sse open handler. */
+    interface SseConn {
+        send(data: string): void;
+        close(): void;
+    }
+
     /** A WebSocket client. */
     class WsClient implements DynResource {
-        constructor(url: string, handlers: { open?: (ws: WsClient) => void; message?: (ws: WsClient, data: unknown) => void; close?: () => void });
+        constructor(url: string, handlers: { open?: (ws: WsClient) => void; message?: (ws: WsClient, data: string | Uint8Array, isBinary: boolean) => void; close?: (ws: WsClient, code: number, reason: string) => void });
         send(data: BytesInput): void;
         close(): void;
         dispose(): void;
@@ -2474,15 +2508,11 @@ declare module "dyna:scrape" {
         readonly [Symbol.dispose]: () => void;
     }
 
-    /** Field extraction spec: a selector per field. */
-    class Extractor implements DynResource {
+    /** Field extraction spec: a selector per field. GC-managed: no close surface. */
+    class Extractor {
         constructor(spec: Record<string, unknown>);
         /** Runs against a parsed document; options.base resolves relative links. */
         run(doc: unknown, opts?: { base?: string }): { values: Record<string, unknown>; missing: string[] };
-        close(): void;
-        dispose(): void;
-        readonly closed: boolean;
-        readonly [Symbol.dispose]: () => void;
     }
 
     /** Polite HTTP retrieval with robots policy, retries and backoff. */
@@ -3360,6 +3390,7 @@ declare module "dyna:time" {
 /* ================================================================== *
  *  dyna:uring
  * ================================================================== */
+// Linux + CONFIG_IO_URING=y builds only; the module does not exist otherwise.
 declare module "dyna:uring" {
     /** Whole file as a string via the io_uring bulk reader (Linux only). */
     function readFile(path: import("dyna:file").Path): string;
@@ -3903,6 +3934,8 @@ declare module "std" {
     function strerror(errno: number): string;
     /** JSON parse with extensions (Date serialization, ...). */
     function parseExtJSON(str: string): unknown;
+    /** Internal: pretty-prints a value for print(). */
+    function __printObject(obj: unknown): void;
     /** The standard Error constructor. */
     const Error: ErrorConstructor;
     const SEEK_SET: number;
@@ -3913,10 +3946,13 @@ declare module "std" {
 declare module "os" {
     /** The number of milliseconds since an arbitrary point. */
     function now(): number;
-    function platform(): string;
+    /** The OS name; a string property, not a function. */
+    const platform: string;
     function getpid(): number;
-    function getcwd(): string;
-    function chdir(path: string): void;
+    /** [cwd, errorcode]. */
+    function getcwd(): [string, number];
+    /** 0 or a negative errno. */
+    function chdir(path: string): number;
     interface OsStat {
         dev: number;
         ino: number;
@@ -3931,8 +3967,10 @@ declare module "os" {
         mtime: number;
         ctime: number;
     }
-    function stat(path: string): OsStat | null;
-    function lstat(path: string): OsStat | null;
+    /** [stat, errorcode]; times are milliseconds since epoch. */
+    function stat(path: string): [OsStat, number];
+    /** [stat, errorcode], not following symlinks; times in ms. */
+    function lstat(path: string): [OsStat, number];
     function readdir(path: string): [string[], number];
     function readlink(path: string): [string, number];
     function realpath(path: string): [string, number];
@@ -3941,25 +3979,28 @@ declare module "os" {
     function mkdir(path: string, mode?: number): number;
     function symlink(target: string, linkpath: string): number;
     function utimes(path: string, atime: number, mtime: number): number;
-    function open(path: string, flags: number, mode?: number): [number, number];
+    /** fd, or a negative errno. */
+    function open(path: string, flags: number, mode?: number): number;
     function close(fd: number): number;
-    function read(fd: number, buffer: Uint8Array, offset: number, length: number, position?: number): [number, number];
-    function write(fd: number, buffer: Uint8Array | string, offset?: number, length?: number, position?: number): [number, number];
-    function seek(fd: number, position: number, whence: number): [number, number];
-    function dup(fd: number): [number, number];
-    function dup2(oldfd: number, newfd: number): [number, number];
-    function pipe(): [number, number, number] | number;
+    /** Byte count read, or a negative errno; `buffer` is a raw ArrayBuffer
+     * sliced by offset/length. */
+    function read(fd: number, buffer: ArrayBuffer, offset: number, length: number, position?: number): number;
+    /** Byte count written, or a negative errno; `buffer` is a raw ArrayBuffer
+     * sliced by offset/length. */
+    function write(fd: number, buffer: ArrayBuffer, offset?: number, length?: number, position?: number): number;
+    /** New offset, or a negative errno. */
+    function seek(fd: number, position: number, whence: number): number;
+    /** New fd, or a negative errno. */
+    function dup(fd: number): number;
+    function dup2(oldfd: number, newfd: number): number;
+    /** [readFd, writeFd], or null. */
+    function pipe(): [number, number] | null;
     function isatty(fd: number): boolean;
     function ttySetRaw(fd: number, raw: boolean): void;
     function ttyGetWinSize(fd: number): [number, number] | null;
-    interface ExecResult {
-        status: number;
-        signal: number;
-        data?: Uint8Array;
-        errCode: number;
-        error: string;
-    }
-    function exec(args: string[], options?: { blocking?: boolean; usePath?: boolean; file?: string; cwd?: string; stdin?: unknown; stdout?: unknown; stderr?: unknown; env?: Record<string, string>; uid?: number; gid?: number }): ExecResult | null;
+    /** Runs a process and returns its exit status (negative = terminated by
+     * -signal); with block:false returns the pid and does not wait. */
+    function exec(args: string[], options?: { blocking?: boolean; usePath?: boolean; file?: string; cwd?: string; stdin?: unknown; stdout?: unknown; stderr?: unknown; env?: Record<string, string>; uid?: number; gid?: number }): number;
     function waitpid(pid: number, options?: number): [number, number];
     function kill(pid: number, sig: number): number;
     function signal(signal: number, handler: (signal: number) => void): void;
@@ -3974,19 +4015,20 @@ declare module "os" {
     const O_RDONLY: number;
     const O_WRONLY: number;
     const O_RDWR: number;
-    const O_ACCMODE: number;
     const O_APPEND: number;
     const O_CREAT: number;
     const O_EXCL: number;
     const O_TRUNC: number;
-    const O_BINARY: number;
+    /** Windows only; absent on POSIX builds. */
+    const O_BINARY: number | undefined;
+    /** Windows only; absent on POSIX builds. */
+    const O_TEXT: number | undefined;
     const WNOHANG: number;
     const SIGABRT: number;
     const SIGALRM: number;
     const SIGCHLD: number;
     const SIGCONT: number;
     const SIGFPE: number;
-    const SIGHUP: number;
     const SIGILL: number;
     const SIGINT: number;
     const SIGPIPE: number;
@@ -4011,12 +4053,15 @@ declare module "os" {
     const S_ISGID: number;
     const Worker: {
         new (script: string, options?: unknown): Worker;
+        /** Inside a worker script: the port back to the parent; null on the main thread. */
+        readonly parent: Worker | null;
     };
     interface Worker {
         postMessage(value: unknown): void;
-        onmessage?: (ev: { data: unknown }) => void;
-        onerror?: (err: unknown) => void;
-        terminate(): void;
+        /** A live message port keeps the process alive -- even after the
+         * worker thread exits. Set to null to release it. */
+        onmessage: ((ev: { data: unknown }) => void) | null;
+        onerror: ((err: unknown) => void) | null;
     }
 }
 
@@ -4679,7 +4724,10 @@ interface ObjectConstructor {
     propIs(type: string, key: string, obj: object): boolean;
     /** Groups array items by a key function. */
     groupBy<K extends string | number>(items: unknown[], key: (item: unknown) => K): Record<K, unknown[]>;
-    /** Legacy accessors. */
+}
+
+/* Legacy accessors live on Object.prototype, not the constructor. */
+interface Object {
     __defineGetter__(property: string, getter: (this: unknown) => unknown): void;
     __defineSetter__(property: string, setter: (this: unknown, value: unknown) => void): void;
     __lookupGetter__(property: string): ((this: unknown) => unknown) | undefined;
