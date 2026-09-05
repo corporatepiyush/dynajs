@@ -1,0 +1,492 @@
+2026-09-04:
+
+- dyn-ac (audit E10-11 redesign): MEASURED (bench/bench_ac.c, old build vs
+  new linked against the same harness, hits and text hashes asserted equal on
+  every row). The single dense table (1 KiB/state, 99.6% redundant slots --
+  fill = edges/(states*256) = 0.004 on every bench set) is now one of two
+  materializations of the same trie, chosen at build time by
+  DYN_AC_DENSE_MAX (2048 states, the measured cache crossover):
+    small sets stay dense  -- S10/A2/P1/L64 scan 0.97-1.05x = parity
+    large sets go compact (double-array, ~31 B/state, fail-walk scan)
+      M1000   6882 states:  6.8 MiB -> 180 KiB (38x), build 3.5x faster,
+                            scan 1.62x / 2.65x / 1.43x FASTER (many/none/near)
+      X10000 75364 states: 74.5 MiB -> 2.3 MiB (33x), build 4.4x faster,
+                            scan 3.16x / 2.63x / 2.95x FASTER
+    cap boundary (262144 states, the pinned 2^18 formula): 261 MiB -> 10.0 MiB
+    steady (26x), cap-scan 2.98 -> 1.12 ns/B; build 57.7 -> 55.8 ms.
+  Why the scan got FASTER with the memory cut: the dense table at 75k states
+  is 75 MiB and the scan is cache/TLB-bound on it (25-34 MB/s); the compact
+  table is ~2 MiB and the same text runs at ~100 MB/s. The root row stays
+  fully materialized in both layouts, which is what bounds the compact fail
+  walk (each step strictly decreases depth; total fail steps <= text length
+  on ANY input, adversarial included). The 2-symbol, single-char and 60-byte
+  shared-prefix adversarial sets are rows in the bench; the -1/OOM cap
+  contract and the exact state-count formula in test_ac_caps.c are untouched
+  and green. Differential: bench/bench_ac.c --diff (engine vs the pinned
+  reference implementation in bench/ac_cand.c) is 42/42 over the systematic
+  corpus, also green forced all-dense and all-compact, under ASan+UBSan;
+  bench_core --hash is identical old vs new (2012816943).
+
+2026-08-28:
+
+- dyna:log: MEASURED (tests/bench_log_ab.js, old build vs new, controls flat
+  at 26 ns empty-loop / 46 ns silent-gate). The honest table:
+    short msg     643 -> 633 ns   (-1.5%)
+    small fields  882 -> 894 ns   (+1.4%)
+    40 fields    3168 -> 3404 ns  (+7.4%)   <-- a real regression
+    err+fields    799 -> 1154 ns  (+44%)    <-- the Error-extras feature
+    inline 100b   689 -> 675 ns   (-2%)
+  The inline line buffer is a WASH, not the win the design assumed, and the
+  reason is measured: an emit is SYSCALL-BOUND. stderr costs 630 ns/op while
+  the same serialization into a buffered file costs 95 ns/op and the level
+  gate alone is 30 ns, so ~600 ns of every emit is write(2). THE LEVER IS
+  `buffer: true` (or a file dest), which is 6.6x. The 40-field regression is
+  NOT the reserved-key check: disabling it entirely (3404 ns) and removing
+  the branch (3381 ns) both leave ~7%, so it is code-layout/inlining in the
+  larger translation unit, left as a known cost rather than chased.
+- dyna:log: a truncated line is now CLOSED instead of severed. The cap cut
+  the line at exactly 64 KiB, which for a long payload stopped mid-string
+  with no closing quote, no closing brace and no newline -- emitting
+  malformed JSON that also corrupted the NEXT line's framing, since a
+  consumer could not find this one's end. The tail now reserves room and the
+  emit path writes `...` in-band before closing, so an oversized payload
+  yields one parseable line (property-tested). Fixed two JS_ToCString leaks
+  in the rollover option parsers (one per Logger built with a string
+  size/frequency). Verified clean under ASan+UBSan+LSan and warning-free.
+- dyna:log redesign around the pino/sonic-boom, zap/zerolog and logrotate
+  playbooks. Emit path is allocation-free for typical lines (512-byte inline
+  line builder, heap only past it); timestamps render without snprintf (i64
+  writer for epoch, cached-second ISO with manual millis); int64 round-trip
+  fast path for number fields. New file destination (dest/mkdir/buffer) with
+  sonic-boom-style line batching, a process-wide sink registry so Loggers on
+  one path share fd + rollover state (config mismatch refused), flush(), and
+  an atexit+finalizer flush belt. Rollover (size in bytes or k/m/g, frequency
+  daily/hourly/ms, count retention, symlink to the active file) is lazy per
+  emit, extension-last names (app.2026-08-28.1.log) that sort
+  chronologically, numbering continues from the highest existing file so
+  retention never causes number reuse, time-only rollover reuses the period's
+  file across restarts, failed rotation falls back to stderr with a 1/s retry.
+  Format integrity: caller fields colliding with frame keys (time, level,
+  name, pid, hostname, msg, err) are dropped -- log forgery by field name is
+  impossible; (err, fields, msg) shape added; Error extras (code, errno...)
+  ride inside err; pid/hostname enrichment folded into the pre-serialized
+  prefix. New human format: format:"text" renders aligned levels, name,
+  message and k=v fields in one control-escaped line. Debug: node-debug
+  matching (last match wins, '-' negation, '*' anywhere), multi-arg join.
+
+2026-08-27:
+
+- dyna:scrape modernization pass. Robots.txt (RFC 9309): group-based parser
+  with product-token agent matching -- exact full-agent match beats the
+  longest token match, which beats `*`; consecutive User-agent lines share
+  one group; groups capped at 64 with up to 8 UA lines. Fetcher: RFC 3986
+  redirect resolution (relative, dot-segment, protocol-relative, cross-host,
+  each hop re-gated by robots and the SSRF check); fragment-only Location
+  ends the chain instead of erroring; conditional GET against stored ETag /
+  Last-Modified validators (32 entries, 1 MiB/body, 4 MiB total, FIFO) --
+  a 304 returns status 304 with the cached body, fromCache and notModified
+  set, counted in stats.revalidated and stats.savedBytes; caller `headers`
+  merged under the crawler's identity, credential keys (Authorization,
+  Cookie, Proxy-Authorization, Set-Cookie) refused at construction because
+  they would leak to redirect targets; jittered exponential backoff whose
+  server-provided Retry-After is never jittered. Crawl: relative linkField
+  hrefs resolve against the emitting page; non-navigational schemes dropped;
+  pending frontier capped at 10000. Extractor: trim, per-field default
+  (satisfies optional required fields), source: true reading raw child
+  source for script/style/ld+json bodies HTMLText refuses to serve as text,
+  as: "url" resolving against run()'s base, as: "json" refusing invalid
+  input, and ANY unknown as: string refusing at construction.
+- Final honesty round: Retry-After delays BEYOND the 60s sleep cap are now
+  served as the final response instead of sleeping 60s and retrying anyway
+  (violating the server's instruction); the fuzz section's Fetcher forgot
+  minDelayMs:0 and ran at 1 exec/s under the default 1000ms per-host floor
+  (2000 runs = 33 min -- fixed, now ~90 exec/s and verified clean at 6000+
+  runs; RSS growth proven to be the pre-existing per-context harness
+  baseline, same or worse on fuzz_stdlib which has no scrape section);
+  cache content-type strdup failure now guarded like the validators.
+  New coverage: over-long Location served as final, robots redirect loop
+  fail-closed, maxPages:0, Retry-After beyond cap honored-by-refusal.
+- Seven-bug hardening round on dyna:scrape: (1) Retry-After HTTP-date
+  deltas compared epoch-to-monotonic -- every date-form retry slept a full
+  60s instead of the seconds asked; now compared against time(NULL), with a
+  dt<15s regression bound so a clock mix fails LOUD. (2) ex_node_source
+  leaked its chunks on the OOM path. (3) request-url fragments stripped
+  before robots, the wire, and dedup keys. (4) Crawl link-following gated to
+  2xx while VALUE extraction still runs on 403/500 pages -- bad pages stay
+  scrapable without being trusted to point anywhere. (5) robots.txt UTF-8
+  BOM no longer orphans the first group. (6) robots redirect comment/code
+  aligned (2 redirects, 3 requests). (7) verified non-bugs: Cache-Control
+  scan has no multi-char constants; canonical OOM-ignore is benign.
+- Deeper irregularity round on dyna:scrape: Retry-After honoured as an
+  IMF-fixdate HTTP-date, not just delay-seconds (the old strtod read dates
+  as 0 and silently ignored them); Cache-Control: no-store excluded from
+  the conditional-GET store; robots.txt redirects followed (<=3 hops, RFC
+  9309 2.3.1.2) with fail-closed treatment of unsafe hops -- canonical-host
+  301s no longer disallow whole sites; Crawl canonicalField (duplicate
+  canonical pages emit but queue no links; no phantom-seen marking) and
+  relField (nofollow skipping); Extractor default now also replaces an
+  EMPTY all-array. Refcount fixes found by exit-time leak dump: value
+  object leaked when a page emitted AT the depth cap (free sat inside the
+  depth gate), and the pre-existing as:"number" dup-never-freed string leak
+  -- both invisible to gates running ASan with detect_leaks=0; a boundary
+  regression case now covers the shape. SSRF doc honesty: dyn:http's
+  connect does no address-class check today, so DNS rebinding passes the
+  name-shape gate; docs now say so and point at egress allowlisting.
+- Page/protocol irregularity pass on dyna:scrape: https->http redirect
+  downgrades refused by default (allowInsecureDowngrade opts in); declared
+  Content-Length refused against maxBodyBytes BEFORE transfer (received-bytes
+  cap still enforced, so lying headers stay bounded); every response carries
+  the origin's Content-Type verbatim and a revalidation hit replays the
+  STORED type; Crawl baseField honors a page's <base href> declaration
+  (relative declarations resolve against the page; cross-host bases need
+  sameHost:false); documented source-only posture -- no JS evaluation, so
+  meta-refresh and SPA rendering are invisible by design.
+- New hostile-page coverage: tag-soup recovery through extractor fields,
+  duplicate-id multi-match, entity-encoded hrefs through as:"url", nesting
+  bombs refused at HTMLParse's bound, downgrade/CL refusals, cached-type
+  replay. fuzz_parsers drives Robots bodies + agents, a 30x Location and
+  Extractor option strings from fuzz input; its smoke runs now seed from
+  corpus_robots.
+- Pre-existing gate blockers fixed en route: dyna-oauth2.c compiled with
+  eight unused-variable warnings (native sanitizer builds are zero-warning
+  gated) and API.md's Crawl example dereferenced p.value without an
+  extractor (check-api executes all 291 blocks).
+
+2026-08-21:
+
+- HTTP hardening pass (dyna:net client, App, HTTPServer, HTTPServerAsync):
+  header/method CRLF injection refused; hostile status lines clamp instead
+  of overflowing; WS opening handshake enforces RFC 6455 4.2.1; route
+  status/contentType validated at registration; prefix routes end at a
+  path segment; static files served from an O_NOFOLLOW fd with HEAD and
+  single-range (206/416) support; upload holds its handler by value;
+  async RPC settles through a promise capability; JSON-RPC error bodies
+  are escaped and bounded; notifications (no id) get no response.
+- Connection lifetime: App honors Connection: close and the HTTP/1.0
+  default-close, closing on the response's own send completion; requests
+  pipelined behind a close go unanswered. Client rejects responses with
+  both Transfer-Encoding and Content-Length.
+- Resource bounds: App maxConns (default 8192); over-cap declared bodies
+  answer 413; HTTPServerAsync answers 431 at the header cap; ws/sse/ws-
+  client outbound queues bounded at 4 MB via dyn_aio_queued(); thread-pool
+  server gains an absolute requestTimeoutMs deadline (default 30s);
+  accept-error storms pause instead of spinning; io_uring SQE exhaustion
+  harvests completions instead of stalling connections.
+- IO: one writev per thread-pool response (+7-8% req/s vs prior tree at
+  c=64/256); client threads the chunked framing flag instead of rescanning
+  headers; connect poll timeout clamped; IPv6 literals bind dual-stack
+  (App grows a host option).
+- Tests: tests/test_http_hardening.js (94 assertions) added to the native
+  suite; pentest suite updated for notification semantics.
+
+2026-06-04:
+
+- added custom malloc for small blocks (11% faster on bench-v8)
+- micro optimizations (30% faster on bench-v8)
+- added resizable array buffers
+- added ArrayBuffer.prototype.transfer
+- added the Iterator object and methods
+- added set methods
+- added Atomics.pause
+- added added Map and WeakMap upsert methods
+- added Math.sumPrecise()
+- added regexp duplicate named groups
+- added base64 and hexadecimal encodings for Uint8Array
+- misc bug fixes
+
+2025-09-13:
+
+- added JSON modules and import attributes
+- added JS_PrintValue() API
+- dynajs: pretty print objects in print() and console.log()
+- dynajs: better promise rejection tracker heuristics
+- added RegExp v flag
+- added RegExp modifiers
+- added RegExp.escape
+- added Float16Array
+- added Promise.try
+- improved JSON parser spec conformance
+- dynajs: improved compatibility of std.parseExtJSON() with JSON5 and
+  accept JSON5 modules
+- added JS_FreePropertyEnum() and JS_AtomToCStringLen() API
+- added Error.isError()
+- misc bug fixes
+
+2025-04-26:
+
+- removed the bignum extensions and dynajscalc
+- new BigInt implementation optimized for small numbers
+- added WeakRef, FinalizationRegistry and symbols as weakrefs
+- added builtin float64 printing and parsing functions for more correctness
+- faster repeated string concatenation
+- dynajs: promise unhandled rejections are fatal errors by default
+- added column number in debug information
+- removed the "use strip" extension
+- dynajs: added -s and --strip-source options
+- dynajsc: added -s and --keep-source options
+- added JS_GetAnyOpaque()
+- added more callbacks for exotic objects in JSClassExoticMethods
+- misc bug fixes
+
+2024-01-13:
+
+- top-level-await support in modules
+- allow 'await' in the REPL
+- added Array.prototype.{with,toReversed,toSpliced,toSorted} and
+TypedArray.prototype.{with,toReversed,toSorted}
+- added String.prototype.isWellFormed and String.prototype.toWellFormed
+- added Object.groupBy and Map.groupBy
+- added Promise.withResolvers
+- class static block
+- 'in' operator support for private fields
+- optional chaining fixes
+- added RegExp 'd' flag
+- fixed RegExp zero length match logic
+- fixed RegExp case insensitive flag
+- added os.sleepAsync(), os.getpid() and os.now()
+- added cosmopolitan build
+- misc bug fixes
+
+2023-12-09:
+
+- added Object.hasOwn, {String|Array|TypedArray}.prototype.at,
+  {Array|TypedArray}.prototype.findLast{Index}
+- BigInt support is enabled even if CONFIG_BIGNUM disabled
+- updated to Unicode 15.0.0
+- misc bug fixes
+
+2021-03-27:
+
+- faster Array.prototype.push and Array.prototype.unshift
+- added JS_UpdateStackTop()
+- fixed Windows console
+- misc bug fixes
+
+2020-11-08:
+
+- improved function parameter initializers
+- added std.setenv(), std.unsetenv() and std.getenviron()
+- added JS_EvalThis()
+- misc bug fixes
+
+2020-09-06:
+
+- added logical assignment operators
+- added IsHTMLDDA support
+- faster for-of loops
+- os.Worker now takes a module filename as parameter
+- dynajsc: added -D option to compile dynamically loaded modules or workers
+- misc bug fixes
+
+2020-07-05:
+
+- modified JS_GetPrototype() to return a live value
+- REPL: support unicode characters larger than 16 bits
+- added os.Worker
+- improved object serialization
+- added std.parseExtJSON
+- misc bug fixes
+
+2020-04-12:
+
+- added cross realm support
+- added AggregateError and Promise.any
+- added env, uid and gid options in os.exec()
+- misc bug fixes
+
+2020-03-16:
+
+- reworked error handling in std and os libraries: suppressed I/O
+  exceptions in std FILE functions and return a positive errno value
+  when it is explicit
+- output exception messages to stderr
+- added std.loadFile(), std.strerror(), std.FILE.prototype.tello()
+- added JS_GetRuntimeOpaque(), JS_SetRuntimeOpaque(), JS_NewUint32()
+- updated to Unicode 13.0.0
+- misc bug fixes
+
+2020-01-19:
+
+- keep CONFIG_BIGNUM in the makefile
+- added os.chdir()
+- dynajs: added -I option
+- more memory checks in the bignum operations
+- modified operator overloading semantics to be closer to the TC39
+  proposal
+- suppressed "use bigint" mode. Simplified "use math" mode
+- BigDecimal: changed suffix from 'd' to 'm'
+- misc bug fixes
+
+2020-01-05:
+
+- always compile the bignum code. Added '--bignum' option to dynajs.
+- added BigDecimal
+- added String.prototype.replaceAll
+- misc bug fixes
+
+2019-12-21:
+
+- added nullish coalescing operator (ES2020)
+- added optional chaining (ES2020)
+- removed recursions in garbage collector
+- test stack overflow in the parser
+- improved backtrace logic
+- added JS_SetHostPromiseRejectionTracker()
+- allow exotic constructors
+- improved c++ compatibility
+- misc bug fixes
+
+2019-10-27:
+
+- added example of C class in a module (examples/test_point.js)
+- added JS_GetTypedArrayBuffer()
+- misc bug fixes
+
+2019-09-18:
+
+- added os.exec and other system calls
+- exported JS_ValueToAtom()
+- dynajsc: added 'dynajsc_' prefix to the generated C identifiers
+- added cross-compilation support
+- misc bug fixes
+
+2019-09-01:
+
+- added globalThis
+- documented JS_EVAL_FLAG_COMPILE_ONLY
+- added import.meta.url and import.meta.main
+- added 'debugger' statement
+- misc bug fixes
+
+2019-08-18:
+
+- added os.realpath, os.getcwd, os.mkdir, os.stat, os.lstat,
+  os.readlink, os.readdir, os.utimes, std.popen
+- module autodetection
+- added import.meta
+- misc bug fixes
+
+2019-08-10:
+
+- added public class fields and private class fields, methods and
+  accessors (TC39 proposal)
+- changed JS_ToCStringLen() prototype
+- dynajsc: handle '-' in module names and modules with the same filename
+- added std.urlGet
+- exported JS_GetOwnPropertyNames() and JS_GetOwnProperty()
+- exported some bigint C functions
+- added support for eshost in run-test262
+- misc bug fixes
+
+2019-07-28:
+
+- added dynamic import
+- added Promise.allSettled
+- added String.prototype.matchAll
+- added Object.fromEntries
+- reduced number of ticks in await
+- added BigInt support in Atomics
+- exported JS_NewPromiseCapability()
+- misc async function and async generator fixes
+- enabled hashbang support by default
+
+2019-07-21:
+
+- updated test262 tests
+- updated to Unicode version 12.1.0
+- fixed missing Date object in dynajsc
+- fixed multi-context creation
+- misc ES2020 related fixes
+- simplified power and division operators in bignum extension
+- fixed several crash conditions
+
+2019-07-09:
+
+- first public release
+2026-09-01 (audit branch):
+
+- dyna:json: an all-digit pointer index over 19 digits is a range error, not
+  "leading zero"; Pointer.has returns false for it. Patch.apply caps ops at
+  65536. The add/remove/replace parse ladder is one shared helper (every
+  message byte-identical). __proto__ pollution safety pinned by test.
+- dyna:csv: {strict} mode throws on garbage-after-quote and unterminated
+  quotes (default stays tolerant); BOM stripped; create/addRow check every
+  append and surface a throwing toString instead of writing "".
+- dyna:yaml: "..." no longer hangs ParseAll appending null documents;
+  Stringify emits .nan/.inf/-.inf and quotes literal-lookalike strings;
+  4M-line cap on the line table; BOM stripped; signed inf/nan parse.
+- dyna:config: __toml_header no longer leaks; -inf/+inf/-nan/+nan parse;
+  int64 bounds enforced; CRLF normalized in multiline strings; inline-table
+  and dotted-key redefinition refused; floats round-trip (5.0); BOM stripped.
+- dyna:xml: ]]> cannot slip past the guard on a chunk boundary; duplicate
+  attribute names refused; open-tag/DOCTYPE carry bounded.
+- dyna:encoding: JSON5 hex numbers cap at 2^53 (wrapped before); 64-char
+  number limit removed; RFC 8785 key sort 58x faster (byte-identical);
+  JSONPath first() early-exits.
+- dyna:oauth2: F1-F9 (authority parser refuses userinfo smuggle, frozen
+  crypto bridge, copy-before-coerce compare, quoted-string realms, strict
+  exp/skew/scope, constant-time PKCE, non-object token response refused,
+  WWW-Authenticate budget).
+- dyna:validate: email 63-char label cap; IBAN registry +13 (incl. RU);
+  dashes stripped; E164 8-digit minimum; IsJWT {algs}; delegate exceptions
+  propagate.
+- dyna:uuid: v7 implements the RFC 9562 same-ms counter (strictly
+  increasing within a process); NanoID/ULID size args range-checked;
+  entropy fork deleted.
+- dyna:random: getState/setState with all-zero guard; nextBounded rejects
+  non-integers and accepts full-u64 BigInt bounds; golden pins.
+- dyna:bytes: holder flags invalidated on mutation (were stale-forever);
+  bpe != 1 and detached views throw; utf8ToLatin1 names its two failure
+  causes; countUtf16 rejects odd lengths.
+- dyna:matcher: countIn/allIn scan budget (1e9 steps); MultiMatcher 16 MiB
+  pattern cap; empty-needle conventions pinned; indexOf differential.
+- dyna:semver: MAX_SAFE enforced on numeric identifiers and inc results;
+  errors carry the index/input; Range test table.
+- dyna:decimal: dec_div exponent overflow fixed (int32 wrap); mixed-scale
+  Money refused; INT64_MIN and 2^63 UB guards; precision must be an
+  integer; pow budget message.
+- dyna:mathx/expr: betaln sign-aware; Expression min/max propagate NaN;
+  depth-counter wrap fixed (uint32 wrap undersized the eval stack -- OOB
+  writes on hostile input); mxbits deduped.
+- dyna:time: date() and parseRFC3339 year-range guards; temporal boundary
+  pins; dead locals removed.
+- dyna:simd: AVX2/AVX-512 enabled only when OSXSAVE + XCR0 state bits say
+  the OS preserves YMM/ZMM (CPUID alone SIGILLs); avx2 argmax/argmin seed
+  the vector only when n >= 8 (was OOB reads); silu kernel called directly.
+- dyna:http: 256-per-block header count cap; proxy validates header-name
+  tokens; duplicate non-framing headers refused (400).
+- dyna:net: TCPProxy resolve-failure leak fixed, option failures throw; DNS
+  type range check, ID-collision fails the query, TXN IDs from OS entropy;
+  sqlite param-count error path fixed; pg bytea hex check explicit.
+- dyna:tls: server ALPN actually negotiates (select callback was never
+  installed); alpn_selected into a caller buffer; pre-handshake write sets
+  the error; SNI skipped for IP literals; best-effort close_notify.
+- dyna:url: WHATWG serialization sets + uppercase escape normalization;
+  file: origin is "null"; tab/LF/CR stripped anywhere in the input;
+  URLSearchParams.sort stable; form set aligned to WHATWG; ToString
+  coercion; two-argument delete.
+- dyna:schema: OOM cannot report valid:true (dropped errors counted);
+  getter-free equality; anyOf/oneOf keep branch errors; 64 KiB pattern cap.
+- dyna:structures: LRU/bloom hash basis fixed and seeded (was a corrupted
+  unseeded FNV -- deterministic flooding); LRU entries()/iterator;
+  SortedMap.entries().
+- dyna:serialize: CBOR negative ints beyond int64 degrade to double (was
+  UB wrap to 0); protobuf map-key errors name the key; ASN.1 SET OF is
+  DER-sorted; protobuf string fields validate UTF-8.
+- dyna:dataframe: masks must match nrows exactly; alloc overflow guard.
+- dyna:file: O_CLOEXEC on the sync opens; watcher paths heap-composed (a
+  deep tree truncated at 2048 bytes); one shared async error builder
+  carrying errno/code/op.
+- dyna:sys: Exec deadline saturates (no signed overflow -> instant SIGTERM);
+  Exec {uid,gid}; which checks execute bits (access(X_OK) is root-wrong);
+  setEnv NUL/=/empty refusals tested.
+- dyna:simd: OSXSAVE/xgetbv gate before AVX2/AVX-512.
+- stdlib: std.popen REMOVED (argv[0] went to /bin/sh -- command injection
+  by construction; use dyna:sys Exec). std.urlGet REMOVED (blocking curl
+  subprocess; use fetch). os.read/write fixed a detached-buffer UAF: the
+  pointer was captured before valueOf-runnable index coercion.
+- make: test_codec_zstd/test_xml_large wired into slim MODTESTS with
+  cross-module companions; test_validate_ext documented as full-binary-only.
+- tests: official corpora vendored (json-patch-tests, JSON-Schema-Test-Suite
+  draft2020-12, WPT urltestdata, toml-test); conformance runners, parametric
+  coverage grids for dataframe/mathx/ml, and a bounded adversarial sweep.

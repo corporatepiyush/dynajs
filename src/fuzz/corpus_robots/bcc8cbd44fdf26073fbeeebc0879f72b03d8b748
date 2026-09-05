@@ -1,0 +1,6 @@
+User-agent: *
+Désallow: /a
+Allow: /a/b
+
+Désallow: /a
+ASil-delatemap: httgl

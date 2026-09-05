@@ -1,0 +1,23 @@
+function mixed() {
+    var v1 = 2, v2 = 3, v3 = 5, acc = 0, mix = 1, n1 = 4, n2 = 6;
+    let lex1 = 4, lex2 = 6, lex3 = 9, lex4 = 10;
+    for (var k = 0; k < 100; k++) {
+        mix = (v1 * v2 + v3) % 997;
+        n1 = (v3 + v1) % 991;
+        n2 = (v2 - v3) % 983;
+        acc = (n1 * n2 + mix) % 977;
+        v1 = (v2 + v3 * acc) % 971;
+        v2 = (acc - v1 * v2) % 967;
+        v3 = (v3 * v3 - acc) % 953;
+        acc = (acc + v1) % 947;
+        mix = (lex1 * lex2 - lex3 * v1) % 941;
+        n1 = (lex2 + lex3) % 937;
+        n2 = (lex4 - lex1) % 929;
+        lex1 = (v2 * mix + n1) % 919;
+        lex2 = (lex1 - v3 * v2) % 911;
+        lex3 = (lex3 + acc * mix) % 907;
+        lex4 = (n1 * n2 - lex2) % 887;
+    }
+    return acc * mix + lex1 * lex2 - lex3 + n1 - n2;
+}
+mixed();

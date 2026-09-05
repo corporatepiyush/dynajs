@@ -1,0 +1,86 @@
+libFuzzer support for DynaJS
+=============================
+
+BUILD WITH A SANITIZER. THIS IS NOT OPTIONAL.
+
+  CONFIG_CLANG=y CONFIG_NATIVE_MODULES=y make <target>
+
+DO NOT ADD CONFIG_ASAN=y HERE -- IT IS STRICTLY WEAKER FOR FUZZ TARGETS.
+An `ifndef CONFIG_ASAN` guard blanks FUZZ_DEFAULT_SAN, so that flag buys
+`address` and LOSES `undefined`. Measured: fuzz_stdlib built with it has 14234
+asan symbols and ZERO __ubsan_handle_*, against 9 for every default-built
+target. `make fuzz-all` asserts both sanitizers are present, by symbol rather
+than by flag.
+
+A LOCAL BUILD NOW GETS ONE BY DEFAULT -- `make <target>` links
+-fsanitize=address,undefined. Set FUZZ_NO_DEFAULT_SAN=y only if you supply your
+own (OSS-Fuzz does, via CFLAGS), and the build will warn that it did.
+
+Without a sanitizer, libFuzzer catches CRASHES and nothing else -- an
+out-of-bounds read produces no report at all, so the entire bug class these
+targets exist to find is invisible. This is not a matter of efficacy.
+
+MEASURED, 2026-08-01: a deliberately planted one-byte heap overread survived
+**5229 executions** with no report, because `nm fuzz_stdlib | grep -c asan` was
+0. FOUR targets (dyns, lz4, net, scram) already hardcoded a sanitizer; the
+SEVEN that went through LIB_FUZZING_ENGINE did not, and they were the ones that
+missed it. All eleven are now consistent.
+
+Rebuilt with a sanitizer the plant fires at `dyna-scrape.c:80` -- and the same
+rebuild found a REAL pre-existing heap-use-after-free in dyn_ulid_time (the
+error path freed the string, then read it to format the message). An earlier
+version of this file called the sanitizer an efficacy improvement, which is why
+nobody set it.
+
+THE SEED MUST REACH THE CODE. The plant above did not fire on
+`Disallow: /a%` alone -- with no `User-agent:` line no group is active, so the
+rule is never pushed and the decoder never runs. `corpus_robots/` seeds shapes
+that do reach it.
+
+So: a clean run from a build without a sanitizer says almost nothing. Re-run
+the corpus under a plain `make` build (address+undefined) before trusting any
+past result -- NOT under CONFIG_ASAN=y, which drops the undefined half.
+
+Targets
+-------
+
+  fuzz_bytecode
+  fuzz_compile
+  fuzz_dyns
+  fuzz_eval
+  fuzz_json
+  fuzz_lz4
+  fuzz_module_export
+  fuzz_net
+  fuzz_oauth2
+  fuzz_regexp
+  fuzz_scram
+  fuzz_stdlib
+
+CONFIG_NATIVE_MODULES=y is required for fuzz_stdlib and fuzz_net: the parsers
+they cover live in NAT_MODULE_OBJS and a default build compiles none of them.
+
+Running
+-------
+
+  ./fuzz_stdlib                       # cold
+  ./fuzz_stdlib corpus_dir/           # seeded -- ALWAYS prefer this
+  ./fuzz_eval -dict=src/fuzz/fuzz.dict    # with the dictionary
+  ./fuzz_stdlib -max_total_time=60 -rss_limit_mb=4096
+
+SEED FROM A CORPUS. A fuzzer starting cold spends its budget rediscovering the
+grammar before it can reach the interesting code, and for anything behind a
+length-and-terminator format that can exceed the whole run -- so a real bug
+reads as "the target does not catch it", which is the wrong conclusion about
+the wrong thing.
+
+A target is unproven until you inject a fault and watch it fire
+---------------------------------------------------------------
+
+Add the bug, run, confirm the report names it, revert. A target that has never
+caught anything may be reaching nothing at all -- which is exactly what the
+5229-run result above turned out to mean.
+
+Reproducers (crash-*, leak-*, timeout-*, oom-*) are written to the CWD and are
+gitignored. Read `git status` before committing after a fuzz run: a
+fault-injection session produces reproducers for bugs that do not exist.

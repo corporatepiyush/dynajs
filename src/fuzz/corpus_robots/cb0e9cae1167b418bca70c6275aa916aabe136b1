@@ -1,0 +1,6 @@
+*Ö0=User-agent: *
+Disallow: /a
+Allow: /a/b
+Crawl-delay: 2
+Sitemap: 
+shUuttpas://h/s.xml
