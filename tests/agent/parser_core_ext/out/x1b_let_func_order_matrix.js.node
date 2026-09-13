@@ -1,0 +1,25 @@
+A1 let;func SyntaxError
+A2 let;async func SyntaxError
+A3 let;gen SyntaxError
+A4 let;async gen SyntaxError
+A5 const;func SyntaxError
+B1 func;let SyntaxError
+B2 let;var SyntaxError
+B3 var;func ok
+B4 func;func ok
+B5 func;var ok
+C1 let;{func} ok
+C2 let;if(0)func ok
+C3 let;if(1){func} ok
+C4 let;sw{case:func} ok
+C5 var;if(1){func} ok
+D1 let;func -> typeof ok
+E1 typeof after A1 fail ok
+F1 twice-nested block ok
+F2 let in inner block, func global ok
+G1 dir let;func SyntaxError
+G2 dir var;func ok
+G3 dir func;let SyntaxError
+G4 dir let;var SyntaxError
+G5 dir let;{func} ok
+H1 undefined function undefined

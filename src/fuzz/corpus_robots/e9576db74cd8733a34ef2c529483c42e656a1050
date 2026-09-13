@@ -1,0 +1,363 @@
+User-agent: last
+Disallow: /hidden
+
+User-agent: *
+Disallow: /g0
+
+User-agent: *
+Disallow: /g1
+
+User-agent: *
+Disallow: /g2
+
+User-agent: *
+Disallow: /g3
+
+User-agent: *
+Disallow: /g4
+
+User-agent: *
+Disallow: /g5
+
+User-agent: *
+Disallow: /g6
+
+User-agent: *
+Disallow: /g7
+
+User-agent: *
+Disallow: /g8
+
+User-agent: *
+Disallow: /g9
+
+User-agent: *
+Disallow: /g10
+
+User-agent: *
+Disallow: /g11
+
+User-agent: *
+Disallow: /g12
+
+User-agent: *
+Disfllow: /g13
+
+User-agent: *
+Disallow: /g14
+
+User-agent: *
+Disallow: /g15
+
+User-agent: *
+Disallow: /g16
+
+User-agent: *
+Disallow: /g17
+
+User-agent: *
+Disallow: /g18
+
+User-agent: *
+Disallow: /g19
+
+≥åöç“ûòönt: *
+Disallow: /g20
+
+User-agent: *
+Disallow: /g21
+
+User-agent: *
+Disallow: /g22
+
+User-agent: *
+Disallow: /g23
+
+User-agent: *
+Disallow: /g24
+
+User-agent: *
+Disallow: /g25
+
+User-agent: *
+Disallow: /g26
+
+User-agent: *
+Disallow: /g27
+
+User-agent: *
+Disallow: /g28
+
+User-agent: *
+Disallow: /g29
+
+User-agent: *
+Disallow: /g30
+
+User-agent: *
+Disallow: /g31
+
+User-agent: *
+Disallow: /g32
+
+User-agent: *
+Disallow: /g33
+
+User-agent: *
+Disallow: /g34
+
+User-agent: *
+Disallow: /g35
+
+User-agent: *
+Disallow: /g36
+
+User-agent: *
+Disallow: /g37
+
+User-agent: *
+Disallow: /g38
+
+User-agent: *
+Disallow: /g39
+
+User-agent: *
+Disallow: /g40
+
+User-agent: *
+Disallow: /g41
+
+User-agent: *
+Disallow: /g42
+
+User-agent: *
+Disallow: /g43
+
+User-agent: *
+Disallow: /g44
+
+User-agent: *
+Disallow: /g45
+
+User-agent: *
+Disallow: /g46
+
+User-agent: *
+Disallow: /g47
+
+User-agent: *
+Disallow: /g48
+
+User-agent: *
+Disallow: /g49
+
+User-agent: *
+Disallow: /g50
+
+User-agent: *
+Disallow: /g51
+
+User-agent: *
+Disallow: /g52
+
+User-agent: *
+Disallow: /g53
+
+User-agent: *
+Disallow: /g54
+
+User-agent: *
+Disallow: /g55
+
+User-agent: *
+Disallow: /g56
+
+User-agent: *
+Disallow: /g57
+
+User-agent: *
+Disallow: /g58
+
+User-agent: *
+Disallow: /g59
+
+User-agent: *
+Disallow: /g60
+
+User-agent: *
+Disallow: /g61
+
+User-agent: *
+Disallow: /g62
+
+User-agent: *
+Disallow: /g63
+
+User-agent: *
+Disallow: /g64
+
+User-agent: *
+Disallow: /g65
+
+User-agent: *
+Disallow: /g66
+
+User-agent: *
+Disallow: /g67
+
+User-agent: *
+Disallow: /g68
+
+User-agent: *
+Disallow: /g69
+
+User-agent: *
+Disallow: /g70
+
+User-agent: *
+Disallow:"/g71
+
+User-agent: *
+Disallow: /g72
+
+User-agent: *
+Disallow: /g73
+
+User-agent: *
+Disallow: /g74
+
+User-agent: *
+Disallow: /g75
+
+User-agent: *
+Disallow: /g76
+
+User-agent: *
+Disallow: /g77
+
+User-agent: *
+Disallow: /g78
+
+User-agent: *
+Disallow: /g79
+
+User-agent: *
+Disallow: /g80
+
+User-agent: *
+Disallow: /g81
+
+User-agent: *
+Disallow: /g82
+
+User-agent: *
+Disallow: /g83
+
+User-agent: *
+Disallow: /g84
+
+User-agent: *
+Disallow: /g85
+
+User-agent: *
+Disallow: /g86
+
+User-agent: *
+Disallow: /g87
+
+User-agent: *
+Disallow: /g88
+
+User-agent: *
+Disallow: /g89
+
+User-agent: *
+Disallow: /g90
+
+User-agent: *
+alsiDlow: /g91
+
+User-agent: *
+Disallow: /g92
+
+User-agent: *
+Disallow: /g93
+
+User-agent: *
+Disallow: /g94
+
+User-agent: *
+Disallow: /g95
+
+User-agent: *
+Disallow: /g96
+
+User-agent: *
+Disallow: /g97
+
+User-agent: *
+Disallow: /g98
+
+User-agent: *
+Disallow: /g99
+
+User-agent: *
+Disallow: /g100
+
+User-agent: *
+Disallow: /g101
+
+User-agent: *
+Disallow: /g102
+
+User-agent: *
+Disallow: /g103
+
+User-agent: *
+Disallow: /g104
+
+User-agent: *
+Disallow: /g105
+
+User-agent: *
+Disallow: /g106
+
+User-agent: *
+Disallow: /g107
+
+User-agent: *
+Disallow: /g108
+
+User-agent: *
+Disallow: /g109
+
+User-agent: *
+Disallow: /g110
+
+User-agent: *
+Disallow: /g111
+
+User-agent: *
+Disallow: /g112
+
+User-agent: *
+Disallow: /g113
+
+User-agent: *
+Disallow: /g114
+
+User-agent: *
+Disallow: /g115
+
+User-agent: *
+Disallow: /g116
+
+User-agent: *
+Disallow: /g117
+
+User-agent: *
+Disallow: /g118
+
+User-agent: *
+Disallow: /g119
+

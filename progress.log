@@ -1,0 +1,16 @@
+2026-09-12 08:56:41 discovery done; rebuilding with CONFIG_NATIVE_MODULES=y CONFIG_TLS=y (base build lacks dyna:* modules)
+2026-09-12 09:12:21 encoding suite green: 13 probes 612 asserts
+2026-09-12 09:18:02 dyna:json green (2 probes, 109 asserts); FIXED Pointer depth cap (src/dyna-json.c JP_TOODEEP)
+2026-09-12 09:22:40 dyna:csv green (3 probes, 62 asserts); pinned lenient-recovery + blank-line + LF-writer divergences
+2026-09-12 09:30:31 dyna:compress green (7 probes, 119 asserts); zstd differential vs python 3.14 compression.zstd; gzip both directions vs zlib
+2026-09-12 09:36:48 dyna:xml green (4 probes, 97 asserts); FIXED SAXParser root discipline (src/dyna-xml.c dyn_sax_root_check): trailing content + duplicate roots now rejected like XMLParse
+2026-09-12 09:40:04 dyna:yaml green (4 probes, 89 asserts); TICKET: multi-line quoted scalars unsupported (pinned); 1.2-core divergences documented+covered
+2026-09-12 09:46:18 dyna:matcher green (4 probes, 464 asserts); dyna:html green (4 probes, 98 asserts); FIXED html numeric-entity overflow -> U+FFFD, Selector.first undefined
+2026-09-12 09:46:52 all 8 suites green: 41 probes 1650 asserts; starting ASan build
+2026-09-12 09:48:34 ASan: 42 probes 4713 asserts clean; rebuilding normal for gates
+2026-09-12 09:49:09 make test: 39/39 suites passed
+2026-09-12 09:54:05 stray-close mirror added to SAX fix (99 xml asserts; battery 4715); rebuilding gates on final build
+2026-09-12 09:55:18 FINAL GATES on final build: make test 39/39; test262 60/83744 with fail file-set IDENTICAL to tools/test262_errors.txt; ASan battery 4715 asserts 0 reports; dyna_text battery 4715 green
+2026-09-12 10:46:19 REVIEW-FIX batteries: 42 probes 4721 asserts green on dynajs.final AND dynajs-asan
+2026-09-12 11:41:44 EXPANDED GATES ALL GREEN: make test 39/39, test-native 199/199 (fixed Selector.first x4 + conformance SAX baseline pin), test262 60/83744 identical fail-set, batteries 42x4721 dynajs+ASan
+2026-09-12 20:34:12 KILLED 2 leaked orphaned test servers from other lanes (pids 43574 work46 _dyna_http_hard/app.js on :18742 since 14:34, 33135 work38 _dyna_httppen/srv.js on :18471 since 14:27) -- they polluted my gates (hardening 404s + gate bind failure were hit-tests against the work46 orphan). Not my edits: orig suite 111/111 vs mine 16 FAIL was port-squatting, proven by lsof.

@@ -1,0 +1,2 @@
+post=hi
+objok=function

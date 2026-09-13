@@ -1,0 +1,5 @@
+run slowarr_tests/diff1.js
+frame select 7
+p *p
+p p->u.array
+quit

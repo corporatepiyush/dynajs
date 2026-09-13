@@ -1,0 +1,94 @@
+
+=================================================================
+==70910==ERROR: LeakSanitizer: detected memory leaks
+
+Direct leak of 136 byte(s) in 1 object(s) allocated from:
+    #0 0x000100da140c in malloc+0x70 (libclang_rt.asan_osx_dynamic.dylib:arm64+0x5540c)
+    #1 0x0001004966c0 in js_def_malloc js_malloc.inc.c:842
+    #2 0x000100491e6c in js_malloc_large js_malloc.inc.c:142
+    #3 0x00010056f2c8 in js_realloc js_malloc.inc.c:507
+    #4 0x00010056f2c8 in scope_hash_build parser.inc.c:2635
+    #5 0x00010056edf8 in add_scope_var parser.inc.c:2874
+    #6 0x000100563c9c in define_var parser.inc.c:3092
+    #7 0x000100573a3c in js_define_var parser.inc.c:4962
+    #8 0x00010058b820 in js_parse_var parser.inc.c:7244
+    #9 0x00010055a638 in js_parse_statement_or_decl parser.inc.c:7709
+    #10 0x000100551c9c in js_parse_source_element parser.inc.c:10910
+    #11 0x0001005611a0 in js_parse_function_decl2 parser.inc.c:17192
+    #12 0x000100551b8c in js_parse_source_element parser.inc.c
+    #13 0x0001005611a0 in js_parse_function_decl2 parser.inc.c:17192
+    #14 0x0001005779c4 in js_parse_function_decl parser.inc.c:17337
+    #15 0x0001005779c4 in js_parse_postfix_expr parser.inc.c:5707
+    #16 0x000100589c5c in js_parse_unary parser.inc.c:6436
+    #17 0x000100589788 in js_parse_expr_binary parser.inc.c:6604
+    #18 0x000100588dc0 in js_parse_logical_and_or parser.inc.c:6616
+    #19 0x000100588dd4 in js_parse_logical_and_or parser.inc.c:6619
+    #20 0x000100587080 in js_parse_coalesce_expr parser.inc.c:6656
+    #21 0x000100587080 in js_parse_cond_expr parser.inc.c:6684
+    #22 0x000100587080 in js_parse_assign_expr2 parser.inc.c:6899
+    #23 0x000100583828 in js_parse_expr2 parser.inc.c:7003
+    #24 0x000100583828 in js_parse_expr parser.inc.c:7025
+    #25 0x000100577c74 in js_parse_expr_paren parser.inc.c:4916
+    #26 0x000100577c74 in js_parse_postfix_expr parser.inc.c:5679
+    #27 0x000100589c5c in js_parse_unary parser.inc.c:6436
+    #28 0x000100589788 in js_parse_expr_binary parser.inc.c:6604
+    #29 0x000100588dc0 in js_parse_logical_and_or parser.inc.c:6616
+    #30 0x000100588dd4 in js_parse_logical_and_or parser.inc.c:6619
+    #31 0x000100587080 in js_parse_coalesce_expr parser.inc.c:6656
+    #32 0x000100587080 in js_parse_cond_expr parser.inc.c:6684
+    #33 0x000100587080 in js_parse_assign_expr2 parser.inc.c:6899
+    #34 0x000100559f7c in js_parse_expr2 parser.inc.c:7003
+    #35 0x000100559f7c in js_parse_expr parser.inc.c:7025
+    #36 0x000100559f7c in js_parse_statement_or_decl parser.inc.c:8488
+    #37 0x000100551c9c in js_parse_source_element parser.inc.c:10910
+    #38 0x00010048a908 in js_parse_program parser.inc.c:17364
+    #39 0x00010048a908 in __JS_EvalInternal parser.inc.c:17531
+    #40 0x000100470c6c in JS_EvalInternal parser.inc.c:17582
+    #41 0x000100470c6c in JS_EvalThis parser.inc.c:17615
+
+Direct leak of 136 byte(s) in 1 object(s) allocated from:
+    #0 0x000100da140c in malloc+0x70 (libclang_rt.asan_osx_dynamic.dylib:arm64+0x5540c)
+    #1 0x0001004966c0 in js_def_malloc js_malloc.inc.c:842
+    #2 0x000100491e6c in js_malloc_large js_malloc.inc.c:142
+    #3 0x00010056f2c8 in js_realloc js_malloc.inc.c:507
+    #4 0x00010056f2c8 in scope_hash_build parser.inc.c:2635
+    #5 0x00010056edf8 in add_scope_var parser.inc.c:2874
+    #6 0x000100563c9c in define_var parser.inc.c:3092
+    #7 0x000100582298 in js_parse_class parser.inc.c:4419
+    #8 0x000100559d64 in js_parse_statement_or_decl parser.inc.c:8172
+    #9 0x000100551c9c in js_parse_source_element parser.inc.c:10910
+    #10 0x0001005611a0 in js_parse_function_decl2 parser.inc.c:17192
+    #11 0x0001005779c4 in js_parse_function_decl parser.inc.c:17337
+    #12 0x0001005779c4 in js_parse_postfix_expr parser.inc.c:5707
+    #13 0x000100589c5c in js_parse_unary parser.inc.c:6436
+    #14 0x000100589788 in js_parse_expr_binary parser.inc.c:6604
+    #15 0x000100588dc0 in js_parse_logical_and_or parser.inc.c:6616
+    #16 0x000100588dd4 in js_parse_logical_and_or parser.inc.c:6619
+    #17 0x000100587080 in js_parse_coalesce_expr parser.inc.c:6656
+    #18 0x000100587080 in js_parse_cond_expr parser.inc.c:6684
+    #19 0x000100587080 in js_parse_assign_expr2 parser.inc.c:6899
+    #20 0x000100583828 in js_parse_expr2 parser.inc.c:7003
+    #21 0x000100583828 in js_parse_expr parser.inc.c:7025
+    #22 0x000100577c74 in js_parse_expr_paren parser.inc.c:4916
+    #23 0x000100577c74 in js_parse_postfix_expr parser.inc.c:5679
+    #24 0x000100589c5c in js_parse_unary parser.inc.c:6436
+    #25 0x000100589788 in js_parse_expr_binary parser.inc.c:6604
+    #26 0x000100588dc0 in js_parse_logical_and_or parser.inc.c:6616
+    #27 0x000100588dd4 in js_parse_logical_and_or parser.inc.c:6619
+    #28 0x000100587080 in js_parse_coalesce_expr parser.inc.c:6656
+    #29 0x000100587080 in js_parse_cond_expr parser.inc.c:6684
+    #30 0x000100587080 in js_parse_assign_expr2 parser.inc.c:6899
+    #31 0x000100559f7c in js_parse_expr2 parser.inc.c:7003
+    #32 0x000100559f7c in js_parse_expr parser.inc.c:7025
+    #33 0x000100559f7c in js_parse_statement_or_decl parser.inc.c:8488
+    #34 0x000100551c9c in js_parse_source_element parser.inc.c:10910
+    #35 0x00010048a908 in js_parse_program parser.inc.c:17364
+    #36 0x00010048a908 in __JS_EvalInternal parser.inc.c:17531
+    #37 0x000100470c6c in JS_EvalInternal parser.inc.c:17582
+    #38 0x000100470c6c in JS_EvalThis parser.inc.c:17615
+    #39 0x0001006ac594 in js_fetch_install dyna-fetch.inc.c:304
+    #40 0x0001006ac594 in js_std_add_helpers dyna-libc.c:5328
+    #41 0x0001004050a8 in main dyna-cli.c:658
+    #42 0x00018a5204e0 in start+0x1b4c (dyld:arm64e+0x204e0)
+
+SUMMARY: AddressSanitizer: 272 byte(s) leaked in 2 allocation(s).

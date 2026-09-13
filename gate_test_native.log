@@ -1,0 +1,10 @@
+-----------------------------------------------------------------
+FAIL: tests/test_crypto.js (exit 1)
+Output:
+  SyntaxError: Could not find export 'RSA' in module 'dyna:crypto'
+  
+-----------------------------------------------------------------
+FAIL: 1 of 199 test suites failed:
+  - tests/test_crypto.js (exit 1)
+make: *** [test-native] Error 1
+rc=2

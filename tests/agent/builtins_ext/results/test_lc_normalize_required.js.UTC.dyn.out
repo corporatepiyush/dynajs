@@ -1,0 +1,18 @@
+0 eq=true sign=zero nfcEq=true
+1 eq=true sign=zero nfcEq=true
+2 eq=true sign=zero nfcEq=true
+3 eq=true sign=zero nfcEq=true
+4 eq=true sign=zero nfcEq=true
+5 eq=true sign=zero nfcEq=true
+6 eq=true sign=zero nfcEq=true
+7 eq=true sign=zero nfcEq=true
+8 eq=true sign=zero nfcEq=true
+9 eq=true sign=zero nfcEq=true
+10 eq=true sign=zero nfcEq=true
+11 eq=true sign=zero nfcEq=true
+[SIGN] near 0 nonzero=true sign=pos
+[SIGN] near 1 nonzero=true sign=neg
+[SIGN] near 2 nonzero=true sign=neg
+[SIGN] near 3 nonzero=true sign=pos
+[SIGN] near 4 nonzero=true sign=neg
+[SIGN] hash=70052ac7

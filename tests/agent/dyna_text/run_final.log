@@ -1,0 +1,2 @@
+run.sh: 42 probes, family=all, dynajs=../../../dynajs.final
+run.sh: done. probes=42 failures(rc!=0 or result!=PASS)=0 asserts pass=4721 fail=0  summary: out/summary.tsv

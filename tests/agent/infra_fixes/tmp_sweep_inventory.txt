@@ -1,0 +1,62 @@
+/tmp-hardcoded test-scratch sweep -- work51 (INFRA 1), 2026-09-11
+=====================================================================
+
+FIXED this change (fixed-name scratch -> per-run unique dir honoring
+TMPDIR, mkdtemp-style; Date.now()+random or pid-derived suffix):
+
+  tests/test_http_pentest.js        T  (the ticketed collision; 2 concurrent
+                                       runs failed, pass solo -- acceptance:
+                                       tests/agent/infra_fixes/acc_run*.log)
+  tests/test_http_params.js         T
+  tests/test_http_ws.js             T
+  tests/test_http_security.js       T
+  tests/test_http_hardening.js      T
+  tests/test_net_tcp.js             IPCP (unix socket; short suffix: path len)
+  tests/test_net_e2e.js             sqlite db path
+  tests/test_codec_zstd.js          zstd + brotli dirs
+  tests/test_lz4.js                 tmp dir
+  tests/test_file.js                4 file paths
+  tests/test_file_async.js          TMP prefix (now TMPDIR + random)
+  tests/test_data_pentest.js        dir
+  tests/test_netfile_pentest.js     root
+  tests/test_uring_disk.js          data file
+  tests/test_cov_ml_dataframe_mathx.js  model path
+  tests/test_cov_net_http_url_validate.js  progress log + watch dir
+  tests/test_watch.js               ROOT
+  tests/test_module_surface.js      T
+  tests/test_worker_native.js       6 worker script/output paths (T)
+  tests/test_ml_persist.js          persist + attack_ok paths
+  tests/bench_regexp_memory.js      TMP
+  tests/bench_io_topology.js        tmp()
+  tests/bench_stdio.js              TMP
+  tests/bench_utf8_ingress.js       P()
+  tools/xplat-verify.sh             host binary (.$$ suffix)
+  tests/agent/bbreview/run.py       DIR -> tempfile.mkdtemp
+  tests/agent/bbreview/gen_cpool.py DIR -> tempfile.mkdtemp
+
+ALREADY unique per run (Date.now/pid/random suffix before this change;
+collision-free, left as-is):
+
+  tests/test_audit_p1.js:93,115,161   (Date.now)
+  tests/test_http.js:141              (Date.now + random)
+  tests/test_keepalive.js:24          (pid())
+  tests/test_proc.js:222              (Date.now)
+
+BEHAVIORAL /tmp references -- NOT scratch, deliberately untouched (the test
+exercises /tmp as an existing directory, a refusal path, or never writes):
+
+  tests/test_api_params.js:435,448   NUL-in-path / type-refusal assertions
+  tests/test_cov_file_html_xml_yaml_json.js:84,88,400  Path join/normalize
+  tests/test_cov_sys_time_random_uuid_misc.js:70       sys.diskUsage("/tmp")
+  tests/test_file_async.js:114       readFileAsync on the /tmp DIRECTORY
+  tests/test_proc.js:172             Exec cwd semantics
+  tests/test_ml_persist.js:161,186,368  save()/load() refusal assertions
+  tests/test_net_pentest.js:45,64    ENAMETOOLONG / NUL-in-socket-path probes
+
+HISTORICAL transcripts (records of past lldb sessions, not executed):
+
+  tests/agent/slowarr_tests/lldb_*.txt
+
+Note: run-tests-parallel.sh already exports a per-worker TMPDIR scratch for
+every suite; the sweep makes every suite honor it and adds per-run suffixes
+so two concurrent SOLO runs of the same suite cannot collide either.

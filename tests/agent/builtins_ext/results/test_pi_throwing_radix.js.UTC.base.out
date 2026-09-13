@@ -1,0 +1,7 @@
+valueOfThrow=THROW:RangeError
+toStringThrow=THROW:TypeError
+symbolPrim=OK:18
+symbolThrow=THROW:RangeError
+sideEff v=18 calls=1
+strSide v2=42 calls2=1
+hash=12f6a853

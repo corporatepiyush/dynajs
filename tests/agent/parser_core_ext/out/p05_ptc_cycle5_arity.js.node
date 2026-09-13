@@ -1,0 +1,5 @@
+a xyzD
+b xyzD
+deep RangeError
+c 7
+deep2 RangeError

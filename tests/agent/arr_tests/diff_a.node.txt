@@ -1,0 +1,69 @@
+from.dense => [0,1,2,3,4]
+from.dense.identity => "true,true,3"
+from.empty => []
+from.holey => [3,"1,,3",3]
+from.holey.proto => "|P1|"
+from.dense.shrink-map => "10|20"
+from.dense.grow-map => "10|20|30|NaN|NaN|NaN"
+from.dense.mutate-elems-map => "1|100|3"
+from.dense.mapfn-grows-length-once => "1|2|3|||||||4"
+from.u8 => [3,1,2]
+from.f64 => [1.5,0,null,null]
+from.i32 => [-2147483648,2147483647]
+from.bi64 !! TypeError
+from.u8.map => [1,3,5]
+from.u8.detached !! TypeError
+from.u8.detached.map !! TypeError
+from.subclass => [true,true,"0,1,2,3",4,true]
+from.subclass.capture => [true,"0: 1:1 2:1,2","1,2,3"]
+from.subclass.prefilled => [true,"1,2,3"]
+from.subarray.species => [true,3,"1,2,3"]
+from.custom-iterator => [5,"0,1,2"]
+from.generator => "1,2,3"
+from.set => "1|2|3"
+from.map => "1a|2b"
+from.string => "h|é|l|l|o"
+from.string.map => "ABC"
+from.arraylike => "a|b"
+from.arraylike.long => "||"
+from.arraylike.map-mutate => "1|2|99"
+from.arguments => "n/a"
+from.mapfn.throw => "0,1,RangeError"
+from.mapfn.throw.proto-return => "ret,RangeError"
+from.mapfn.throw.obj-proto-return => "ret2,RangeError"
+from.thisarg => "5,10"
+from.mapfn-undefined => "1,2"
+from.mapfn-null !! TypeError
+from.mapfn-noncallable !! TypeError
+from.mapfn.arity-and-order => "2:10@0 2:20@1"
+iter.keys-entries => ["0,1","[[0,\"x\"],[1,\"y\"]]"]
+iter.result-shape => ["value,done","{\"value\":1,\"done\":false}",true,true,true]
+iter.fresh-identity => [true,1,2,false,false,true]
+iter.mutation-independence => ["z",42,null,true]
+iter.break-resume => [2,3,true,true]
+iter.iterate-while-mutating => "1,2,3,40,5"
+iter.shrink-during-forof => "1,2"
+iter.keys.tampered-proto-next => "1,2 3"
+iter.exhausted-then-length => [true,null]
+ta.from.u8 => "1,2,3"
+ta.from.u8.self => "true 5,6,7"
+ta.from.f64 => "Float64Array 1.25 -2.5"
+ta.from.u8-to-f64 => "1,2,3"
+ta.from.f64-to-u8 => "1,255,253,0"
+ta.from.i16-to-u8 => "255,0,1"
+ta.from.bi64-to-bi64 => "-5 9"
+ta.from.bi64-to-u8 !! TypeError
+ta.from.bi64-to-f64 !! TypeError
+ta.from.dense => "1,2,44,255"
+ta.from.dense-map => "1,3,5"
+ta.from.map-throw => "TypeError"
+ta.from.map-mutate-src => "1,2,3"
+ta.from.subclass => "true 1,2"
+ta.from.small-ctor !! TypeError
+ta.from.set => "1,2,3"
+ta.from.string => {"0":0,"1":0}
+ta.from.u8.detached !! TypeError
+ta.from.u8.map-detach-mid => {"0":0,"1":0,"2":0}
+ta.from.ctor-mutates-src => "1,2,3 1,2,3"
+ta.from.iterable-proxy => "1,2,3"
+DIFF_A_END

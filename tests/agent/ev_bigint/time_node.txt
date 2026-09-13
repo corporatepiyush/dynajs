@@ -1,0 +1,1 @@
+node ev/diff_battery.js > ev/diff_full_node.txt 2>&1  14.83s user 0.26s system 99% cpu 15.095 total

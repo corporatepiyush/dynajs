@@ -1,0 +1,5 @@
+User-agent: *
+Désallow: /a
+Allow: /a/b
+Crawl-delay: 2
+Sil-delatemap: httpl

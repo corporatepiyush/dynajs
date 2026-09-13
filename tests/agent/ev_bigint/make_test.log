@@ -1,0 +1,35 @@
+./dynajs --std tests/test_builtin.js
+  all 39 test suites passed (0 solo, 39 parallel)
+make[1]: `examples/hello' is up to date.
+make[1]: `examples/hello_module' is up to date.
+make[1]: `examples/test_fib' is up to date.
+./examples/hello
+Hello World
+./examples/hello_module
+Hello World
+fib(10)= 55
+msg= { x: 1, tab: [ 1, 2, 3 ] }
+./examples/test_fib
+Hello World
+fib(10)= 55
+./dynajs tests/test_std.js
+./dynajs tests/test_rw_handler.js
+test_rw_handler: P0-3 regression OK
+./dynajs tests/test_async_api.js
+test_async_api: all tests passed
+./dynajs tests/test_async_leak.js
+test_async_leak: N=3000 ROUNDS=0
+  ok  await loop (3000 awaits)
+  ok  promise/async cycle reclaimed
+  ok  rejections handled (inline + chain)
+  ok  timer fire churn (3000)
+  ok  clearTimeout frees callback capture
+  ok  setInterval self-clear
+  ok  for-await async iterator
+  ok  queueMicrotask churn (3000)
+  ok  read-handler clear frees capture
+test_async_leak: all tests passed
+
+NOTICE: the pre-push gate is not installed. Run:  make install-hooks
+        Without it nothing checks a push. See `make prepush`.
+

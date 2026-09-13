@@ -1,0 +1,7 @@
+literals => -0,NaN,0,Infinity,-Infinity,Infinity
+getters => -0,NaN
+push => -0,NaN,-0,NaN len=4
+mutate => 0,NaN,-0,-0
+concat => -0,NaN,0
+slice => -0,NaN slice0 => -0
+frozen => -0,NaN

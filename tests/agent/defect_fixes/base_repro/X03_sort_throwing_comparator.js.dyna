@@ -1,0 +1,6 @@
+A throw=TypeError calls=2 len=5 multiset=[1,2,3,4,5]
+B throw=RangeError calls=3 len=5 multiset=[1,2,7,8,9] tag=T
+C proto-seen=true done own1=false
+D parity=true [1,2,3,5,7,8,9] len=7
+E default=[1,10,"a",null] len=4
+F mutate-cmp len=4 content=[1,2,null,4] (impl-defined state)

@@ -1,0 +1,10 @@
+C2s let;if(0)func ok
+C2t let;if(1)func ok
+K1 try{}catch(x){func} SyntaxError
+K2 catch(x){let x} SyntaxError
+K3 catch(x){var x} ok
+K4 catch-block-func-ref SyntaxError
+K5 label-func SyntaxError
+L1 while-func SyntaxError
+L2 let;for-func-head ok
+L3 do-func SyntaxError

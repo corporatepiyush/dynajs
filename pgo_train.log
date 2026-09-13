@@ -1,0 +1,371 @@
+== training driver: ./dynajs Sat Sep 12 23:43:21 IST 2026
+-- train: bbreview/a01_fold_scope.js (timeout 30s)
+DIVERGE #9.1 matched=dynajs
+lab1 5
+lab2 1
+lab2 3
+lab3 123
+SUITE bbreview PASS 13 FAIL 0
+   rc=0 (bbreview/a01_fold_scope.js)
+-- train: bbreview/a07_fold_values.js (timeout 30s)
+DIVERGE #13.1 matched=dynajs
+DIVERGE #22.1 matched=dynajs
+SUITE bbreview PASS 23 FAIL 0
+   rc=0 (bbreview/a07_fold_values.js)
+-- train: bbreview/a08_negpow.js (timeout 30s)
+DIVERGE constructor matched=dynajs
+DIVERGE message matched=dynajs
+SUITE bbreview PASS 1 FAIL 0
+   rc=0 (bbreview/a08_negpow.js)
+-- train: bbreview/a_cpool_250.js (timeout 30s)
+SUITE bbreview PASS 6 FAIL 0
+   rc=0 (bbreview/a_cpool_250.js)
+-- train: bbreview/a_cpool_254.js (timeout 30s)
+SUITE bbreview PASS 6 FAIL 0
+   rc=0 (bbreview/a_cpool_254.js)
+-- train: bbreview/a_cpool_255.js (timeout 30s)
+SUITE bbreview PASS 6 FAIL 0
+   rc=0 (bbreview/a_cpool_255.js)
+-- train: bbreview/a_cpool_256.js (timeout 30s)
+SUITE bbreview PASS 6 FAIL 0
+   rc=0 (bbreview/a_cpool_256.js)
+-- train: bbreview/a_cpool_257.js (timeout 30s)
+SUITE bbreview PASS 6 FAIL 0
+   rc=0 (bbreview/a_cpool_257.js)
+-- train: bbreview/a_cpool_260.js (timeout 30s)
+SUITE bbreview PASS 6 FAIL 0
+   rc=0 (bbreview/a_cpool_260.js)
+-- train: bbreview/ag01_asyncgen_drain.js (timeout 30s)
+SUITE bbreview PASS 10 FAIL 0
+   rc=0 (bbreview/ag01_asyncgen_drain.js)
+-- train: bbreview/b01_tdz_closures.js (timeout 30s)
+SUITE bbreview PASS 7 FAIL 0
+   rc=0 (bbreview/b01_tdz_closures.js)
+-- train: bbreview/b02_tdz_breakcont.js (timeout 30s)
+DIVERGE #0.1 matched=dynajs
+SUITE bbreview PASS 6 FAIL 0
+   rc=0 (bbreview/b02_tdz_breakcont.js)
+-- train: bbreview/b03_tdz_nested.js (timeout 30s)
+SUITE bbreview PASS 6 FAIL 0
+   rc=0 (bbreview/b03_tdz_nested.js)
+-- train: bbreview/b04_tdz_finally.js (timeout 30s)
+SUITE bbreview PASS 9 FAIL 0
+   rc=0 (bbreview/b04_tdz_finally.js)
+-- train: bbreview/b05_tdz_dowhile.js (timeout 30s)
+SUITE bbreview PASS 7 FAIL 0
+   rc=0 (bbreview/b05_tdz_dowhile.js)
+-- train: bbreview/b06_tdz_gen_switch.js (timeout 30s)
+SUITE bbreview PASS 9 FAIL 0
+   rc=0 (bbreview/b06_tdz_gen_switch.js)
+-- train: bbreview/c01_tail_try.js (timeout 30s)
+SUITE bbreview PASS 1 FAIL 0
+   rc=0 (bbreview/c01_tail_try.js)
+-- train: bbreview/c02_tail_with.js (timeout 30s)
+SUITE bbreview PASS 8 FAIL 0
+   rc=0 (bbreview/c02_tail_with.js)
+-- train: bbreview/c03_tail_strict.js (timeout 30s)
+DIVERGE #10.1 matched=node
+SUITE bbreview PASS 9 FAIL 0
+   rc=0 (bbreview/c03_tail_strict.js)
+-- train: bbreview/c04_tail_throw.js (timeout 30s)
+DIVERGE #1.1 matched=dynajs
+DIVERGE #2.1 matched=dynajs
+DIVERGE #4.1 matched=dynajs
+DIVERGE #5.1 matched=dynajs
+SUITE bbreview PASS 6 FAIL 0
+   rc=0 (bbreview/c04_tail_throw.js)
+-- train: bbreview/c05_tail_cycle.js (timeout 30s)
+SUITE bbreview PASS 6 FAIL 0
+   rc=0 (bbreview/c05_tail_cycle.js)
+-- train: bbreview/c06_tail_callapply.js (timeout 30s)
+DIVERGE #1.1 matched=node
+DIVERGE #3.1 matched=node
+DIVERGE #6.1 matched=node
+DIVERGE #9.1 matched=node
+SUITE bbreview PASS 7 FAIL 0
+   rc=0 (bbreview/c06_tail_callapply.js)
+-- train: bbreview/c07_tail_arguments.js (timeout 30s)
+SUITE bbreview PASS 1 FAIL 0
+   rc=0 (bbreview/c07_tail_arguments.js)
+-- train: bbreview/c08_tail_proxy.js (timeout 30s)
+DIVERGE #1.1 matched=node
+SUITE bbreview PASS 5 FAIL 0
+   rc=0 (bbreview/c08_tail_proxy.js)
+-- train: bbreview/c09_tail_gen_async.js (timeout 30s)
+DIVERGE #4.1 matched=node
+DIVERGE #9.1 matched=node
+SUITE bbreview PASS 11 FAIL 0
+   rc=0 (bbreview/c09_tail_gen_async.js)
+-- train: bbreview/d01_forof_proto.js (timeout 30s)
+SUITE bbreview PASS 7 FAIL 0
+   rc=0 (bbreview/d01_forof_proto.js)
+-- train: bbreview/d02_forof_subclass.js (timeout 30s)
+SUITE bbreview PASS 6 FAIL 0
+   rc=0 (bbreview/d02_forof_subclass.js)
+-- train: bbreview/d03_forof_sparse.js (timeout 30s)
+SUITE bbreview PASS 8 FAIL 0
+   rc=0 (bbreview/d03_forof_sparse.js)
+-- train: bbreview/d04_forof_len32.js (timeout 30s)
+SUITE bbreview PASS 9 FAIL 0
+   rc=0 (bbreview/d04_forof_len32.js)
+-- train: bbreview/d05_forof_misc.js (timeout 30s)
+SUITE bbreview PASS 11 FAIL 0
+   rc=0 (bbreview/d05_forof_misc.js)
+-- train: bbreview/d06_forof_bail.js (timeout 30s)
+SUITE bbreview PASS 10 FAIL 0
+   rc=0 (bbreview/d06_forof_bail.js)
+-- train: bbreview/e01_date_churn.js (timeout 30s)
+DIVERGE #6.1 matched=dynajs
+SUITE bbreview PASS 7 FAIL 0
+   rc=0 (bbreview/e01_date_churn.js)
+-- train: bbreview/e02_date_mutation.js (timeout 30s)
+DIVERGE #0.1 matched=dynajs
+DIVERGE #2.1 matched=dynajs
+DIVERGE #3.1 matched=dynajs
+SUITE bbreview PASS 4 FAIL 0
+   rc=0 (bbreview/e02_date_mutation.js)
+-- train: bbreview/e03_date_dst.js (timeout 30s)
+SUITE bbreview PASS 11 FAIL 0
+   rc=0 (bbreview/e03_date_dst.js)
+-- train: bbreview/e04_date_arith.js (timeout 30s)
+DIVERGE #1.1 matched=dynajs
+DIVERGE #2.1 matched=dynajs
+DIVERGE #3.1 matched=dynajs
+DIVERGE #4.1 matched=dynajs
+DIVERGE #11.1 matched=dynajs
+DIVERGE #12.1 matched=dynajs
+DIVERGE #13.1 matched=dynajs
+DIVERGE #14.1 matched=dynajs
+SUITE bbreview PASS 16 FAIL 0
+   rc=0 (bbreview/e04_date_arith.js)
+-- train: bbreview/e05_date_freeze_sub.js (timeout 30s)
+DIVERGE #5.1 matched=dynajs
+SUITE bbreview PASS 8 FAIL 0
+   rc=0 (bbreview/e05_date_freeze_sub.js)
+-- train: bbreview/e06_date_pre1900.js (timeout 30s)
+DIVERGE #0.1 matched=dynajs
+DIVERGE #1.1 matched=dynajs
+DIVERGE #1.2 matched=dynajs
+DIVERGE #1.3 matched=dynajs
+DIVERGE #2.1 matched=dynajs
+SUITE bbreview PASS 5 FAIL 0
+   rc=0 (bbreview/e06_date_pre1900.js)
+-- train: bbreview/f01_split_cache.js (timeout 30s)
+DIVERGE #5.1 matched=dynajs
+SUITE bbreview PASS 20 FAIL 0
+   rc=0 (bbreview/f01_split_cache.js)
+-- train: bbreview/f02_atom_key.js (timeout 30s)
+SUITE bbreview PASS 11 FAIL 0
+   rc=0 (bbreview/f02_atom_key.js)
+-- train: bbreview/f03_json_chars.js (timeout 30s)
+SUITE bbreview PASS 13 FAIL 0
+   rc=0 (bbreview/f03_json_chars.js)
+-- train: bbreview/f04_localecompare.js (timeout 30s)
+DIVERGE #4.1 matched=dynajs
+DIVERGE #5.1 matched=dynajs
+DIVERGE #10.1 matched=dynajs
+SUITE bbreview PASS 11 FAIL 0
+   rc=0 (bbreview/f04_localecompare.js)
+-- train: bbreview/f05_normalize.js (timeout 30s)
+SUITE bbreview PASS 14 FAIL 0
+   rc=0 (bbreview/f05_normalize.js)
+-- train: bbreview/g01_sqrt_powers.js (timeout 30s)
+DIVERGE #1.2 matched=dynajs
+DIVERGE #1.3 matched=dynajs
+SUITE bbreview PASS 9 FAIL 0
+   rc=0 (bbreview/g01_sqrt_powers.js)
+-- train: bbreview/g02_snan_abs.js (timeout 30s)
+DIVERGE #0.6 matched=dynajs
+DIVERGE #1.6 matched=dynajs
+DIVERGE #3.6 matched=dynajs
+DIVERGE #0.7 matched=dynajs
+DIVERGE #1.7 matched=dynajs
+DIVERGE #2.7 matched=dynajs
+DIVERGE #3.7 matched=dynajs
+DIVERGE #0.8 matched=dynajs
+DIVERGE #1.8 matched=dynajs
+DIVERGE #3.8 matched=dynajs
+DIVERGE #2.9 matched=dynajs
+DIVERGE #4.2 matched=dynajs
+DIVERGE #4.3 matched=dynajs
+DIVERGE #4.4 matched=dynajs
+SUITE bbreview PASS 47 FAIL 0
+   rc=0 (bbreview/g02_snan_abs.js)
+-- train: bbreview/g03_parseint.js (timeout 30s)
+DIVERGE #2.1 matched=dynajs
+DIVERGE #2.2 matched=dynajs
+DIVERGE #2.3 matched=dynajs
+DIVERGE #2.4 matched=dynajs
+DIVERGE #2.5 matched=dynajs
+DIVERGE #2.6 matched=dynajs
+DIVERGE #2.7 matched=dynajs
+DIVERGE #3.6 matched=dynajs
+DIVERGE #3.7 matched=dynajs
+DIVERGE #3.12 matched=dynajs
+SUITE bbreview PASS 33 FAIL 0
+   rc=0 (bbreview/g03_parseint.js)
+-- train: bbreview/h01_spread_maxargs.js (timeout 30s)
+DIVERGE #0.1 matched=dynajs
+DIVERGE #1.1 matched=dynajs
+SUITE bbreview PASS 6 FAIL 0
+   rc=0 (bbreview/h01_spread_maxargs.js)
+-- train: bbreview/h02_spread_chain.js (timeout 30s)
+DIVERGE #2.1 matched=dynajs
+SUITE bbreview PASS 5 FAIL 0
+   rc=0 (bbreview/h02_spread_chain.js)
+-- train: bbreview/h03_spread_getter_len.js (timeout 30s)
+SUITE bbreview PASS 1 FAIL 0
+   rc=0 (bbreview/h03_spread_getter_len.js)
+-- train: bbreview/h04_spread_holes.js (timeout 30s)
+DIVERGE #9.1 matched=dynajs
+SUITE bbreview PASS 11 FAIL 0
+   rc=0 (bbreview/h04_spread_holes.js)
+-- train: bbreview/h05_spread_elision.js (timeout 30s)
+SUITE bbreview PASS 11 FAIL 0
+   rc=0 (bbreview/h05_spread_elision.js)
+-- train: bbreview/s01_bank2_fused.js (timeout 30s)
+SUITE bbreview PASS 9 FAIL 0
+   rc=0 (bbreview/s01_bank2_fused.js)
+-- train: bbreview/smoke.js (timeout 30s)
+SUITE bbreview PASS 1 FAIL 0
+   rc=0 (bbreview/smoke.js)
+-- train: bbreview/t01_tasort_nan.js (timeout 30s)
+DIVERGE #0.1 matched=dynajs
+DIVERGE #3.1 matched=dynajs
+DIVERGE #0.2 matched=dynajs
+DIVERGE #3.2 matched=dynajs
+SUITE bbreview PASS 13 FAIL 0
+   rc=0 (bbreview/t01_tasort_nan.js)
+-- train: bbreview/timing_probe.js (timeout 30s)
+localeCompare 200-wide equal: 0ms/10k (0ns/call) sink=0
+localeCompare NFC/NFD-200: 140ms/10k sink=0
+split 100k: first=1ms second=0ms lens=100000/100000
+JSON 10k chars: 0ms
+spread 100k: 0ms len=100000
+sqrt 2098 powers: 0ms acc=2098
+   rc=0 (bbreview/timing_probe.js)
+-- train: core/test_builtin.js (timeout 60s)
+   rc=0 (core/test_builtin.js)
+-- train: core/test_closure.js (timeout 60s)
+   rc=0 (core/test_closure.js)
+-- train: core/test_language.js (timeout 60s)
+   rc=0 (core/test_language.js)
+-- train: core/test_modern.js (timeout 60s)
+test_modern: all tests passed
+   rc=0 (core/test_modern.js)
+-- train: core/test_array_ext.js (timeout 60s)
+test_array_ext: all tests passed (287 assertions)
+   rc=0 (core/test_array_ext.js)
+-- train: core/test_iterator_lazy.js (timeout 60s)
+test_iterator_lazy.js: 347 assertions passed
+   rc=0 (core/test_iterator_lazy.js)
+-- train: core/test_string_ext.js (timeout 60s)
+test_string_ext: all tests passed (51159 assertions)
+   rc=0 (core/test_string_ext.js)
+-- train: core/test_object_ext.js (timeout 60s)
+test_object_ext.js OK — 97 assertions
+   rc=0 (core/test_object_ext.js)
+-- train: core/test_object_ext.js (timeout 60s)
+test_object_ext.js OK — 97 assertions
+   rc=0 (core/test_object_ext.js)
+-- train: core/test_number_ext.js (timeout 60s)
+test_number_ext.js OK — 363 assertions
+   rc=0 (core/test_number_ext.js)
+-- train: core/test_loop.js (timeout 60s)
+   rc=0 (core/test_loop.js)
+-- train: core/test_optimizer.js (timeout 60s)
+test_optimizer: all tests passed
+   rc=0 (core/test_optimizer.js)
+-- train: core/test_bigint.js (timeout 60s)
+   rc=0 (core/test_bigint.js)
+-- train: core/test_date_ext.js (timeout 60s)
+test_date_ext.js OK — 88 assertions
+   rc=0 (core/test_date_ext.js)
+-- train: core/test_function_ext.js (timeout 60s)
+test_function_ext.js OK — 57 assertions
+   rc=0 (core/test_function_ext.js)
+-- train: core/test_disposable.js (timeout 60s)
+test_disposable: all tests passed
+   rc=0 (core/test_disposable.js)
+-- train: modules/pass1 (timeout 60s)
+train_modules ok: sink=25274965712193263113702179522374638011112635269001884517[object Promise]282155852535130241895 ms=62
+   rc=0 (modules/pass1)
+-- train: modules/pass2 (timeout 60s)
+train_modules ok: sink=25274965712193263113702179522374638011112635269001884517[object Promise]282155852535130241895 ms=63
+   rc=0 (modules/pass2)
+-- train: modules/pass3 (timeout 60s)
+train_modules ok: sink=25274965712193263113702179522374638011112635269001884517[object Promise]282155852535130241895 ms=62
+   rc=0 (modules/pass3)
+-- train: modules/pass4 (timeout 60s)
+train_modules ok: sink=25274965712193263113702179522374638011112635269001884517[object Promise]282155852535130241895 ms=62
+   rc=0 (modules/pass4)
+-- train: modules/pass5 (timeout 60s)
+train_modules ok: sink=25274965712193263113702179522374638011112635269001884517[object Promise]282155852535130241895 ms=63
+   rc=0 (modules/pass5)
+-- train: modules/pass6 (timeout 60s)
+train_modules ok: sink=25274965712193263113702179522374638011112635269001884517[object Promise]282155852535130241895 ms=63
+   rc=0 (modules/pass6)
+-- train: modules/pass7 (timeout 60s)
+train_modules ok: sink=25274965712193263113702179522374638011112635269001884517[object Promise]282155852535130241895 ms=63
+   rc=0 (modules/pass7)
+-- train: modules/pass8 (timeout 60s)
+train_modules ok: sink=25274965712193263113702179522374638011112635269001884517[object Promise]282155852535130241895 ms=62
+   rc=0 (modules/pass8)
+-- train: modules/pass9 (timeout 60s)
+train_modules ok: sink=25274965712193263113702179522374638011112635269001884517[object Promise]282155852535130241895 ms=62
+   rc=0 (modules/pass9)
+-- train: modules/pass10 (timeout 60s)
+train_modules ok: sink=25274965712193263113702179522374638011112635269001884517[object Promise]282155852535130241895 ms=63
+   rc=0 (modules/pass10)
+-- train: bench/bench_markdown.js (timeout 60s)
+case	bytes	ns	ns/byte
+prose	78	294	3.772
+prose	624	1153	1.904
+prose	4992	7226	1.448
+prose	39936	55555	1.392
+dense	4600	38283	8.331
+struct	3380	37260	11.052
+   rc=0 (bench/bench_markdown.js)
+-- train: bench/bench_strscan.js (timeout 60s)
+case	ns/call
+Which(false)	13265
+Which(miss)	17589
+Which(miss-long)	24152
+Which(abs)	4580
+CTRL stat	12695
+CTRL cpu	27221
+   rc=0 (bench/bench_strscan.js)
+-- train: bench/bench_xmlparse.js (timeout 60s)
+case	bytes	ns
+text	8	887
+text	63	978
+text	64	979
+text	256	1109
+text	4096	1767
+text	65536	13072
+ents	1024	3374
+ents	65536	149412
+small	4096	156632
+   rc=0 (bench/bench_xmlparse.js)
+-- train: bench/bench_stdlib_all.js (timeout 60s)
+module	bytes	ns	ns/byte
+msgpack	120	3246	27.048
+url	30	742	24.738
+decimal	32	527	16.482
+yaml	1979	24696	12.479
+markdown	2890	27168	9.401
+html	4103	3499	0.853
+xml	4103	1931	0.471
+base64	4096	1039	0.254
+semver	16	ERR	-
+config-ini	779	ERR	-
+   rc=0 (bench/bench_stdlib_all.js)
+-- train: bench/http_parse.js (timeout 60s)
+   rc=124 (bench/http_parse.js)
+-- train: repl/pass1 (timeout 60s)
+   rc=0 (repl/pass1)
+-- train: repl/pass2 (timeout 60s)
+   rc=0 (repl/pass2)
+== collected 86 profraw files
+-rw-r--r--@ 1 piyush  staff  1251744 Sep 12 23:44 pgo.profdata
+== training complete Sat Sep 12 23:44:56 IST 2026

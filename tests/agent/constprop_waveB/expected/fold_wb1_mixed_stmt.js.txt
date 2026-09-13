@@ -1,0 +1,8 @@
+stmt0=hello
+stmt1=é中
+stmt2=7
+stmt3=true
+stmt4=false
+stmt5=null
+stmt6=42
+typeof=stringbooleanobject

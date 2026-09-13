@@ -1,0 +1,11 @@
+2026-09-11 modules_ext reviewer/test-author lane
+- built rm -f dynajs && make -j 10 CONFIG_NATIVE_MODULES=y (BUILD_EXIT=0, binary fresh)
+- ran tests/test_module_surface.js: 391/391 pass, 35 modules, 0 failures
+- wrote 70 adversarial .js probes (a/b/c/d/e/f/g groups) + run.sh runner
+- battery: 65 PASS, 5 FAIL -> 5 FINDINGS (2 async-gen e02/e12, 3 TA-sort f01/f02/f09)
+- baseline causality: f01/f02/f09/f10 changed vs baseline (introduced by cluster);
+  e11 FIXED vs baseline (drain fix works for COMPLETED state); e02/e12 pre-existing
+  (baseline also drops the queued request)
+- spec check: ECMA-262 CompareTypedArrayElements consulted BEFORE NaN checks ->
+  node v22 is right, current dynajs NaN-last-force is a spec deviation for
+  comparator-provided sorts

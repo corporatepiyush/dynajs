@@ -1,0 +1,16 @@
+function tdz() {
+    let out = 0;
+    try { out = dead * live + 1; } catch (e) { out = 100; }
+    try { out = dead + live; } catch (e) { out += 3; }
+    let dead = 5, live = 6;
+    try { out += live * dead - ghost * 2; } catch (e) { out += 200; }
+    try { out += ghost - dead; } catch (e) { out += 4000; }
+    let ghost = 7;
+    let late = 0;
+    for (let i = 0; i < 20; i++) {
+        late = out * live - dead * ghost + live * dead * ghost;
+        out = late + live - dead;
+    }
+    return out + late;
+}
+tdz();

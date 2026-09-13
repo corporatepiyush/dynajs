@@ -1,0 +1,4 @@
+User-agent: *
+Disallow: /a
+Allopw: /a/bŠCrawl-delay: 2
+Sitemap: https://h/s.xml

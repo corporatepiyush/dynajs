@@ -1,0 +1,11 @@
+=== PGO build (./run-test262):
+built-ins/JSON: Result: 0/330 errors
+language/types: Result: 0/211 errors
+built-ins/Array: Result: 0/6115 errors
+language/statements: Result: 0/17600 errors, 218 skipped
+=== default build (keep/run-test262):
+built-ins/JSON: Result: 0/330 errors
+language/types: Result: 0/211 errors
+built-ins/Array: Result: 0/6115 errors
+language/statements: Result: 0/17600 errors, 218 skipped
+rc=0

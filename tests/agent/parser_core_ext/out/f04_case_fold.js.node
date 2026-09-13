@@ -1,0 +1,6 @@
+p two four ab 48 d
+fold-disc
+fold-str
+nan d one d
+big imin imax 1g pow32 d
+tc num str d

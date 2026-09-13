@@ -1,0 +1,7 @@
+A slice-all=[1,"P1",3,4] slice-mid=[1,"P1",3] own1=true
+B slice=[1,null,3] own1=false s1=undefined inc=true
+C neg=["eight","nine"] ["nine"] [null,null,null,null,null,null,null,null,"eight","nine"] [] len=10
+D huge=[null,"last"] slen=2 whole=1000000 first=2
+E named=[1,2] tag=undefined len=2
+F objproto=["O0",1] own0=true
+G fresh=["v1"] ["v2"]

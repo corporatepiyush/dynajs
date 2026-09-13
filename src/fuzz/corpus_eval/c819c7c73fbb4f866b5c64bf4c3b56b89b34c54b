@@ -1,0 +1,32 @@
+function hot() {
+    let a = 3, b = 5, c = 7, d = 11, e = 13, f = 17;
+    let s = 0, t = 0, u = 0, v = 0, w = 0, x = 0;
+    for (let i = 0; i < 200; i++) {
+        u = c + d;
+        v = e - f;
+        w = a - b;
+        x = e + f;
+        s = a * b + u * v - w * x;
+        t = c * d + w * x - u * v;
+        a = t - s + u;
+        b = v + w - a;
+        c = b * c - w;
+        d = c + d * e;
+        e = s - e * f;
+        f = f * f + s;
+        u = a + b;
+        v = c - d;
+        w = e + f;
+        x = s - t;
+        if (s > 1e8 || s < -1e8) s = s % 997;
+        if (t > 1e8 || t < -1e8) t = t % 991;
+        if (a > 1e8 || a < -1e8) a = a % 983;
+        if (b > 1e8 || b < -1e8) b = b % 977;
+        if (c > 1e8 || c < -1e8) c = c % 971;
+        if (d > 1e8 || d < -1e8) d = d % 967;
+        if (e > 1e8 || e < -1e8) e = e % 953;
+        if (f > 1e8 || f < -1e8) f = f % 947;
+    }
+    return s * t + a * b - c * d + e * f + u - v + w * x;
+}
+hot();

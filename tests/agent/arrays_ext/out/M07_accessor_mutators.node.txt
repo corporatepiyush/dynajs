@@ -1,0 +1,7 @@
+A shift-gets=1 got=[1,2,"G"] left=[]
+B slice-gets=1 ["H",2] ownH=true
+C rev=TypeError gets=1 own0=true own1=true
+D concat-gets=1 ["C",2,9]
+E frozen => unshift=TypeError shift=TypeError
+F sealed-unshift=TypeError
+G rev-sets=1 ["S1","S0"]

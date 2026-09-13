@@ -1,0 +1,74 @@
+program                                 n pgo pgo pgo
+program                                 n  baseline/min baseline/med     pgo/min    pgo/med  default/min default/med  x=minB/minA
+bb/a01_fold_scope.js                   y       12.0m      12.8m       11.9m      12.4m       10.3m      12.2m       0.9910
+bb/a07_fold_values.js                  y       12.0m      12.2m       11.9m      12.3m       10.2m      10.6m       0.9960
+bb/a08_negpow.js                       y       11.7m      11.8m       11.6m      11.7m       10.0m      10.5m       0.9914
+bb/a_cpool_250.js                      y       12.1m      12.5m       12.0m      12.1m       10.3m      11.0m       0.9871
+bb/a_cpool_254.js                      y       12.2m      12.5m       11.9m      12.6m       10.5m      11.1m       0.9767
+bb/a_cpool_255.js                      y       12.0m      12.5m       11.9m      12.6m       10.3m      11.1m       0.9871
+bb/a_cpool_256.js                      y       12.0m      12.5m       12.0m      12.7m       10.3m      11.4m       0.9929
+bb/a_cpool_257.js                      y       12.0m      15.1m       12.0m      14.7m       10.3m      13.4m       0.9943
+bb/a_cpool_260.js                      y       14.4m      14.7m       14.4m      14.9m       12.1m      13.3m       0.9954
+bb/ag01_asyncgen_drain.js              y       24.3m      26.6m       23.7m      25.8m       22.6m      23.9m       0.9757
+bb/b01_tdz_closures.js                 y       11.9m      12.4m       11.8m      12.6m       10.2m      10.9m       0.9907
+bb/b02_tdz_breakcont.js                y       11.8m      12.6m       11.8m      12.0m       10.1m      10.3m       0.9982
+bb/b03_tdz_nested.js                   y       11.9m      12.3m       11.8m      12.0m       10.0m      10.8m       0.9923
+bb/b04_tdz_finally.js                  y       11.8m      12.5m       11.7m      12.2m       10.0m      10.3m       0.9884
+bb/b05_tdz_dowhile.js                  y       11.9m      12.4m       11.8m      12.7m       10.2m      10.8m       0.9972
+bb/b06_tdz_gen_switch.js               y       12.0m      12.5m       11.8m      12.6m       10.2m      10.8m       0.9810
+bb/c01_tail_try.js                     y       68.5m      69.1m       58.9m      60.3m       66.3m      66.8m       0.8597
+bb/c02_tail_with.js                    y       63.3m      64.2m       61.3m      62.6m       61.9m      62.8m       0.9693
+bb/c03_tail_strict.js                  y       32.7m      33.7m       33.2m      34.6m       31.0m      31.9m       1.0151
+bb/c04_tail_throw.js                   y       20.1m      20.7m       19.7m      20.9m       18.2m      18.6m       0.9792
+bb/c05_tail_cycle.js                   y       52.6m      53.3m       56.1m      56.8m       50.5m      51.4m       1.0672
+bb/c06_tail_callapply.js               y       12.9m      14.0m       12.8m      14.0m       11.3m      12.6m       0.9892
+bb/c07_tail_arguments.js               y       58.1m      58.4m       56.5m      57.6m       56.2m      57.0m       0.9715
+bb/c08_tail_proxy.js                   y       30.3m      31.1m       31.7m      32.7m       27.5m      28.5m       1.0476
+bb/c09_tail_gen_async.js               y       23.2m      24.5m       24.2m      25.6m       22.8m      23.6m       1.0418
+bb/d01_forof_proto.js                  y       11.9m      12.5m       11.7m      12.5m       10.3m      11.5m       0.9832
+bb/d02_forof_subclass.js               y       11.8m      12.1m       11.7m      12.1m       10.1m      10.4m       0.9927
+bb/d03_forof_sparse.js                 y       12.2m      12.6m       12.1m      12.8m       10.5m      10.7m       0.9910
+bb/d04_forof_len32.js                  y       11.8m      12.5m       11.7m      12.4m       10.1m      10.3m       0.9913
+bb/d05_forof_misc.js                   y       11.9m      12.7m       11.8m      12.7m       10.1m      11.0m       0.9880
+bb/d06_forof_bail.js                   y       12.0m      13.0m       11.7m      12.9m       10.4m      11.0m       0.9708
+bb/e01_date_churn.js                   y       15.5m      16.1m       16.1m      16.5m       13.9m      14.4m       1.0390
+bb/e02_date_mutation.js                y       14.5m      15.4m       14.8m      15.4m       12.9m      13.4m       1.0195
+bb/e03_date_dst.js                     y       12.5m      13.0m       12.4m      13.0m       10.8m      11.1m       0.9961
+bb/e04_date_arith.js                   y       12.5m      13.4m       12.5m      13.6m       10.8m      11.2m       0.9998
+bb/e05_date_freeze_sub.js              y       12.2m      13.1m       12.2m      12.3m       10.6m      11.4m       0.9994
+bb/e06_date_pre1900.js                 y       12.4m      12.9m       12.3m      12.8m       10.9m      11.7m       0.9952
+bb/f01_split_cache.js                  y       15.5m      16.9m       14.6m      14.8m       13.6m      13.9m       0.9424
+bb/f02_atom_key.js                     y       11.5m      11.6m       11.4m      11.5m        9.8m       9.9m       0.9910
+bb/f03_json_chars.js                   y       12.8m      12.8m       12.8m      12.8m       11.0m      11.2m       1.0003
+bb/f04_localecompare.js                y       11.5m      11.5m       11.4m      11.4m        9.8m       9.9m       0.9915
+bb/f05_normalize.js                    y       11.5m      11.6m       11.3m      11.5m        9.8m       9.9m       0.9832
+bb/g01_sqrt_powers.js                  y       12.6m      12.6m       12.6m      12.7m       10.9m      11.0m       0.9991
+bb/g02_snan_abs.js                     y       11.7m      11.7m       11.6m      11.8m        9.9m      10.1m       0.9947
+bb/g03_parseint.js                     y       11.6m      11.6m       11.4m      11.6m        9.8m       9.9m       0.9866
+bb/h01_spread_maxargs.js               y       16.6m      16.8m       15.9m      16.1m       14.8m      14.9m       0.9598
+bb/h02_spread_chain.js                 y      173.7m     177.5m      140.4m     144.1m      171.5m     174.0m       0.8084
+bb/h03_spread_getter_len.js            y       11.9m      13.0m       11.8m      12.1m       10.3m      10.9m       0.9942
+bb/h04_spread_holes.js                 y       12.0m      12.8m       11.8m      12.5m       10.3m      11.0m       0.9842
+bb/h05_spread_elision.js               y       11.9m      12.7m       11.9m      12.9m       10.3m      10.8m       0.9961
+bb/s01_bank2_fused.js                  y       15.2m      15.8m       16.3m      16.7m       13.5m      14.3m       1.0716
+bb/smoke.js                            y       11.8m      12.4m       11.8m      12.5m       10.1m      10.9m       0.9991
+bb/t01_tasort_nan.js                   y       11.9m      12.5m       11.8m      12.4m       10.1m      10.3m       0.9943
+bb/timing_probe.js                     y      127.9m     128.6m      107.6m     108.2m      126.1m     126.8m       0.8411
+rp/i_bitops2M.js                       y       72.6m      72.9m      117.1m     117.8m       71.1m      72.2m       1.6121
+rp/i_call1_500k.js                     y       23.4m      23.7m       29.6m      30.0m       18.9m      19.5m       1.2670
+rp/i_empty1M.js                        y       12.7m      13.1m       20.3m      20.9m       11.2m      11.8m       1.5981
+rp/i_forof500k.js                      y       20.0m      20.7m       25.7m      26.1m       18.5m      18.7m       1.2807
+rp/i_intadd2M.js                       y       41.0m      41.4m       67.9m      68.1m       39.6m      39.9m       1.6566
+rp/i_localgetput.js                    y       47.9m      48.2m       80.3m      80.9m       46.2m      46.7m       1.6758
+rp/i_propget1M.js                      y       29.4m      30.1m       47.2m      47.8m       27.2m      27.8m       1.6082
+bench/bench_markdown.js                p     8777.0m    9918.1m     8146.2m   10055.1m        nanm       nanm       0.9281
+bench/bench_strscan.js                 p     4710.5m    5909.1m     5217.9m    6127.8m        nanm       nanm       1.1077
+bench/bench_xmlparse.js                p     7222.8m    8707.2m     7089.6m    8412.1m        nanm       nanm       0.9815
+bench/bench_stdlib_all.js              p     4947.2m    5633.4m     5491.5m    6188.1m        nanm       nanm       1.1100
+
+== summary (min-of-7) ==
+total baseline      :    27.12s
+total pgo           :    27.48s
+total default       :      nans
+bbreview+progs geomean x(pgo/baseline): 1.0354  (+3.54%)
+battery-rc=0

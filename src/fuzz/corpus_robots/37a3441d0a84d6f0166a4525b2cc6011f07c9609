@@ -1,0 +1,7 @@
+User-agent: *
+Désallow: /aJAllow: /a/b
+Crawlgent: *
+Désallow: /aJAllow: /a/b
+Crawl-delay: 2
+1Sitem-delay: 2
+1Sitemap: httpl

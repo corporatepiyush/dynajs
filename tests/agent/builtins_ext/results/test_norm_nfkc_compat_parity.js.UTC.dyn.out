@@ -1,0 +1,23 @@
+0 NFKC=[1⁄2] NFKDhash=a253c1ce NFCeq=true
+1 NFKC=[1⁄4] NFKDhash=a453c4f4 NFCeq=true
+2 NFKC=[2⁄3] NFKDhash=58ca9f50 NFCeq=true
+3 NFKC=[IV] NFKDhash=68e907b6 NFCeq=true
+4 NFKC=[fi] NFKDhash=5c22ded0 NFCeq=true
+5 NFKC=[fl] NFKDhash=6122e6af NFCeq=true
+6 NFKC=[ffi] NFKDhash=ac09484c NFCeq=true
+7 NFKC=[1] NFKDhash=340ca71c NFCeq=true
+8 NFKC=[2] NFKDhash=370cabd5 NFCeq=true
+9 NFKC=[17] NFKDhash=1aeb28b1 NFCeq=true
+10 NFKC=[MHz] NFKDhash=3842653e NFCeq=true
+11 NFKC=[cm2] NFKDhash=cc9215cd NFCeq=true
+12 NFKC=[ABc] NFKDhash=7c8461cb NFCeq=true
+13 NFKC=[Ω] NFKDhash=ac0d6404 NFCeq=false
+14 NFKC=[Å] NFKDhash=64d3e6b2 NFCeq=false
+15 NFKC=[3] NFKDhash=360caa42 NFCeq=true
+16 NFKC=[x2] NFKDhash=f630cef NFCeq=true
+17 NFKC=[123 1⁄2 + fi] NFKDhash=df6281b8 NFCeq=true
+18 NFKC=[gal] NFKDhash=3c170eeb NFCeq=true
+19 NFKC=[₩] NFKDhash=ac3e3104 NFCeq=true
+20 NFKC=[¢] NFKDhash=a70bc925 NFCeq=true
+half=[1⁄2] len=3 ok=true
+hash=9cbbccd5
