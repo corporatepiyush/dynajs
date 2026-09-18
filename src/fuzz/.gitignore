@@ -1,0 +1,3 @@
+corpus_bceval/*
+!corpus_bceval/hostile_*.bin
+!corpus_bceval/valid_*.bin

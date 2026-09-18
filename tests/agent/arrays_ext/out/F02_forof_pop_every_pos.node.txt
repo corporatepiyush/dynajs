@@ -1,0 +1,8 @@
+pop@0 => 1,2,3,4 len=4
+pop@1 => 1,2,3,4 len=4
+pop@2 => 1,2,3,4 len=4
+pop@3 => 1,2,3,4 len=4
+pop@4 => 1,2,3,4,5 len=4
+pop@5 => 1,2,3,4,5 len=5
+grow-pop => 1,2,3 final=1,2,3
+drain => 1,2 guard=2 len=1

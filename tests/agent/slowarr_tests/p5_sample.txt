@@ -1,0 +1,338 @@
+Analysis of sampling dynajs (pid 99827) every 1 millisecond
+Process:         dynajs [99827]
+Path:            /private/tmp/*/dynajs
+Load Address:    0x104b8c000
+Identifier:      dynajs
+Version:         0
+Code Type:       ARM64
+Platform:        macOS
+Parent Process:  zsh [99824]
+Target Type:     live task
+
+Date/Time:       2026-09-11 15:49:48.908 +0530
+Launch Time:     2026-09-11 15:49:45.851 +0530
+OS Version:      macOS 26.6.2 (25G83)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+
+Physical footprint:         1920K
+Physical footprint (peak):  1920K
+Idle exit:                  untracked
+----
+
+Call graph:
+    2349 Thread_5619359   DispatchQueue_1: com.apple.main-thread  (serial)
+      2349 start  (in dyld) + 6992  [0x18a5204e4]
+        2349 main  (in dynajs) + 1596  [0x104b8cd7c]  dyna-cli.c:692
+          2349 eval_file  (in dynajs) + 212  [0x104b8d2d4]  dyna-cli.c:295
+            2349 eval_buf  (in dynajs) + 136  [0x104b8d18c]  dyna-cli.c:71
+              2349 JS_EvalThis  (in dynajs) + 36  [0x104bb42a0]  parser.inc.c:17615
+                2349 __JS_EvalInternal  (in dynajs) + 2948  [0x104bbec04]  parser.inc.c:17556
+                  2349 JS_EvalFunctionInternal  (in dynajs) + 144  [0x104bb3d64]  parser.inc.c:17423
+                    2345 JS_CallInternal  (in dynajs) + 8720  [0x104ba5090]  interpreter.inc.c:649
+                    + 2344 JS_CallInternal  (in dynajs) + 884  [0x104ba31f4]  interpreter.inc.c:130
+                    + ! 2343 js_call_c_function  (in dynajs) + 592  [0x104b8e988]  property_set_convert.inc.c:8104
+                    + ! : 1198 js_array_push  (in dynajs) + 852  [0x104bf4c40]  bc_read.inc.c:8131
+                    + ! : | 871 js_slow_array_shift_unshift  (in dynajs) + 508  [0x104bf52bc]  bc_read.inc.c:6016
+                    + ! : | + 81 rqsort  (in dynajs) + 912,832,...  [0x104c910d8,0x104c91088,...]  cutils.c:0
+                    + ! : | + 81 rqsort  (in dynajs) + 864  [0x104c910a8]  cutils.c:572
+                    + ! : | + ! 81 js_slow_arr_ent_cmp  (in dynajs) + 4  [0x104bf5b2c]  bc_read.inc.c:5765
+                    + ! : | + 77 rqsort  (in dynajs) + 972  [0x104c91114]  cutils.c:581
+                    + ! : | + ! 76 js_slow_arr_ent_cmp  (in dynajs) + 4  [0x104bf5b2c]  bc_read.inc.c:5765
+                    + ! : | + ! 1 js_slow_arr_ent_cmp  (in dynajs) + 0  [0x104bf5b28]  bc_read.inc.c:5764
+                    + ! : | + 72 rqsort  (in dynajs) + 868  [0x104c910ac]  cutils.c:573
+                    + ! : | + 61 rqsort  (in dynajs) + 980  [0x104c9111c]  cutils.c:582
+                    + ! : | + 59 rqsort  (in dynajs) + 960,964,...  [0x104c91108,0x104c9110c,...]  cutils.c:581
+                    + ! : | + 58 rqsort  (in dynajs) + 1740,1708,...  [0x104c91414,0x104c913f4,...]  cutils.c:645
+                    + ! : | + 58 rqsort  (in dynajs) + 1740  [0x104c91414]  cutils.c:646
+                    + ! : | + ! 44 exchange_int64s  (in dynajs) + 68,8,...  [0x104c91548,0x104c9150c,...]  cutils.c:416
+                    + ! : | + ! 11 exchange_int64s  (in dynajs) + 64  [0x104c91544]  cutils.c:419
+                    + ! : | + ! 3 exchange_int64s  (in dynajs) + 76  [0x104c91550]  cutils.c:421
+                    + ! : | + 57 rqsort  (in dynajs) + 848,840,...  [0x104c91098,0x104c91090,...]  cutils.c:572
+                    + ! : | + 29 rqsort  (in dynajs) + 1716  [0x104c913fc]  cutils.c:645
+                    + ! : | + ! 28 js_slow_arr_ent_cmp  (in dynajs) + 4  [0x104bf5b2c]  bc_read.inc.c:5765
+                    + ! : | + ! 1 js_slow_arr_ent_cmp  (in dynajs) + 0  [0x104bf5b28]  bc_read.inc.c:5764
+                    + ! : | + 28 rqsort  (in dynajs) + 832  [0x104c91088]  cutils.c:590
+                    + ! : | + ! 24 exchange_int64s  (in dynajs) + 68,0  [0x104c91548,0x104c91504]  cutils.c:416
+                    + ! : | + ! 4 exchange_int64s  (in dynajs) + 64  [0x104c91544]  cutils.c:419
+                    + ! : | + 28 rqsort  (in dynajs) + 1672,1648  [0x104c913d0,0x104c913b8]  cutils.c:644
+                    + ! : | + 21 rqsort  (in dynajs) + 776  [0x104c91050]  cutils.c:566
+                    + ! : | + ! 15 exchange_int64s  (in dynajs) + 68,0  [0x104c91548,0x104c91504]  cutils.c:416
+                    + ! : | + ! 5 exchange_int64s  (in dynajs) + 64  [0x104c91544]  cutils.c:419
+                    + ! : | + ! 1 exchange_int64s  (in dynajs) + 76  [0x104c91550]  cutils.c:421
+                    + ! : | + 19 rqsort  (in dynajs) + 668,728,...  [0x104c90fe4,0x104c91020,...]  cutils.c:565
+                    + ! : | + 19 rqsort  (in dynajs) + 824,812,...  [0x104c91080,0x104c91074,...]  cutils.c:590
+                    + ! : | + 18 rqsort  (in dynajs) + 1100  [0x104c91194]  cutils.c:619
+                    + ! : | + 15 js_slow_array_shift_unshift  (in dynajs) + 612,664  [0x104bf5324,0x104bf5358]  bc_read.inc.c:6028
+                    + ! : | + 11 js_slow_array_shift_unshift  (in dynajs) + 560  [0x104bf52f0]  bc_read.inc.c:0
+                    + ! : | + 11 rqsort  (in dynajs) + 1060  [0x104c9116c]  cutils.c:609
+                    + ! : | + 10 rqsort  (in dynajs) + 572  [0x104c90f84]  cutils.c:549
+                    + ! : | + 10 rqsort  (in dynajs) + 1068  [0x104c91174]  cutils.c:609
+                    + ! : | + ! 7 exchange_int64s  (in dynajs) + 68,0  [0x104c91548,0x104c91504]  cutils.c:416
+                    + ! : | + ! 2 exchange_int64s  (in dynajs) + 64  [0x104c91544]  cutils.c:419
+                    + ! : | + ! 1 exchange_int64s  (in dynajs) + 76  [0x104c91550]  cutils.c:421
+                    + ! : | + 9 rqsort  (in dynajs) + 1108  [0x104c9119c]  cutils.c:619
+                    + ! : | + ! 7 exchange_int64s  (in dynajs) + 76  [0x104c91550]  cutils.c:421
+                    + ! : | + ! 2 exchange_int64s  (in dynajs) + 0  [0x104c91504]  cutils.c:416
+                    + ! : | + 8 rqsort  (in dynajs) + 668  [0x104c90fe4]  cutils.c:565
+                    + ! : | + ! 8 js_slow_arr_ent_cmp  (in dynajs) + 4  [0x104bf5b2c]  bc_read.inc.c:5765
+                    + ! : | + 7 js_slow_array_shift_unshift  (in dynajs) + 792  [0x104bf53d8]  bc_read.inc.c:6032
+                    + ! : | + 6 rqsort  (in dynajs) + 1024  [0x104c91148]  cutils.c:604
+                    + ! : | + 4 rqsort  (in dynajs) + 688  [0x104c90ff8]  cutils.c:565
+                    + ! : | + ! 4 js_slow_arr_ent_cmp  (in dynajs) + 4  [0x104bf5b2c]  bc_read.inc.c:5765
+                    + ! : | + 4 rqsort  (in dynajs) + 768,772  [0x104c91048,0x104c9104c]  cutils.c:566
+                    + ! : | + 3 rqsort  (in dynajs) + 588  [0x104c90f94]  cutils.c:551
+                    + ! : | + 2 js_slow_array_shift_unshift  (in dynajs) + 568  [0x104bf52f8]  bc_read.inc.c:6019
+                    + ! : | + 2 rqsort  (in dynajs) + 604  [0x104c90fa4]  cutils.c:553
+                    + ! : | + 1 rqsort  (in dynajs) + 748  [0x104c91034]  cutils.c:565
+                    + ! : | + ! 1 js_slow_arr_ent_cmp  (in dynajs) + 4  [0x104bf5b2c]  bc_read.inc.c:5765
+                    + ! : | + 1 rqsort  (in dynajs) + 776  [0x104c91050]  cutils.c:568
+                    + ! : | + 1 rqsort  (in dynajs) + 1068  [0x104c91174]  cutils.c:614
+                    + ! : | 116 js_slow_array_shift_unshift  (in dynajs) + 152  [0x104bf5158]  bc_read.inc.c:5984
+                    + ! : | + 31 js_slow_array_shift_unshift  (in dynajs) + 192,204,...  [0x104bf5180,0x104bf518c,...]  bc_read.inc.c:5984
+                    + ! : | + 14 js_slow_array_scan_start  (in dynajs) + 100,104  [0x104bf5ba4,0x104bf5ba8]  bc_read.inc.c:5837
+                    + ! : | + 12 js_slow_array_scan_start  (in dynajs) + 112  [0x104bf5bb0]  bc_read.inc.c:5838
+                    + ! : | + 12 js_slow_array_shift_unshift  (in dynajs) + 256  [0x104bf51c0]  bc_read.inc.c:5989
+                    + ! : | + 12 js_slow_array_shift_unshift  (in dynajs) + 264  [0x104bf51c8]  bc_read.inc.c:5990
+                    + ! : | + 10 js_slow_array_scan_start  (in dynajs) + 260,276,...  [0x104bf5c44,0x104bf5c54,...]  bc_read.inc.c:5833
+                    + ! : | + 9 js_slow_array_scan_start  (in dynajs) + 276  [0x104bf5c54]  bc_read.inc.c:5833
+                    + ! : | + ! 4 JS_AtomIsArrayIndex  (in dynajs) + 96,52,...  [0x104bc9104,0x104bc90d8,...]  atoms.inc.c:918
+                    + ! : | + ! 3 JS_AtomIsArrayIndex  (in dynajs) + 0  [0x104bc90a4]  atoms.inc.c:906
+                    + ! : | + ! 1 JS_AtomIsArrayIndex  (in dynajs) + 108  [0x104bc9110]  atoms.inc.c:0
+                    + ! : | + ! 1 JS_AtomIsArrayIndex  (in dynajs) + 36  [0x104bc90c8]  atoms.inc.c:917
+                    + ! : | + 9 js_slow_array_shift_unshift  (in dynajs) + 244  [0x104bf51b4]  bc_read.inc.c:5988
+                    + ! : | + 5 js_slow_array_shift_unshift  (in dynajs) + 240  [0x104bf51b0]  bc_read.inc.c:5992
+                    + ! : | + 1 js_slow_array_scan_start  (in dynajs) + 116  [0x104bf5bb4]  bc_read.inc.c:5839
+                    + ! : | + 1 js_slow_array_shift_unshift  (in dynajs) + 228  [0x104bf51a4]  bc_read.inc.c:0
+                    + ! : | 81 js_slow_array_shift_unshift  (in dynajs) + 308  [0x104bf51f4]  bc_read.inc.c:5997
+                    + ! : | + 38 js_slow_array_shift_unshift  (in dynajs) + 420,444,...  [0x104bf5264,0x104bf527c,...]  bc_read.inc.c:6010
+                    + ! : | + 31 js_slow_array_shift_unshift  (in dynajs) + 372,376,...  [0x104bf5234,0x104bf5238,...]  bc_read.inc.c:6004
+                    + ! : | + 7 js_slow_array_shift_unshift  (in dynajs) + 392  [0x104bf5248]  bc_read.inc.c:6005
+                    + ! : | + 3 js_slow_array_shift_unshift  (in dynajs) + 452,448  [0x104bf5284,0x104bf5280]  bc_read.inc.c:6011
+                    + ! : | + 1 js_malloc_large  (in dynajs) + 32  [0x104bc19c4]  js_malloc.inc.c:142
+                    + ! : | + ! 1 js_def_malloc  (in dynajs) + 68  [0x104bc3274]  js_malloc.inc.c:842
+                    + ! : | + !   1 _xzm_xzone_malloc_small_freelist  (in libsystem_malloc.dylib) + 0  [0x18a70d338]
+                    + ! : | + 1 js_slow_array_shift_unshift  (in dynajs) + 400  [0x104bf5250]  bc_read.inc.c:6008
+                    + ! : | 69 js_slow_array_shift_unshift  (in dynajs) + 920  [0x104bf5458]  bc_read.inc.c:6053
+                    + ! : | + 20 js_slow_array_shift_unshift  (in dynajs) + 968  [0x104bf5488]  bc_read.inc.c:6050
+                    + ! : | + 17 js_slow_array_shift_unshift  (in dynajs) + 1168,1172  [0x104bf5550,0x104bf5554]  bc_read.inc.c:6059
+                    + ! : | + 16 js_slow_array_shift_unshift  (in dynajs) + 976,988,...  [0x104bf5490,0x104bf549c,...]  bc_read.inc.c:6052
+                    + ! : | + 6 js_slow_array_shift_unshift  (in dynajs) + 1156  [0x104bf5544]  bc_read.inc.c:0
+                    + ! : | + 6 js_slow_array_shift_unshift  (in dynajs) + 924  [0x104bf545c]  bc_read.inc.c:6049
+                    + ! : | + 1 delete_property  (in dynajs) + 68  [0x104ba13cc]  property_get.inc.c:1225
+                    + ! : | + 1 delete_property  (in dynajs) + 560  [0x104ba15b8]  property_get.inc.c:1256
+                    + ! : | + ! 1 free_property  (in dynajs) + 0  [0x104bc3f50]  shapes_objects_gc.inc.c:1334
+                    + ! : | + 1 delete_property  (in dynajs) + 668  [0x104ba1624]  property_get.inc.c:1266
+                    + ! : | + ! 1 compact_properties  (in dynajs) + 312  [0x104bc9af8]  shapes_objects_gc.inc.c:389
+                    + ! : | + 1 js_slow_array_shift_unshift  (in dynajs) + 1088  [0x104bf5500]  bc_read.inc.c:6062
+                    + ! : | 34 js_slow_array_shift_unshift  (in dynajs) + 100  [0x104bf5124]  bc_read.inc.c:5982
+                    + ! : | + 34 js_slow_array_shift_unshift  (in dynajs) + 100  [0x104bf5124]  bc_read.inc.c:5982
+                    + ! : | +   10 js_slow_array_try_convert_fast  (in dynajs) + 292  [0x104bf5988]  bc_read.inc.c:5899
+                    + ! : | +   7 js_slow_array_try_convert_fast  (in dynajs) + 312  [0x104bf599c]  bc_read.inc.c:5903
+                    + ! : | +   6 js_slow_array_try_convert_fast  (in dynajs) + 288  [0x104bf5984]  bc_read.inc.c:0
+                    + ! : | +   6 js_slow_array_try_convert_fast  (in dynajs) + 304  [0x104bf5994]  bc_read.inc.c:5900
+                    + ! : | +   5 js_slow_array_try_convert_fast  (in dynajs) + 272,284  [0x104bf5974,0x104bf5980]  bc_read.inc.c:5904
+                    + ! : | 23 js_slow_array_shift_unshift  (in dynajs) + 864  [0x104bf5420]  bc_read.inc.c:6035
+                    + ! : | + 11 js_slow_array_shift_unshift  (in dynajs) + 612,628,...  [0x104bf5324,0x104bf5334,...]  bc_read.inc.c:6028
+                    + ! : | + 6 js_slow_array_shift_unshift  (in dynajs) + 792  [0x104bf53d8]  bc_read.inc.c:6032
+                    + ! : | + 5 js_slow_array_shift_unshift  (in dynajs) + 576,580  [0x104bf5300,0x104bf5304]  bc_read.inc.c:6020
+                    + ! : | + 1 js_slow_array_shift_unshift  (in dynajs) + 560  [0x104bf52f0]  bc_read.inc.c:0
+                    + ! : | 4 js_slow_array_shift_unshift  (in dynajs) + 1100  [0x104bf550c]  bc_read.inc.c:6062
+                    + ! : |   2 _xzm_xzone_free_freelist  (in libsystem_malloc.dylib) + 760  [0x18a710e38]
+                    + ! : |   ! 2 mach_absolute_time  (in libsystem_kernel.dylib) + 108  [0x18a8a810c]
+                    + ! : |   1 _xzm_xzone_free_freelist  (in libsystem_malloc.dylib) + 752  [0x18a710e30]
+                    + ! : |   1 js_def_free  (in dynajs) + 32  [0x104bc32cc]  js_malloc.inc.c:858
+                    + ! : |     1 malloc_size  (in libsystem_malloc.dylib) + 124  [0x18a6e40b0]
+                    + ! : |       1 xzm_malloc_zone_size  (in libsystem_malloc.dylib) + 152  [0x18a7125a4]
+                    + ! : 1140 js_array_pop  (in dynajs) + 348  [0x104c2be3c]  bc_read.inc.c:8062
+                    + ! : | 816 js_slow_array_shift_unshift  (in dynajs) + 508  [0x104bf52bc]  bc_read.inc.c:6016
+                    + ! : | + 80 rqsort  (in dynajs) + 912,832,...  [0x104c910d8,0x104c91088,...]  cutils.c:0
+                    + ! : | + 78 rqsort  (in dynajs) + 848,840  [0x104c91098,0x104c91090]  cutils.c:572
+                    + ! : | + 77 rqsort  (in dynajs) + 1740,1724,...  [0x104c91414,0x104c91404,...]  cutils.c:645
+                    + ! : | + 72 rqsort  (in dynajs) + 864  [0x104c910a8]  cutils.c:572
+                    + ! : | + ! 72 js_slow_arr_ent_cmp  (in dynajs) + 4  [0x104bf5b2c]  bc_read.inc.c:5765
+                    + ! : | + 68 rqsort  (in dynajs) + 972  [0x104c91114]  cutils.c:581
+                    + ! : | + ! 68 js_slow_arr_ent_cmp  (in dynajs) + 4  [0x104bf5b2c]  bc_read.inc.c:5765
+                    + ! : | + 56 rqsort  (in dynajs) + 960,964,...  [0x104c91108,0x104c9110c,...]  cutils.c:581
+                    + ! : | + 51 rqsort  (in dynajs) + 1740  [0x104c91414]  cutils.c:646
+                    + ! : | + ! 32 exchange_int64s  (in dynajs) + 68,8,...  [0x104c91548,0x104c9150c,...]  cutils.c:416
+                    + ! : | + ! 12 exchange_int64s  (in dynajs) + 64  [0x104c91544]  cutils.c:419
+                    + ! : | + ! 6 exchange_int64s  (in dynajs) + 76  [0x104c91550]  cutils.c:421
+                    + ! : | + ! 1 exchange_int64s  (in dynajs) + 60  [0x104c91540]  cutils.c:418
+                    + ! : | + 46 rqsort  (in dynajs) + 980  [0x104c9111c]  cutils.c:582
+                    + ! : | + 44 rqsort  (in dynajs) + 868  [0x104c910ac]  cutils.c:573
+                    + ! : | + 32 rqsort  (in dynajs) + 1716  [0x104c913fc]  cutils.c:645
+                    + ! : | + ! 31 js_slow_arr_ent_cmp  (in dynajs) + 4  [0x104bf5b2c]  bc_read.inc.c:5765
+                    + ! : | + ! 1 js_slow_arr_ent_cmp  (in dynajs) + 0  [0x104bf5b28]  bc_read.inc.c:5764
+                    + ! : | + 26 rqsort  (in dynajs) + 1672,1648  [0x104c913d0,0x104c913b8]  cutils.c:644
+                    + ! : | + 25 rqsort  (in dynajs) + 832  [0x104c91088]  cutils.c:590
+                    + ! : | + ! 18 exchange_int64s  (in dynajs) + 68,0,...  [0x104c91548,0x104c91504,...]  cutils.c:416
+                    + ! : | + ! 7 exchange_int64s  (in dynajs) + 64  [0x104c91544]  cutils.c:419
+                    + ! : | + 20 rqsort  (in dynajs) + 776  [0x104c91050]  cutils.c:566
+                    + ! : | + ! 15 exchange_int64s  (in dynajs) + 68,0  [0x104c91548,0x104c91504]  cutils.c:416
+                    + ! : | + ! 4 exchange_int64s  (in dynajs) + 64  [0x104c91544]  cutils.c:419
+                    + ! : | + ! 1 exchange_int64s  (in dynajs) + 76  [0x104c91550]  cutils.c:421
+                    + ! : | + 18 js_slow_array_shift_unshift  (in dynajs) + 612,648,...  [0x104bf5324,0x104bf5348,...]  bc_read.inc.c:6028
+                    + ! : | + 14 rqsort  (in dynajs) + 1068  [0x104c91174]  cutils.c:609
+                    + ! : | + ! 10 exchange_int64s  (in dynajs) + 68,8,...  [0x104c91548,0x104c9150c,...]  cutils.c:416
+                    + ! : | + ! 3 exchange_int64s  (in dynajs) + 64  [0x104c91544]  cutils.c:419
+                    + ! : | + ! 1 exchange_int64s  (in dynajs) + 76  [0x104c91550]  cutils.c:421
+                    + ! : | + 12 rqsort  (in dynajs) + 668,656,...  [0x104c90fe4,0x104c90fd8,...]  cutils.c:565
+                    + ! : | + 12 rqsort  (in dynajs) + 1024  [0x104c91148]  cutils.c:604
+                    + ! : | + 11 js_slow_array_shift_unshift  (in dynajs) + 560  [0x104bf52f0]  bc_read.inc.c:0
+                    + ! : | + 10 rqsort  (in dynajs) + 824,812  [0x104c91080,0x104c91074]  cutils.c:590
+                    + ! : | + 9 js_slow_array_shift_unshift  (in dynajs) + 792  [0x104bf53d8]  bc_read.inc.c:6032
+                    + ! : | + 9 rqsort  (in dynajs) + 572  [0x104c90f84]  cutils.c:549
+                    + ! : | + 9 rqsort  (in dynajs) + 1060  [0x104c9116c]  cutils.c:609
+                    + ! : | + 9 rqsort  (in dynajs) + 1100  [0x104c91194]  cutils.c:619
+                    + ! : | + 8 rqsort  (in dynajs) + 1108  [0x104c9119c]  cutils.c:619
+                    + ! : | + ! 7 exchange_int64s  (in dynajs) + 76  [0x104c91550]  cutils.c:421
+                    + ! : | + ! 1 exchange_int64s  (in dynajs) + 0  [0x104c91504]  cutils.c:416
+                    + ! : | + 4 rqsort  (in dynajs) + 688  [0x104c90ff8]  cutils.c:565
+                    + ! : | + ! 4 js_slow_arr_ent_cmp  (in dynajs) + 4  [0x104bf5b2c]  bc_read.inc.c:5765
+                    + ! : | + 4 rqsort  (in dynajs) + 768,772  [0x104c91048,0x104c9104c]  cutils.c:566
+                    + ! : | + 3 rqsort  (in dynajs) + 668  [0x104c90fe4]  cutils.c:565
+                    + ! : | + ! 3 js_slow_arr_ent_cmp  (in dynajs) + 4  [0x104bf5b2c]  bc_read.inc.c:5765
+                    + ! : | + 3 rqsort  (in dynajs) + 1068  [0x104c91174]  cutils.c:614
+                    + ! : | + 2 rqsort  (in dynajs) + 748  [0x104c91034]  cutils.c:565
+                    + ! : | + ! 2 js_slow_arr_ent_cmp  (in dynajs) + 4  [0x104bf5b2c]  bc_read.inc.c:5765
+                    + ! : | + 1 rqsort  (in dynajs) + 588  [0x104c90f94]  cutils.c:551
+                    + ! : | + 1 rqsort  (in dynajs) + 604  [0x104c90fa4]  cutils.c:553
+                    + ! : | + 1 rqsort  (in dynajs) + 776  [0x104c91050]  cutils.c:568
+                    + ! : | + 1 rqsort  (in dynajs) + 1736  [0x104c91410]  cutils.c:646
+                    + ! : | 109 js_slow_array_shift_unshift  (in dynajs) + 152  [0x104bf5158]  bc_read.inc.c:5984
+                    + ! : | + 41 js_slow_array_shift_unshift  (in dynajs) + 192,212,...  [0x104bf5180,0x104bf5194,...]  bc_read.inc.c:5984
+                    + ! : | + 15 js_slow_array_scan_start  (in dynajs) + 100,104  [0x104bf5ba4,0x104bf5ba8]  bc_read.inc.c:5837
+                    + ! : | + 15 js_slow_array_scan_start  (in dynajs) + 112  [0x104bf5bb0]  bc_read.inc.c:5838
+                    + ! : | + 9 js_slow_array_shift_unshift  (in dynajs) + 240  [0x104bf51b0]  bc_read.inc.c:5992
+                    + ! : | + 8 js_slow_array_shift_unshift  (in dynajs) + 264,272  [0x104bf51c8,0x104bf51d0]  bc_read.inc.c:5990
+                    + ! : | + 6 js_slow_array_shift_unshift  (in dynajs) + 256  [0x104bf51c0]  bc_read.inc.c:5989
+                    + ! : | + 5 js_slow_array_scan_start  (in dynajs) + 240,252,...  [0x104bf5c30,0x104bf5c3c,...]  bc_read.inc.c:5833
+                    + ! : | + 5 js_slow_array_shift_unshift  (in dynajs) + 244  [0x104bf51b4]  bc_read.inc.c:5988
+                    + ! : | + 4 js_slow_array_scan_start  (in dynajs) + 276  [0x104bf5c54]  bc_read.inc.c:5833
+                    + ! : | + ! 1 JS_AtomIsArrayIndex  (in dynajs) + 108  [0x104bc9110]  atoms.inc.c:0
+                    + ! : | + ! 1 JS_AtomIsArrayIndex  (in dynajs) + 0  [0x104bc90a4]  atoms.inc.c:906
+                    + ! : | + ! 1 JS_AtomIsArrayIndex  (in dynajs) + 68  [0x104bc90e8]  atoms.inc.c:918
+                    + ! : | + ! 1 JS_AtomIsArrayIndex  (in dynajs) + 120  [0x104bc911c]  atoms.inc.c:926
+                    + ! : | + 1 js_slow_array_scan_start  (in dynajs) + 116  [0x104bf5bb4]  bc_read.inc.c:5839
+                    + ! : | 67 js_slow_array_shift_unshift  (in dynajs) + 864  [0x104bf5420]  bc_read.inc.c:6035
+                    + ! : | + 24 js_slow_array_shift_unshift  (in dynajs) + 968  [0x104bf5488]  bc_read.inc.c:6050
+                    + ! : | + 12 js_slow_array_shift_unshift  (in dynajs) + 792,784  [0x104bf53d8,0x104bf53d0]  bc_read.inc.c:6032
+                    + ! : | + 11 js_slow_array_shift_unshift  (in dynajs) + 612  [0x104bf5324]  bc_read.inc.c:6028
+                    + ! : | + 10 js_slow_array_shift_unshift  (in dynajs) + 988,1008,...  [0x104bf549c,0x104bf54b0,...]  bc_read.inc.c:6052
+                    + ! : | + 9 js_slow_array_shift_unshift  (in dynajs) + 560  [0x104bf52f0]  bc_read.inc.c:0
+                    + ! : | + 1 js_slow_array_shift_unshift  (in dynajs) + 904  [0x104bf5448]  bc_read.inc.c:6053
+                    + ! : | 63 js_slow_array_shift_unshift  (in dynajs) + 308  [0x104bf51f4]  bc_read.inc.c:5997
+                    + ! : | + 27 js_slow_array_shift_unshift  (in dynajs) + 420,444  [0x104bf5264,0x104bf527c]  bc_read.inc.c:6010
+                    + ! : | + 21 js_slow_array_shift_unshift  (in dynajs) + 372,376,...  [0x104bf5234,0x104bf5238,...]  bc_read.inc.c:6004
+                    + ! : | + 11 js_slow_array_shift_unshift  (in dynajs) + 392  [0x104bf5248]  bc_read.inc.c:6005
+                    + ! : | + 3 js_slow_array_shift_unshift  (in dynajs) + 448  [0x104bf5280]  bc_read.inc.c:6011
+                    + ! : | + 1 js_malloc_large  (in dynajs) + 32  [0x104bc19c4]  js_malloc.inc.c:142
+                    + ! : | +   1 js_def_malloc  (in dynajs) + 68  [0x104bc3274]  js_malloc.inc.c:842
+                    + ! : | +     1 <deduplicated_symbol>  (in libsystem_malloc.dylib) + 112  [0x18a7071cc]
+                    + ! : | 42 js_slow_array_shift_unshift  (in dynajs) + 920  [0x104bf5458]  bc_read.inc.c:6053
+                    + ! : | + 14 js_slow_array_shift_unshift  (in dynajs) + 1168  [0x104bf5550]  bc_read.inc.c:6059
+                    + ! : | + 10 js_slow_array_shift_unshift  (in dynajs) + 968  [0x104bf5488]  bc_read.inc.c:6050
+                    + ! : | + 7 js_slow_array_shift_unshift  (in dynajs) + 1156  [0x104bf5544]  bc_read.inc.c:0
+                    + ! : | + 5 js_slow_array_shift_unshift  (in dynajs) + 976,988,...  [0x104bf5490,0x104bf549c,...]  bc_read.inc.c:6052
+                    + ! : | + 2 js_slow_array_shift_unshift  (in dynajs) + 924  [0x104bf545c]  bc_read.inc.c:6049
+                    + ! : | + 1 delete_property  (in dynajs) + 56  [0x104ba13c0]  property_get.inc.c:1224
+                    + ! : | + 1 delete_property  (in dynajs) + 376  [0x104ba1500]  property_get.inc.c:1242
+                    + ! : | + 1 js_slow_array_shift_unshift  (in dynajs) + 1164  [0x104bf554c]  bc_read.inc.c:6058
+                    + ! : | + 1 js_slow_array_shift_unshift  (in dynajs) + 1088  [0x104bf5500]  bc_read.inc.c:6062
+                    + ! : | 38 js_slow_array_shift_unshift  (in dynajs) + 100  [0x104bf5124]  bc_read.inc.c:5982
+                    + ! : | + 38 js_slow_array_shift_unshift  (in dynajs) + 100  [0x104bf5124]  bc_read.inc.c:5982
+                    + ! : | +   13 js_slow_array_try_convert_fast  (in dynajs) + 312  [0x104bf599c]  bc_read.inc.c:5903
+                    + ! : | +   9 js_slow_array_try_convert_fast  (in dynajs) + 288  [0x104bf5984]  bc_read.inc.c:0
+                    + ! : | +   8 js_slow_array_try_convert_fast  (in dynajs) + 272,284  [0x104bf5974,0x104bf5980]  bc_read.inc.c:5904
+                    + ! : | +   6 js_slow_array_try_convert_fast  (in dynajs) + 304  [0x104bf5994]  bc_read.inc.c:5900
+                    + ! : | +   2 js_slow_array_try_convert_fast  (in dynajs) + 292  [0x104bf5988]  bc_read.inc.c:5899
+                    + ! : | 5 js_slow_array_shift_unshift  (in dynajs) + 1100  [0x104bf550c]  bc_read.inc.c:6062
+                    + ! : |   2 js_def_free  (in dynajs) + 32  [0x104bc32cc]  js_malloc.inc.c:858
+                    + ! : |   ! 1 DYLD-STUB$$malloc_size  (in dynajs) + 0  [0x104cd194c]
+                    + ! : |   ! 1 malloc_size  (in libsystem_malloc.dylib) + 40  [0x18a6e405c]
+                    + ! : |   1 _xzm_free  (in libsystem_malloc.dylib) + 0  [0x18a708118]
+                    + ! : |   1 _xzm_xzone_free_freelist  (in libsystem_malloc.dylib) + 760  [0x18a710e38]
+                    + ! : |   ! 1 mach_absolute_time  (in libsystem_kernel.dylib) + 108  [0x18a8a810c]
+                    + ! : |   1 _xzm_xzone_free_freelist  (in libsystem_malloc.dylib) + 340  [0x18a710c94]
+                    + ! : 1 js_array_pop  (in dynajs) + 452  [0x104c2bea4]  bc_read.inc.c:8076
+                    + ! : | 1 JS_SetPropertyInternal  (in dynajs) + 108  [0x104b9c964]  property_set_convert.inc.c:45
+                    + ! : 1 js_array_push  (in dynajs) + 120  [0x104bf4964]  bc_read.inc.c:8119
+                    + ! : | 1 js_get_length64  (in dynajs) + 52  [0x104bb98a8]  bc_read.inc.c:3768
+                    + ! : |   1 JS_GetPropertyInternal  (in dynajs) + 616  [0x104b9a4e4]  property_get.inc.c:84
+                    + ! : 1 js_array_push  (in dynajs) + 964  [0x104bf4cb0]  bc_read.inc.c:8139
+                    + ! : | 1 JS_SetPropertyValue  (in dynajs) + 740  [0x104b9dd6c]  property_set_convert.inc.c:405
+                    + ! : 1 js_array_push  (in dynajs) + 1060  [0x104bf4d10]  bc_read.inc.c:8143
+                    + ! : | 1 set_array_length  (in dynajs) + 224  [0x104b9d63c]  property_get.inc.c:0
+                    + ! : 1 js_array_push  (in dynajs) + 1064  [0x104bf4d14]  bc_read.inc.c:8146
+                    + ! 1 js_call_c_function  (in dynajs) + 64  [0x104b8e778]  property_set_convert.inc.c:8052
+                    + 1 JS_CallInternal  (in dynajs) + 860  [0x104ba31dc]  interpreter.inc.c:125
+                    1 JS_CallInternal  (in dynajs) + 47872  [0x104bae980]  interpreter.inc.c:2986
+                    1 JS_CallInternal  (in dynajs) + 56660  [0x104bb0bd4]  interpreter.inc.c:3840
+                    1 JS_CallInternal  (in dynajs) + 8720  [0x104ba5090]  interpreter.inc.c:649
+                    1 JS_CallInternal  (in dynajs) + 18128  [0x104ba7550]  shapes_objects_gc.inc.c:0
+
+Total number in stack (recursive counted multiple, when >=5):
+        12       js_slow_arr_ent_cmp  (in dynajs) + 0  [0x104bf5b28]  bc_read.inc.c:5765
+        10       exchange_int64s  (in dynajs) + 0  [0x104c91504]  cutils.c:416
+        8       exchange_int64s  (in dynajs) + 0  [0x104c91504]  cutils.c:419
+        8       exchange_int64s  (in dynajs) + 0  [0x104c91504]  cutils.c:421
+        7       js_slow_array_shift_unshift  (in dynajs) + 0  [0x104bf50c0]  bc_read.inc.c:0
+
+Sort by top of stack, same collapsed (when >= 5):
+        rqsort  (in dynajs)        989
+        js_slow_array_shift_unshift  (in dynajs)        550
+        js_slow_arr_ent_cmp  (in dynajs)        381
+        exchange_int64s  (in dynajs)        244
+        js_slow_array_scan_start  (in dynajs)        73
+        js_slow_array_try_convert_fast  (in dynajs)        72
+        JS_AtomIsArrayIndex  (in dynajs)        13
+        JS_CallInternal  (in dynajs)        5
+
+Binary Images:
+       0x104b8c000 -        0x104cf9e67 +dynajs (0) <DE129E87-D388-32E7-BF9E-0BE0237E0920> /tmp/*/dynajs
+       0x18a478000 -        0x18a4cab4b  libobjc.A.dylib (951.7) <03BD9E32-CF0A-37B0-898A-3CE8DE06D842> /usr/lib/libobjc.A.dylib
+       0x18a4cb000 -        0x18a4ffd58  libdyld.dylib (1387) <957F93B3-8805-39C7-9C51-EDD1715F550E> /usr/lib/system/libdyld.dylib
+       0x18a500000 -        0x18a5b34ff  dyld (1.0.0 - 1387) <74E52480-C2BD-3C8D-812D-95FE2B74A096> /usr/lib/dyld
+       0x18a5b4000 -        0x18a5b7228  libsystem_blocks.dylib (96) <E0AC1231-27AA-3A13-8FAC-41D5802B1F3C> /usr/lib/system/libsystem_blocks.dylib
+       0x18a5b8000 -        0x18a60c55f  libxpc.dylib (3102.160.5) <33E44C2D-D65E-37A6-B85F-1A4CF524A050> /usr/lib/system/libxpc.dylib
+       0x18a60d000 -        0x18a62d9ff  libsystem_trace.dylib (1861.160.4) <93F1DD8C-6CD9-32B9-B222-D23DA5D161B4> /usr/lib/system/libsystem_trace.dylib
+       0x18a62e000 -        0x18a6dc5f7  libcorecrypto.dylib (1922.160.10) <0642DDAD-4771-3C82-805C-E7C6701C1461> /usr/lib/system/libcorecrypto.dylib
+       0x18a6dd000 -        0x18a72d257  libsystem_malloc.dylib (812.160.5) <D969A907-3E43-3951-9365-8C2DB3812E9D> /usr/lib/system/libsystem_malloc.dylib
+       0x18a72e000 -        0x18a77523f  libdispatch.dylib (1542.160.2) <B2000CD5-F580-314A-A141-E036719D854E> /usr/lib/system/libdispatch.dylib
+       0x18a776000 -        0x18a778ffb  libsystem_featureflags.dylib (103) <FEE12F9C-344B-33B3-8EDD-283580EF1C67> /usr/lib/system/libsystem_featureflags.dylib
+       0x18a779000 -        0x18a7fa1e7  libsystem_c.dylib (1752.160.4) <D77CEB62-AFF6-3CEC-BA9B-4F057FBE2EB5> /usr/lib/system/libsystem_c.dylib
+       0x18a7fb000 -        0x18a88bae7  libc++.1.dylib (2100.43) <F0FD393C-15BC-3C75-A19D-897F7B225C78> /usr/lib/libc++.1.dylib
+       0x18a88c000 -        0x18a8a675f  libc++abi.dylib (2100.43) <F38A9C58-22AB-3798-BBAE-8DCD9CC0CE27> /usr/lib/libc++abi.dylib
+       0x18a8a7000 -        0x18a8e42e7  libsystem_kernel.dylib (12377.161.14) <C6A4A4CB-92E6-3BAF-AAE0-E8306259209A> /usr/lib/system/libsystem_kernel.dylib
+       0x18a8e5000 -        0x18a8f1b3b  libsystem_pthread.dylib (539.100.4) <A373F0B0-9880-326A-88B4-DD8BE4E33072> /usr/lib/system/libsystem_pthread.dylib
+       0x18a8f2000 -        0x18a8fa963  libsystem_platform.dylib (375.120.2) <EDB83A19-EC17-32DE-9350-6145970A85D6> /usr/lib/system/libsystem_platform.dylib
+       0x18a8fb000 -        0x18a92a6eb  libsystem_info.dylib (600) <9B5FB84B-31AD-3EA7-8F89-8C700D369DC8> /usr/lib/system/libsystem_info.dylib
+       0x18e8c8000 -        0x18e8d1e5f  libsystem_darwin.dylib (1752.160.4) <8E07D22E-CE5A-38A0-B091-5B0338C326F5> /usr/lib/system/libsystem_darwin.dylib
+       0x18ed33000 -        0x18ed451b6  libsystem_notify.dylib (348.160.3) <15799128-6CBD-30D6-A2BB-B9D02B4470C0> /usr/lib/system/libsystem_notify.dylib
+       0x191004000 -        0x19101ef7b  libsystem_networkextension.dylib (2226.161.1) <9C7B1EEB-47BE-3791-93A9-CFC693CB9417> /usr/lib/system/libsystem_networkextension.dylib
+       0x1910a1000 -        0x1910b8fdf  libsystem_asl.dylib (406) <54439739-33EE-3273-839F-CBA67D7F5CB1> /usr/lib/system/libsystem_asl.dylib
+       0x192c5a000 -        0x192c62387  libsystem_symptoms.dylib (2169.160.3) <229122B9-B8B1-3F2F-870E-8650AE3C4FB5> /usr/lib/system/libsystem_symptoms.dylib
+       0x196eff000 -        0x196f375b7  libsystem_containermanager.dylib (725.160.3) <14B2A47F-19C8-392F-8FDB-FE8AE375DD41> /usr/lib/system/libsystem_containermanager.dylib
+       0x198311000 -        0x1983155d7  libsystem_configuration.dylib (1405.160.3) <D8D6280B-783D-3550-BDBA-2861AE40604F> /usr/lib/system/libsystem_configuration.dylib
+       0x198316000 -        0x19831c99f  libsystem_sandbox.dylib (2680.160.6) <54688162-B50D-3D31-A1E8-7B9766D3530D> /usr/lib/system/libsystem_sandbox.dylib
+       0x199971000 -        0x1999741fb  libquarantine.dylib (196.160.2) <EEE5AADB-52E1-3C4C-881A-70405770B1F1> /usr/lib/system/libquarantine.dylib
+       0x19a110000 -        0x19a116d03  libsystem_coreservices.dylib (191.5.1) <D4ACD2AC-5702-3C45-85A0-300B2C2D19E1> /usr/lib/system/libsystem_coreservices.dylib
+       0x19a69f000 -        0x19a6dca77  libsystem_m.dylib (3312.100.1) <B54FBE99-DB0B-32C7-ABDD-C2206DF606A4> /usr/lib/system/libsystem_m.dylib
+       0x19a6de000 -        0x19a6e1527  libmacho.dylib (1387) <949131E5-BDA2-39BA-AA50-62651BB51802> /usr/lib/system/libmacho.dylib
+       0x19a6fb000 -        0x19a7083a7  libcommonCrypto.dylib (600035) <3B110564-5278-3CB0-85F1-2CE8431FF935> /usr/lib/system/libcommonCrypto.dylib
+       0x19a709000 -        0x19a712ca3  libunwind.dylib (2100.2) <05FD0014-55B1-3B8A-A6BA-6C7A389C4123> /usr/lib/system/libunwind.dylib
+       0x19a71b000 -        0x19a725bef  libcopyfile.dylib (240.160.2.0.1) <D0009B8A-8ECC-3D56-9206-7E1839707F93> /usr/lib/system/libcopyfile.dylib
+       0x19a726000 -        0x19a729987  libcompiler_rt.dylib (103.3) <6FB345CA-7F5C-3263-A23F-143F7539FD8A> /usr/lib/system/libcompiler_rt.dylib
+       0x19a72a000 -        0x19a72e78b  libsystem_collections.dylib (1752.160.4) <C8160BD2-5941-3DC0-BB40-F8C2B8156EC4> /usr/lib/system/libsystem_collections.dylib
+       0x19a72f000 -        0x19a7324cf  libsystem_secinit.dylib (168.100.7) <ECABC024-8F02-374A-BB7E-29437CEA2ABD> /usr/lib/system/libsystem_secinit.dylib
+       0x19a733000 -        0x19a735bf7  libremovefile.dylib (85.100.6) <7460B5AE-469A-36A0-A7EC-6C7D69628E86> /usr/lib/system/libremovefile.dylib
+       0x19a736000 -        0x19a736f27  libkeymgr.dylib (31) <7E863FCA-F3FF-32C7-8A8C-F983E946AFC3> /usr/lib/system/libkeymgr.dylib
+       0x19a737000 -        0x19a73fe37  libsystem_dnssd.dylib (2881.160.4) <305F4398-E688-3384-B351-02D865EC8A04> /usr/lib/system/libsystem_dnssd.dylib
+       0x19a740000 -        0x19a74509b  libcache.dylib (95) <9CD7B1E1-3E47-339C-A193-2392E3E0ED23> /usr/lib/system/libcache.dylib
+       0x19a746000 -        0x19a747ce3  libSystem.B.dylib (1356) <4FED5EE2-5D3E-35B1-A170-9859C4B683BB> /usr/lib/libSystem.B.dylib
+       0x28e709000 -        0x28e710349  libRosetta.dylib (367.9) <0C7397C6-D747-31F2-8BC1-4096213BDE5C> /usr/lib/libRosetta.dylib
+       0x29031c000 -        0x29031fa4b  libsystem_darwindirectory.dylib (122) <971A4F65-493D-39F3-846D-0D33FA2769FD> /usr/lib/system/libsystem_darwindirectory.dylib
+       0x290320000 -        0x29032a39b  libsystem_eligibility.dylib (319.160.17) <750CA446-92EA-3A56-9A7B-CC0841686C50> /usr/lib/system/libsystem_eligibility.dylib
+       0x29032b000 -        0x29033288b  libsystem_sanitizers.dylib (26.1) <D88EC709-9AA8-3083-B22B-D3CB39678D71> /usr/lib/system/libsystem_sanitizers.dylib
+       0x290333000 -        0x290333bb7  libsystem_trial.dylib (474.2.18.2) <7194FF5B-A6C5-3D67-B00A-90209F10D603> /usr/lib/system/libsystem_trial.dylib

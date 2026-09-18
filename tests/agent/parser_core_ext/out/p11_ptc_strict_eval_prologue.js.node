@@ -1,0 +1,4 @@
+a strict-eval-done
+deep RangeError
+b 15
+c NaN NaN

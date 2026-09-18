@@ -1,0 +1,26 @@
+U+0000 len=1 cc=0 isStr=string
+U+0001 len=1 cc=1 isStr=string
+U+001F len=1 cc=31 isStr=string
+U+0020 len=1 cc=32 isStr=string
+U+0041 len=1 cc=65 isStr=string
+U+007E len=1 cc=126 isStr=string
+U+007F len=1 cc=127 isStr=string
+U+0080 len=1 cc=128 isStr=string
+U+00FF len=1 cc=255 isStr=string
+U+0100 len=1 cc=256 isStr=string
+U+07FF len=1 cc=2047 isStr=string
+U+0800 len=1 cc=2048 isStr=string
+U+D7FF len=1 cc=55295 isStr=string
+U+D800 len=1 cc=55296 isStr=string
+U+DC00 len=1 cc=56320 isStr=string
+U+DFFF len=1 cc=57343 isStr=string
+U+E000 len=1 cc=57344 isStr=string
+U+FFFD len=1 cc=65533 isStr=string
+U+FFFE len=1 cc=65534 isStr=string
+U+FFFF len=1 cc=65535 isStr=string
+multi=true
+empty=0
+mapIdent=true val=fcc
+objIdent=true
+acc=306797421
+hash=e581b2d0

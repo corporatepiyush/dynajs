@@ -1,0 +1,223 @@
+// GENERATED probe (simd_edges) -- do not edit; run materialize.sh
+import { sum, max, min, argmax, argmin, softmax, logSoftmax,
+         f64Max, f64Min, i32Min, i32Max, add, dot, cumsum, f64Sum, gemv, gemm } from "dyna:simd";
+var __TAG = "simd_edges";
+// h.js — portable micro test harness for black-box numeric probes.
+
+// Works identically on dynajs (has `print`) and node (console.log).
+// Probe contract: emit per-failure FAIL lines, then a SUMMARY line and
+// RESULT PASS / RESULT FAIL. On any failure the probe throws uncaught at
+// the end so the process exit code is nonzero.
+//
+// Numeric additions over the strnum_bb harness:
+//   assert_close(a, e, rel, abs, msg)  |a-e| <= max(abs, rel*|e|); NaN==NaN passes
+//   assert_nan(v, msg)                 value must be NaN
+//   f32bits(x)                         f32 round x, return the 32-bit pattern
+//   assert_f32eq(x, bits, msg)         x must be the exact f32 bit pattern `bits`
+//   assert_arr_eq(a, b, msg)           exact element equality via toString
+//   assert_arr_close(a, e, rel, abs, msg)  elementwise assert_close
+// The PRIMARY oracle for every dyna:* numeric probe is the python golden
+// (decimal/numpy) baked into the probe at generation time — node cannot load
+// dyna:* modules, so it is never the oracle here.
+var __out = (typeof print === "function") ? function (s) { print(s); }
+                                          : function (s) { console.log(s); };
+var __pass = 0, __fail = 0;
+
+function __show(v) {
+  var t = typeof v;
+  if (t === "string") return JSON.stringify(v);
+  if (t === "number") {
+    if (v !== v) return "NaN";
+    if (v === 0 && 1 / v < 0) return "-0";
+    if (v === Infinity) return "Infinity";
+    if (v === -Infinity) return "-Infinity";
+    return String(v);
+  }
+  if (v === undefined) return "undefined";
+  if (v === null) return "null";
+  if (t === "boolean") return String(v);
+  if (t === "function") return "fn";
+  if (typeof v === "object" && v && typeof v.length === "number" && v.BYTES_PER_ELEMENT) {
+    var parts = [];
+    for (var i = 0; i < Math.min(v.length, 8); i++) parts.push(__show(v[i]));
+    return "[" + parts.join(",") + (v.length > 8 ? ",...(" + v.length + ")" : "") + "]";
+  }
+  try { return String(v); } catch (e) { return "[unprintable]"; }
+}
+
+function assert(cond, msg) {
+  if (cond) { __pass++; return; }
+  __fail++;
+  __out("FAIL assert " + msg);
+}
+function assert_true(v, msg) {
+  if (v === true) { __pass++; return; }
+  __fail++;
+  __out("FAIL assert_true " + msg + " got=" + __show(v));
+}
+function assert_eq(actual, expected, msg) {
+  var a = __show(actual), e = __show(expected);
+  if (a === e && typeof actual === typeof expected) { __pass++; return; }
+  __fail++;
+  __out("FAIL assert_eq " + msg + " got=" + a + " want=" + e);
+}
+function assert_ne(actual, expected, msg) {
+  var a = __show(actual), e = __show(expected);
+  if (!(a === e && typeof actual === typeof expected)) { __pass++; return; }
+  __fail++;
+  __out("FAIL assert_ne " + msg + " both=" + a);
+}
+// |a-e| <= max(abs, rel*|e|). Two NaNs count as equal (the generator only
+// bakes NaN where NaN is the intended answer); exactly one NaN fails.
+function assert_close(actual, expected, rel, abs, msg) {
+  var a = +actual, e = +expected;
+  if (a !== a && e !== e) { __pass++; return; }
+  if (a !== a || e !== e) {
+    __fail++;
+    __out("FAIL assert_close " + msg + " got=" + __show(a) + " want=" + __show(e));
+    return;
+  }
+  var d = Math.abs(a - e), lim = Math.max(abs, rel * Math.abs(e));
+  if (d <= lim) { __pass++; return; }
+  __fail++;
+  __out("FAIL assert_close " + msg + " got=" + __show(a) + " want=" + __show(e) +
+        " |d|=" + d + " lim=" + lim);
+}
+function assert_nan(v, msg) {
+  if (v !== v) { __pass++; return; }
+  __fail++;
+  __out("FAIL assert_nan " + msg + " got=" + __show(v));
+}
+var __f32 = new Float32Array(1), __u32 = new Uint32Array(__f32.buffer);
+function f32bits(x) { __f32[0] = x; return __u32[0]; }
+function bitsf32(b) { __u32[0] = b >>> 0; return __f32[0]; }
+function assert_f32eq(x, bits, msg) {
+  var got = f32bits(x) >>> 0, want = bits >>> 0;
+  if (got === want) { __pass++; return; }
+  __fail++;
+  __out("FAIL assert_f32eq " + msg + " got bits=0x" + got.toString(16) +
+        " (" + __show(bitsf32(got)) + ") want bits=0x" + want.toString(16) +
+        " (" + __show(bitsf32(want)) + ")");
+}
+// 32-bit pattern of a float64 (for -0 / NaN payload style checks).
+var __f64 = new Float64Array(1), __u64 = new Uint32Array(__f64.buffer);
+function f64bits(x) { __f64[0] = x; return [__u64[0], __u64[1]]; }
+function assert_arr_eq(a, b, msg) {
+  if (a.length !== b.length) {
+    __fail++; __out("FAIL assert_arr_eq " + msg + " len " + a.length + " != " + b.length);
+    return;
+  }
+  for (var i = 0; i < a.length; i++) {
+    var x = a[i], y = b[i];
+    var ok = (x === y) || (x !== x && y !== y) ||
+             (typeof x === "string" && x === y);
+    if (!ok) {
+      __fail++;
+      __out("FAIL assert_arr_eq " + msg + " at [" + i + "] got=" + __show(x) +
+            " want=" + __show(y));
+      return;
+    }
+  }
+  __pass++;
+}
+function assert_arr_close(a, e, rel, abs, msg) {
+  if (a.length !== e.length) {
+    __fail++; __out("FAIL assert_arr_close " + msg + " len " + a.length + " != " + e.length);
+    return;
+  }
+  for (var i = 0; i < a.length; i++) {
+    var x = +a[i], y = +e[i];
+    if (x !== x && y !== y) continue;
+    if (x !== x || y !== y || Math.abs(x - y) > Math.max(abs, rel * Math.abs(y))) {
+      __fail++;
+      __out("FAIL assert_arr_close " + msg + " at [" + i + "] got=" + __show(x) +
+            " want=" + __show(y));
+      return;
+    }
+  }
+  __pass++;
+}
+function assert_throws(fn, kind, msg) {
+  var threw = null;
+  try { fn(); } catch (e) { threw = e; }
+  if (threw === null) { __fail++; __out("FAIL assert_throws " + msg + " no-throw"); return; }
+  var name = (threw && typeof threw.name === "string") ? threw.name : "?";
+  if (kind && name !== kind) {
+    __fail++; __out("FAIL assert_throws " + msg + " threw=" + name + " want=" + kind);
+    return;
+  }
+  __pass++;
+}
+function summary(tag) {
+  __out("SUMMARY " + tag + " pass=" + __pass + " fail=" + __fail);
+  if (__fail > 0) {
+    __out("RESULT FAIL");
+    throw new Error("PROBE FAILED: " + __fail + " failure(s) in " + tag);
+  }
+  __out("RESULT PASS");
+}
+
+function f32fromhex(hex) {
+  var a = new Float32Array(hex.length), u = new Uint32Array(a.buffer);
+  for (var i = 0; i < hex.length; i++) u[i] = parseInt(hex[i], 16);
+  return a;
+}
+function f64fromhex(hex) {
+  var a = new Float64Array(hex.length / 2), u = new Uint32Array(a.buffer);
+  for (var i = 0; i < hex.length; i++) u[i] = parseInt(hex[i], 16);
+  return a;
+}
+assert_throws(function () { max(new Float32Array(0)); }, "RangeError", "edge max(new Float32Array(0))");
+assert_throws(function () { min(new Float32Array(0)); }, "RangeError", "edge min(new Float32Array(0))");
+assert_throws(function () { argmax(new Float32Array(0)); }, "RangeError", "edge argmax(new Float32Array(0))");
+assert_throws(function () { argmin(new Float32Array(0)); }, "RangeError", "edge argmin(new Float32Array(0))");
+assert_throws(function () { softmax(new Float32Array(0)); }, "RangeError", "edge softmax(new Float32Array(0))");
+assert_throws(function () { logSoftmax(new Float32Array(0)); }, "RangeError", "edge logSoftmax(new Float32Array(0))");
+assert_throws(function () { f64Max(new Float64Array(0)); }, "RangeError", "edge f64Max(new Float64Array(0))");
+assert_throws(function () { f64Min(new Float64Array(0)); }, "RangeError", "edge f64Min(new Float64Array(0))");
+assert_throws(function () { i32Min(new Int32Array(0)); }, "RangeError", "edge i32Min(new Int32Array(0))");
+assert_throws(function () { i32Max(new Int32Array(0)); }, "RangeError", "edge i32Max(new Int32Array(0))");
+assert_throws(function () { add(new Float32Array(3), new Float32Array(2), new Float32Array(3)); }, "RangeError", "edge add(new Float32Array(3), new Float32Array(2), new Float32Array(3))");
+assert_throws(function () { add(new Float32Array(3), new Float32Array(3), new Float32Array(2)); }, "RangeError", "edge add(new Float32Array(3), new Float32Array(3), new Float32Array(2))");
+assert_throws(function () { dot(new Float32Array(2), new Float32Array(3)); }, "RangeError", "edge dot(new Float32Array(2), new Float32Array(3))");
+assert_throws(function () { gemv(new Float32Array(2), new Float32Array(4), new Float32Array(2), 3, 2, 0); }, "RangeError", "edge gemv(new Float32Array(2), new Float32Array(4), new Float32Array(2), 3, 2, 0)");
+assert_throws(function () { gemv(new Float32Array(3), new Float32Array(7), new Float32Array(2), 3, 2, 0); }, "RangeError", "edge gemv(new Float32Array(3), new Float32Array(7), new Float32Array(2), 3, 2, 0)");
+assert_throws(function () { gemm(new Float32Array(4), new Float32Array(6), new Float32Array(8), 2, 2, 3, 1, 0); }, "RangeError", "edge gemm(new Float32Array(4), new Float32Array(6), new Float32Array(8), 2, 2, 3, 1, 0)");
+assert_throws(function () { sum(new Float64Array(4)); }, "TypeError", "edge sum(new Float64Array(4))");
+assert_throws(function () { f64Sum(new Float32Array(4)); }, "TypeError", "edge f64Sum(new Float32Array(4))");
+assert_throws(function () { i32Min(new Float32Array(2)); }, "TypeError", "edge i32Min(new Float32Array(2))");
+assert_throws(function () { i32Min(new Uint32Array(2)); }, "TypeError", "edge i32Min(new Uint32Array(2))");
+assert_throws(function () { cumsum(new Float64Array(2)); }, "TypeError", "edge cumsum(new Float64Array(2))");
+assert_throws(function () { gemv(new Float32Array(2), new Float32Array(4), new Float32Array(2), 1.5, 2, 0); }, "RangeError", "edge gemv(new Float32Array(2), new Float32Array(4), new Float32Array(2), 1.5, 2, 0)");
+
+var i32 = new Int32Array([0x3f800000, 0x40000000, 0xc0000000]);  // 1.0, 2.0, -2.0 as f32
+assert_close(sum(i32), 1.0, 0, 1e-6, "f32 family accepts 4-byte i32 bits");
+// empty non-throwing reductions
+assert_eq(sum(new Float32Array(0)), 0, "sum(empty) = 0");
+assert_eq(f64Sum(new Float64Array(0)), 0, "f64Sum(empty) = 0");
+assert_eq(dot(new Float32Array(0), new Float32Array(0)), 0, "dot(empty) = 0");
+// NaN policy of max/argmax == the scalar semantics (documented impl choice):
+// a NaN at index 0 poisons the fold; a NaN later is skipped by strict >.
+for (var len = 1; len <= 130; len = len * 2 + 1) {
+  var a = new Float32Array(len).fill(2);
+  a[0] = NaN;
+  assert_true(isNaN(max(a)), "max NaN@0 len=" + len);
+  assert_eq(argmax(a), 0, "argmax NaN@0 len=" + len);
+  if (len > 5) {
+    var b = new Float32Array(len).fill(2);
+    b[3] = NaN; b[len - 1] = 7;
+    // DOCUMENTED DIVERGENCE (impl-defined): below the binding's 64-element
+    // safe-reduce bound the scalar path skips later NaNs (strict > fold);
+    // at or above it the vector path propagates any NaN. Assert the length
+    // that the call actually took so a change in either regime is caught.
+    if (len < 64) {
+      assert_eq(max(b), 7, "max skips later NaN (scalar regime) len=" + len);
+      assert_eq(argmax(b), len - 1, "argmax skips later NaN (scalar) len=" + len);
+    } else {
+      assert_true(isNaN(max(b)), "max propagates NaN (vector regime) len=" + len);
+    }
+  }
+}
+// in-place == fresh for activations (aliasing contract)
+
+summary(__TAG); // 24 cases

@@ -1,0 +1,4 @@
+alt => len=1500 sum=1250000 spreadSum=250000 head=[0,2,3,2,6] tail=[1994,1995,998,1998,1999]
+slow-alt => len=101501 at100000=1 first500=[null,null,null] expectedLen=101501 match=true
+mix => len=1011 sum=5050 55*100=5500
+grow => len=234 [0,1,1,2,2,2,3,3] all-i-match=true

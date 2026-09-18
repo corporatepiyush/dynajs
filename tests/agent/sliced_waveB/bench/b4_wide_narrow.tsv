@@ -1,0 +1,9 @@
+-e case	pristine_ns	patched_ns	ratio
+T4_atom_from_wide_slice_1K	1600.5	1203.8	1.33
+T4_charcode_wide_slice_25K	36.0	34.0	1.06
+T4_compare_wide_slice_pair	1383.5	1382.0	1.00
+T4_concat_short_wide_slice	86.5	176.1	0.49
+T4_concat_slice_slice	22.5	22.5	1.00
+T4_concat_then_search_1K	266.5	88.5	3.01
+T4_json_wide_slice_25K	34490.0	33820.0	1.02
+T4_tolower_wide_slice_25K	280200.0	283420.0	0.99

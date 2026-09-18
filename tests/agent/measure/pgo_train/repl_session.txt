@@ -1,0 +1,47 @@
+// REPL session replay for PGO training: arithmetic, closures, arrays,
+// strings, JSON, Date, regexp, Map/Set, error paths, async, module-ish use
+1+1
+2**53n + 7n
+var a = [5,3,8,1,9,2,7]
+a.sort((x,y)=>x-y)
+a.filter(x=>x%2).map(x=>x*x).reduce((s,x)=>s+x, 0)
+function fib(n){ return n<2 ? n : fib(n-1)+fib(n-2) }
+fib(20)
+const fact = (n) => n<=1 ? 1n : BigInt(n)*fact(n-1)
+fact(25).toString()
+let s = ""
+for (let i=0;i<50;i++) s += "w"+i+","
+s.length
+s.split(",").slice(10,15).join("|")
+"hello world".replace(/o/g, "0").toUpperCase()
+JSON.stringify({name:"dyna", tags:["a","b"], nested:{pi:3.14159, ok:true}}, null, 2)
+JSON.parse('{"k":[1,2,3],"deep":{"x":null,"y":[true,false]}}').deep.y.length
+new Date(Date.UTC(2026,8,11,12,0,0)).toISOString()
+new Date("2026-09-11T12:00:00Z").getUTCFullYear()
+let m = new Map([[1,"one"],[2,"two"]])
+m.set(3,"three"); m.get(2); m.size
+let st = new Set([1,2,2,3,3,3]); [...st].join("")
+function* counter(n){ for(let i=0;i<n;i++) yield i*i }
+[...counter(6)].join(",")
+async function later(x){ return await Promise.resolve(x*10) }
+later(4).then(v=>v+1)
+class Point { constructor(x,y){ this.x=x; this.y=y } dist(){ return Math.hypot(this.x,this.y) } }
+new Point(3,4).dist()
+try { JSON.parse("{bad json") } catch(e) { e.constructor.name }
+try { ({}).x.y.z } catch(e) { e.message }
+Object.keys({a:1,b:2,c:3}).length
+Object.entries({q:1}).flatMap(([k,v])=>[k,v]).join("=")
+[..."the quick brown fox"].reduce((acc,c)=>{acc[c]=(acc[c]||0)+1; return acc}, {})
+typeof 1, typeof "a", typeof undefined, typeof null, typeof {}, typeof Symbol()
+Symbol.iterator.toString()
+Math.max(...[4,9,2,7,1])
+Array.from({length:5},(_,i)=>i*3).reverse()
+"abc".padStart(7,"-").padEnd(10,"+")
+parseInt("0x1f",16) + parseFloat("2.5e3")
+Number.isSafeInteger(2**53-1)
+structuredClone ? "has sc" : "no sc"
+/reg*/.test("regular")
+"regular expression".match(/re\w+/g).join("&")
+encodeURIComponent("a b&c=d")
+
+\q

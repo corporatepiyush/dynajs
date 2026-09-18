@@ -1,0 +1,5 @@
+FAIL i=0 da=3893 db=748
+FAIL i=1 da=1835 db=2649
+FAIL i=3 da=2400 db=305
+FAIL i=4 da=963 db=1627
+fails=160 hash=b7b139c2

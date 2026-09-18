@@ -1,0 +1,5 @@
+acc => [1,"g1",3] calls=1 len=3
+mutget => TypeError mid-spread fired=true blen=4
+growget => [1,2,"L","x","y"] glen=5
+fresh => ["A!","b"] ["A!","b"]
+len-acc => TypeError

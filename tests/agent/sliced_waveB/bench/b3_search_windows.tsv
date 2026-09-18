@@ -1,0 +1,17 @@
+-e case	pristine_ns	patched_ns	ratio
+T3_idx_16K_edge_cross	1171.3	921.8	1.27
+T3_idx_16K_zerolen	35.2	35.6	0.99
+T3_idx_1K_unique_mid	97.5	83.5	1.17
+T3_idx_64K_unique_absent	3855.0	2935.0	1.31
+T3_idx_64K_unique_mid30	622.0	492.5	1.26
+T3_idx_astral_window	40.6	43.6	0.93
+T3_idx_wide_16K_unique_mid	755.0	758.0	1.00
+T3_incl_64K_unique_mid30	622.5	493.5	1.26
+T3_lidx_1K_absent	1605.0	1607.0	1.00
+T3_lidx_64K_absent	103210.0	4560.0	22.63
+T3_lidx_64K_at_end	88.0	89.0	0.99
+T3_lidx_64K_at_start	125400.0	5400.0	23.22
+T3_lidx_wide_16K_absent	35840.0	3690.0	9.71
+T3_repl_16K_unique	1218.0	1082.0	1.13
+T3_replall_16K_unique	1650.0	1442.0	1.14
+T3_startend_16K	107.2	108.7	0.99

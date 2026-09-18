@@ -1,0 +1,36 @@
+# exclude.tsv — files in the in-scope suite dirs that the unified assert-harness
+# runner does NOT run, with the reason. One source of truth for run.sh and
+# convert_all.py. Format: <suite>\t<file>\t<category>\t<reason>
+# Categories: tool | engine-specific | unconvertible
+bbreview	timing_probe.js	tool	wall-clock timing sampler; prints ms timings, no stable expectations
+builtins_ext	perf_bi_mul_crossover.js	tool	perf gate on wall-clock ratios (VERDICT rows); self-timing by design
+builtins_ext	perf_bi_tostring_dc.js	tool	perf gate on wall-clock ratios; self-timing by design
+builtins_ext	perf_locale_and_date.js	tool	perf gate on wall-clock ratios; self-timing by design
+builtins_ext	self_dtoa_binade_pin.js	engine-specific	TREE-ONLY self-pin of a deliberately preserved dynajs dtoa defect; pins THIS tree's binary bytes and node is explicitly NOT the oracle (fails on node and on any other binary by design)
+constprop_review	bench_kernel.js	tool	12M-step dispatch kernel, wall-clock checksum; perf workload
+constprop_review	bench_kernel_lit.js	tool	12M-step literal-label kernel, wall-clock checksum; perf workload
+constprop_review	k_frozen.js	tool	frozen-switch kernel for perf driver; perf workload
+constprop_review	k_nonfrozen.js	tool	non-frozen-switch kernel for perf driver; perf workload
+constprop_review	kernel_frozen.js	tool	frozen-switch kernel copy for perf driver; perf workload
+constprop_review	kernel_nonfrozen.js	tool	non-frozen-switch kernel copy for perf driver; perf workload
+sliced_strings	21_bjson_roundtrip.js	engine-specific	dynajs-only bjson API; node has no bjson global so no cross-engine assert oracle can exist
+dtoa_shortest	bench_dtoa_tostring.js	tool	requires CLI args (case/digits/iters) and prints ns-per-op wall-clock timings
+ev	adversarial.js	tool	unbounded soak-search loop by design (both engines hit the 30s cap); generator, not a bounded probe
+ev	bench.js	tool	requires CLI args (mode/digits/iters), prints wall-clock ns/op
+ev	shrink.js	tool	failure minimizer search tool (dev tooling, not a probe)
+ev	shrink2.js	tool	failure minimizer search tool (dev tooling, not a probe)
+ev_bigint	adversarial.js	tool	unbounded soak-search loop by design (both engines hit the 30s cap); generator, not a bounded probe
+ev_bigint	bench.js	tool	requires CLI args (mode/digits/iters), prints wall-clock ns/op
+ev_bigint	loop_hot.js	tool	sustained 10k-digit mul loop for sampler attribution; perf workload
+ev_bigint	shrink.js	tool	failure minimizer search tool (dev tooling, not a probe)
+ev_bigint	shrink2.js	tool	failure minimizer search tool (dev tooling, not a probe)
+modules_ext	g01_static_import_all_modules.js	engine-specific	dynajs-only: static imports of dyna: scheme modules; node cannot load them (ERR_UNSUPPORTED_ESM_URL_SCHEME) by design
+modules_ext	g03_safe_function_calls.js	engine-specific	dynajs-only: static dyna: imports; node cannot load them by design
+modules_ext	g05_namespace_semantics.js	engine-specific	dynajs-only: static dyna: imports; node cannot load them by design
+modules_ext	g06_dup_binding.broken.js	unconvertible	negative loader test: the artifact under test IS the parse-time abort + nonzero exit; a file that cannot parse cannot carry asserts or print a SUITE line
+modules_ext	g07_missing_module.broken.js	unconvertible	negative loader test: missing-module abort + nonzero exit is the behavior under test; no SUITE line possible
+modules_ext	g08_std_modules_with_dyna.js	engine-specific	dynajs-only: std/os + dyna: imports; node cannot load them by design
+constprop_review	rp09_dup_const.js	unconvertible	output calls live inside eval() string literals; nothing bakeable on the success path
+constprop_review	rp35_atom_churn.js	unconvertible	output calls live inside eval() string literals; nothing bakeable on the success path
+constprop_review	rp37_hoisted_func_conflict.js	unconvertible	output calls live inside eval() string literals; nothing bakeable on the success path
+sliced_waveB	09_bjson_atom_slice.js	engine-specific	dynajs-only bjson API via .so import; node has no bjson

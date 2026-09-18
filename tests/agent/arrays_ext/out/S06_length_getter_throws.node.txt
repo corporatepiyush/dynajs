@@ -1,0 +1,5 @@
+throwlen => spread=[7,8,9] forof=[7,8,9] slice=RangeError concat=RangeError from=[7,8,9]
+shortlen => spread=[1,2,3] slice=[1,2]
+proxy-lie => spread=[1,2] slice=[1,2]
+second-throw => spread=ok [1,2]
+sub => [7,8] ctor=Array

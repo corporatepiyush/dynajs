@@ -1,0 +1,1 @@
+./dynajs ev/diff_battery.js 20000 > ev/diff_full_patched.txt 2>&1  47.04s user 0.29s system 99% cpu 47.747 total

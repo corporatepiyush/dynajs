@@ -1,0 +1,5 @@
+appear-mid => 1,P1,3,P3,5
+vanish-mid => 1,U,3,U,5
+replace-mid => 1,new,3
+delete-ahead => 1,2,P2,4
+objproto-mid => 1,U,3,U,5

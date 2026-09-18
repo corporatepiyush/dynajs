@@ -1,0 +1,30 @@
+(lldb) target create "./dynajs"
+Current executable set to '/tmp/work13/dynajs' (arm64).
+(lldb) settings set -- target.run-args  "slowarr_tests/lldb_probe_search.js"
+(lldb) command source -s 0 'slowarr_tests/lldb_hits.cmds'
+Executing commands in '/tmp/work13/slowarr_tests/lldb_hits.cmds'.
+(lldb) command script import /Users/piyush/ai/dynascript/.agent-work/tools/hitscript.py
+(lldb) breakpoint set -n JS_GetPropertyInt64
+Breakpoint 1: 28 locations.
+(lldb) breakpoint command add -F hitscript.bp_cb
+(lldb) breakpoint set -n JS_TryGetPropertyInt64
+Breakpoint 2: 4 locations.
+(lldb) breakpoint command add -F hitscript.bp_cb
+(lldb) breakpoint set -n JS_CopySubArray
+Breakpoint 3: where = dynajs`JS_CopySubArray + 60 at bc_read.inc.c:6204:31, address = 0x000000010006968c
+(lldb) breakpoint command add -F hitscript.bp_cb
+(lldb) breakpoint set -n js_slow_array_shift_unshift
+Breakpoint 4: where = dynajs`js_slow_array_shift_unshift at bc_read.inc.c:6005:17, address = 0x00000001000690c0
+(lldb) breakpoint command add -F hitscript.bp_cb
+(lldb) breakpoint set -n js_slow_array_try_convert_fast
+Breakpoint 5: where = dynajs`js_slow_array_try_convert_fast at bc_read.inc.c:5915:12, address = 0x0000000100069910
+(lldb) breakpoint command add -F hitscript.bp_cb
+(lldb) breakpoint set -n js_slow_array_scan_start
+Breakpoint 6: where = dynajs`js_slow_array_scan_start at bc_read.inc.c:5857:12, address = 0x0000000100069bd4
+(lldb) breakpoint command add -F hitscript.bp_cb
+(lldb) run
+Process 29382 launched: '/tmp/work13/dynajs' (arm64)
+Process 29382 exited with status = 0 (0x00000000)
+(lldb) hitreport
+HITCOUNT 2
+(lldb) quit

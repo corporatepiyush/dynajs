@@ -1,0 +1,9 @@
+g1 0,1,2,3,4
+g2 0,1,2
+sw z0 |0 o1 d2 |2 z3 |3 o4 d5 |5
+ub1 ReferenceError true
+ub2 ok
+pair 0 a
+pair 1 b
+g3 0 100 200 true
+tc1 a0,p0,c1,p1,a2,p2
