@@ -1,0 +1,14 @@
+nfc=OK:abc
+nfd=OK:abc
+nfkc=OK:abc
+nfkd=OK:abc
+lower-nfc=THROW:RangeError
+nfx=THROW:RangeError
+empty=THROW:RangeError
+undef=OK:abc
+missing=OK:abc
+num=THROW:RangeError
+obj=OK:abc
+objThrow=THROW:TypeError
+null=THROW:RangeError
+fails=0

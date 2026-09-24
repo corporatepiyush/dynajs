@@ -1,0 +1,10 @@
+command script import /Users/piyush/ai/dynascript/.agent-work/tools/hitscript.py
+breakpoint set -n JS_TryGetPropertyInt64
+breakpoint command add -F hitscript.bp_cb
+breakpoint set -n JS_GetPropertyInt64
+breakpoint command add -F hitscript.bp_cb
+breakpoint set -n JS_CopySubArray
+breakpoint command add -F hitscript.bp_cb
+run /tmp/work13/slowarr_tests/lldb_probe.js
+hitreport
+quit

@@ -1,0 +1,13 @@
+run slowarr_tests/diff1.js
+frame select 7
+p p->u.array.count
+p p->u.array.u.values[0]
+p p->u.array.u.values[1]
+p p->u.array.u.values[2]
+p p->u.array.u.values[3]
+p p->u.array.u.values[4]
+p p->u.array.u.values[5]
+p p->u.array.u.values[6]
+p p->u.array.u.values[7]
+p p->u.array.u.values[8]
+quit

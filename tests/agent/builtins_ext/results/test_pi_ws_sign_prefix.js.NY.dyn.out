@@ -1,0 +1,35 @@
+0 [  42] r=undefined => 42 nz=false
+1 [	
+ 42] r=undefined => 42 nz=false
+2 [ 42] r=undefined => 42 nz=false
+3 [+42] r=undefined => 42 nz=false
+4 [-42] r=undefined => -42 nz=false
+5 [--42] r=undefined => NaN nz=false
+6 [+-42] r=undefined => NaN nz=false
+7 [0x10] r=undefined => 16 nz=false
+8 [0x10] r=16 => 16 nz=false
+9 [-0x10] r=16 => -16 nz=false
+10 [+0x10] r=16 => 16 nz=false
+11 [-0xg] r=16 => NaN nz=false
+12 [0b101] r=2 => 0 nz=false
+13 [0o17] r=8 => 0 nz=false
+14 [017] r=8 => 15 nz=false
+15 [017] r=10 => 17 nz=false
+16 [017] r=0 => 17 nz=false
+17 [] r=undefined => NaN nz=false
+18 [ ] r=10 => NaN nz=false
+19 [-] r=10 => NaN nz=false
+20 [+] r=16 => NaN nz=false
+21 [0x] r=16 => NaN nz=false
+22 [Infinity] r=undefined => NaN nz=false
+23 [-Infinity] r=undefined => NaN nz=false
+24 [NaN] r=undefined => NaN nz=false
+25 [42abc] r=undefined => 42 nz=false
+26 [abc42] r=undefined => NaN nz=false
+27 [1_000] r=undefined => 1 nz=false
+28 [42] r=undefined => 42 nz=false
+29 [-42] r=undefined => -42 nz=false
+30 [1e3] r=undefined => 1 nz=false
+31 [1e3] r=10 => 1 nz=false
+32 [　9] r=undefined => 9 nz=false
+hash=9dc8fff7

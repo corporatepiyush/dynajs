@@ -1,0 +1,6 @@
+mid-proxy => [10,11,20,21,30] len=5
+count => ["a","b"] gets>0=true
+all-proxy => [0,1,10,11,20,21]
+obj-proxy-it => ["P0","P1"]
+one-get => ["only1"] made=1
+revoked => [1,2] then=TypeError

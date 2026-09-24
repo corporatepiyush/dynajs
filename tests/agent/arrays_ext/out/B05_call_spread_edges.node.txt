@@ -1,0 +1,10 @@
+counts => all-match-up-to-257
+holes => U,one,U,U
+getters => [1,"G",3]:1
+method => T:a|b
+call => C:x
+new => [1,2]
+plain => [2,1]
+extra => 1+2=5
+nested => [1]
+mid-throw => ReferenceError

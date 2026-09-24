@@ -1,0 +1,5 @@
+grow-mid => 1,2,3,,,,,,,,,,,,,,,,,, len=1000000
+sparse8 => H,H,H,H,H,six,H,H
+shrink-regrow => 1,2,3,U,U,U,U,U,U,U,ten,U,U,U,U,U,U,U,U,U len=20
+bounce => 1,2,3 len=3
+early-holes => H,one,H

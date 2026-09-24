@@ -1,0 +1,61 @@
+# T1 -- net-module dispose/finalizer paths still route through a stored JSContext
+
+- **Filed by:** (test-infrastructure lane), 2026-09-11
+- **Class:** latent use-after-free (engine, native modules)
+- **Status:** LATENT -- same code pattern as the proven bug, runtime-UNPROVEN
+  for every site listed below. Do not treat as "same exposure".
+
+## The proven instance (fixed in )
+
+`dyn_tcp_teardown` read `t->ctx` (`JS_FreeValue(t->ctx, ...)`,
+`tcp_release_pending(t->ctx, ...)`, `dyn_net_reactor_release(t->ctx)`).
+At shutdown, `main()` frees the context in `JS_FreeContext`
+(src/dyna-cli.c:706) BEFORE `JS_FreeRuntime` (src/dyna-cli.c:709); the
+runtime's final GC sweep then runs resource finalizers whose stored `ctx`
+is dangling. Reproduced under ASan (/
+`tests/test_net_liveness.js`, SIGABRT rc=134, heap-use-after-free on the
+JSContext read at `__JS_FreeValue`), and fixed in by storing
+`JSRuntime *rt` and using `JS_FreeValueRT` / `dyn_net_reactor_release_rt`
+/ `js_std_set_io_reactor_rt` on every shutdown path (struct dyn_tcp.rt,
+`tcp_conn_drop`, `tcp_detach_conns`).
+
+## Why it is only LATENT elsewhere (runtime finding)
+
+The observable abort required a resource that is (a) unclosed at exit and
+(b) still holding JSValues. In `tests/test_net_liveness.js` the pg and
+redis clients are already DEAD when the process exits: their settle path
+releases the liveness holdings and marks the resource closed, so
+`dyn_res_release` early-returns (`r->closed`) and the dispose never runs.
+No runtime repro exists for any site below; the pattern-match is structural
+(dispose/finalizer reads a stored ctx that shutdown frees first), not an
+observed crash.
+
+## Sites sharing the pattern (runtime-unproven)
+
+| module | site | stored-ctx uses in dispose/teardown |
+|---|---|---|
+| dyna:net UDP | `dyn_udp_dispose`, src/dyna-net-tcp.c:~1683 | `JS_FreeValue(u->ctx, u->h_message)`; `dyn_net_reactor_release(u->ctx)` |
+| dyna:net proxy | `dyn_pxy_dispose`, src/dyna-net-proxy.c:417 | `dyn_net_reactor_release(p->ctx)` |
+| dyna:net pg | `dyn_pg_dispose`/`dyn_pg_teardown`, src/dyna-net-pg.c (~2612: `JS_FreeValue(g->ctx, g->params/h_notice/h_notify/h_error)`; settle paths `pg_conn_error(g->ctx, ...)`) | plus `dyn_net_reactor_release(g->ctx)` |
+| dyna:net redis | redis dispose, src/dyna-net-redis.c (~1374: `JS_FreeValue(r->ctx, r->h_push/h_error)`) | plus `dyn_net_reactor_release(r->ctx)` |
+| dyna:net dns | dns dispose, src/dyna-net-dns.c:777 (`JS_FreeValue(s->ctx, s->handler)`); release at ~400 (`dyn_net_reactor_release(r->ctx)`) | |
+| dyna:http | App/client teardowns, src/dyna-http.c (`dyn_net_reactor_release(s->ctx)` at ~1480/~2459) | |
+
+## Fix recipe (mechanical, per module -- exactly what dyna-net-tcp.c got)
+
+1. Store `JSRuntime *rt` next to the module's `ctx` field (set once at
+   creation from `JS_GetRuntime(ctx)`).
+2. Dispose/teardown paths: `JS_FreeValueRT(rt, ...)` instead of
+   `JS_FreeValue(x->ctx, ...)`; anything that must CALL into JS during
+   teardown (pg's settle/reject paths) needs the same audit -- promises are
+   freed, not called, at shutdown.
+3. Reactor: call `dyn_net_reactor_release_rt(rt)` (added in,
+   declared in src/dyna-nat.h) instead of `dyn_net_reactor_release(ctx)`.
+4. Live-callback paths keep using `ctx`; only the shutdown/finalizer paths
+   switch.
+
+## Acceptance when picked up
+
+`tests/test_net_liveness.js` extended to leave a LIVE pg/redis/udp/pxy
+unclosed at exit must run clean under the ASan binary (rc=0), and
+`make CONFIG_NATIVE_MODULES=y CONFIG_TLS=y test-native` stays green.

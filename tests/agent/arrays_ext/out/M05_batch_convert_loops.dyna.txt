@@ -1,0 +1,6 @@
+unshift500 => len=500 desc=true head=[499,498,497] tail=[2,1,0]
+shift500 => asc=true left=0
+queue => len=20 sum=1190 head=[50,51,52]
+conv => first=0 at99=99 at100=100 count=200 asc=true
+batch => f=302:0,299,1 h=[0,1,2,0] h3=0 s=0,4,0 sFar@100005=far tag=T
+revprefix => ALL-MATCH

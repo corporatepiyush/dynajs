@@ -1,0 +1,6 @@
+++ digits=20000 divOk=true modOk=true
+-+ digits=20001 divOk=true modOk=true
++- digits=20001 divOk=true modOk=true
+-- digits=20000 divOk=true modOk=true
+uneven digits=20000 ok=true
+fails=0 hash=5283fea

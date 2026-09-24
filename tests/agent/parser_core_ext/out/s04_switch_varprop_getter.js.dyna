@@ -1,0 +1,4 @@
+a A B C d reads=2
+b E:getter-boom reads=1
+c hitA/reads=0 hitC/reads=1 dd/reads=2
+d va vlit vd

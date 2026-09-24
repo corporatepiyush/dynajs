@@ -1,0 +1,5 @@
+own-gen => x,y spread=["x","y"]
+swap-mid => 1,2,3 then=SWAP
+get-it => ["g2"] twice=["g4"] gets=4
+proto-gen => P ["P"]
+non-callable => TypeError TypeError

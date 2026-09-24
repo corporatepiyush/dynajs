@@ -1,0 +1,9 @@
+A [0,1,2,3,4] [0,0,1,2,9]
+B [0,1,2,3,0,1] len=6
+C 0|1|2|3
+D closed at 4
+E 0,1,2,3
+F throw => lit=RangeError push=RangeError dst=[]
+G mutate => [1,2,3] then=[1,2,3,4]
+H holes => [null,"one",null] len=3
+I custom => [0,2,4]

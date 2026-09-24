@@ -1,0 +1,12 @@
+0 it=[97,115,99,105,105] len=5
+1 it=[126,127,128,255,256,257] len=6
+2 it=[97,233,19990,30028] len=4
+3 it=[CP1f600] len=2
+4 it=[97,CP1f600,98] len=4
+5 it=[55296] len=1
+6 it=[56320] len=1
+7 it=[55296,55296] len=2
+8 it=[] len=0
+astral splitParts=2 iterSteps=1
+proto=[255,256,done:true]
+hash=3d7fc3d0

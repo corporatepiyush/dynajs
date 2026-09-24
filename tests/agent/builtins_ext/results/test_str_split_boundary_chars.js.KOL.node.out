@@ -1,0 +1,23 @@
+U+7D len=1 parts=1 cc=125 join=true
+U+7E len=1 parts=1 cc=126 join=true
+U+7F len=1 parts=1 cc=127 join=true
+U+80 len=1 parts=1 cc=128 join=true
+U+81 len=1 parts=1 cc=129 join=true
+U+FE len=1 parts=1 cc=254 join=true
+U+FF len=1 parts=1 cc=255 join=true
+U+100 len=1 parts=1 cc=256 join=true
+U+101 len=1 parts=1 cc=257 join=true
+U+7FF len=1 parts=1 cc=2047 join=true
+U+800 len=1 parts=1 cc=2048 join=true
+U+D7FF len=1 parts=1 cc=55295 join=true
+U+D800 len=1 parts=1 cc=55296 join=true
+U+DBFF len=1 parts=1 cc=56319 join=true
+U+DC00 len=1 parts=1 cc=56320 join=true
+U+DFFF len=1 parts=1 cc=57343 join=true
+U+E000 len=1 parts=1 cc=57344 join=true
+U+FFFF len=1 parts=1 cc=65535 join=true
+mix n=6 codes=126,127,128,255,256,257
+mixJoin=true
+astral parts=2 c0=d83d c1=de00
+empty parts=0
+hash=fae18278

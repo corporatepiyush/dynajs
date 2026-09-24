@@ -1,0 +1,12 @@
+T4 v1,broke
+T3 v1,E:close-fail
+T5 v,E:TypeError
+T1 v1,fin1,E:boom
+T2 v1
+T10 v1,fin10
+T7 {"value":"y1","done":false} {"value":"y2","done":false}
+T6 v3,fin6,broke6,{"value":1,"done":false}{"value":2,"done":false}
+T8 v2,v3,fin8
+T9 v1,w1,fin2,fin1
+T7 fin
+T7 {"value":"r","done":true}

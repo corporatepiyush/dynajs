@@ -1,0 +1,326 @@
+/* NanoID and ULID for dyna:uuid; included by dyna-uuid.c so both share the OS
+   entropy helper. Neither is a UUID, but both answer the same question and a
+   second module for two ID generators would be a second thing to keep correct. */
+
+/* NanoID's default alphabet, verbatim: URL-safe, 64 symbols, so 21 characters
+   carry 126 bits. Order is part of the spec's identity -- do not sort it. */
+static const char DYN_NANOID_ALPHA[] =
+    "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLFGQZbfghjklqvwyzrict";
+
+#define DYN_NANOID_MAX 4096          /* a generated id is not a document */
+
+/* Rejection sampling, the same way nanoid does it: take `bits` low bits of each
+   random byte and discard values past the alphabet. Modulo would bias toward the
+   first (256 % n) symbols, which is exactly what an ID must not do. */
+static int dyn_nanoid_fill(char *out, size_t size, const char *alpha,
+                           size_t n_alpha)
+{
+    size_t mask = 1, produced = 0;
+    uint8_t buf[256];
+
+    while (mask < n_alpha - 1)       /* smallest 2^k-1 >= n_alpha-1 */
+        mask = (mask << 1) | 1;
+    while (produced < size) {
+        size_t want = size - produced, i;
+        if (want > sizeof buf)
+            want = sizeof buf;
+        if (dyn_os_entropy(buf, want) < 0)
+            return -1;               /* fail closed: no bytes, no ID */
+        for (i = 0; i < want && produced < size; i++) {
+            size_t idx = (size_t)buf[i] & mask;
+            if (idx < n_alpha)
+                out[produced++] = alpha[idx];
+        }
+    }
+    return 0;
+}
+
+/* NanoID(size = 21) -> string over the default 64-symbol alphabet. */
+static JSValue dyn_nanoid(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+{
+    char out[DYN_NANOID_MAX];
+    int32_t size = 21;
+
+    if (argc > 0 && !JS_IsUndefined(argv[0])) {
+        double dv;
+        /* Range-check as a double BEFORE converting: JS_ToInt32 reduces
+         * modulo 2^32, so NanoID(2**32 + 5) used to silently become
+         * NanoID(5). */
+        if (JS_ToFloat64(ctx, &dv, argv[0]))
+            return JS_EXCEPTION;
+        if (!(dv >= 1 && dv <= DYN_NANOID_MAX) || dv != floor(dv))
+            return JS_ThrowRangeError(ctx,
+                "NanoID(size): size must be in [1, %d]", DYN_NANOID_MAX);
+        size = (int32_t)dv;
+    }
+    if (dyn_nanoid_fill(out, (size_t)size, DYN_NANOID_ALPHA,
+                        sizeof(DYN_NANOID_ALPHA) - 1) < 0)
+        return JS_ThrowInternalError(ctx, "dyna:uuid: OS entropy unavailable");
+    return JS_NewStringLen(ctx, out, (size_t)size);
+}
+
+/* NanoIDAlphabet(alphabet, size) -> string over a caller-supplied alphabet.
+   The alphabet must be ASCII: the output is indexed by byte, and a multi-byte
+   symbol would be cut in half. */
+static JSValue dyn_nanoid_alphabet(JSContext *ctx, JSValueConst this_val,
+                                   int argc, JSValueConst *argv)
+{
+    char out[DYN_NANOID_MAX];
+    const char *alpha;
+    size_t n_alpha, i;
+    int32_t size = 21;
+    JSValue ret;
+
+    if (argc < 1 || !JS_IsString(argv[0]))
+        return JS_ThrowTypeError(ctx, "NanoIDAlphabet(alphabet, size): alphabet must be a string");
+    alpha = JS_ToCStringLen(ctx, &n_alpha, argv[0]);
+    if (!alpha)
+        return JS_EXCEPTION;
+    if (argc > 1 && !JS_IsUndefined(argv[1])) {
+        double dv;
+        /* Same wrap defense as NanoID: JS_ToInt32 reduces modulo 2^32. */
+        if (JS_ToFloat64(ctx, &dv, argv[1])) { JS_FreeCString(ctx, alpha); return JS_EXCEPTION; }
+        if (!(dv >= 1 && dv <= DYN_NANOID_MAX) || dv != floor(dv)) {
+            JS_FreeCString(ctx, alpha);
+            return JS_ThrowRangeError(ctx,
+                "NanoIDAlphabet(alphabet, size): size must be in [1, %d]", DYN_NANOID_MAX);
+        }
+        size = (int32_t)dv;
+    }
+    if (n_alpha < 2 || n_alpha > 256) {
+        JS_FreeCString(ctx, alpha);
+        return JS_ThrowRangeError(ctx,
+            "NanoIDAlphabet(alphabet, size): alphabet must hold 2..256 symbols");
+    }
+    for (i = 0; i < n_alpha; i++)
+        if ((uint8_t)alpha[i] >= 0x80) {
+            JS_FreeCString(ctx, alpha);
+            return JS_ThrowTypeError(ctx,
+                "NanoIDAlphabet(alphabet, size): alphabet must be ASCII");
+        }
+    if (size < 1 || size > DYN_NANOID_MAX) {
+        JS_FreeCString(ctx, alpha);
+        return JS_ThrowRangeError(ctx,
+            "NanoIDAlphabet(alphabet, size): size must be in [1, %d]", DYN_NANOID_MAX);
+    }
+    if (dyn_nanoid_fill(out, (size_t)size, alpha, n_alpha) < 0) {
+        JS_FreeCString(ctx, alpha);
+        return JS_ThrowInternalError(ctx, "dyna:uuid: OS entropy unavailable");
+    }
+    ret = JS_NewStringLen(ctx, out, (size_t)size);
+    JS_FreeCString(ctx, alpha);
+    return ret;
+}
+
+/* ------------------------------------------------------------------ ULID */
+
+/* Crockford base32: no I, L, O or U, so a transcription cannot ambiguously
+   decode. Sorted-by-value, which is what makes a ULID lexicographically
+   ordered by its timestamp. */
+static const char DYN_ULID_ALPHA[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/* ULID {monotonic: true} state: the previous (ms, 80 random bits)
+   triple. A pthread mutex rather than an atomic: the state is 112 bits and
+   the read-modify-write must be atomic as a WHOLE, and _Atomic __uint128 is
+   not reliably lock-free across this engine's targets. Guard scope: the
+   PROCESS -- every JSContext (worker) in the process shares the module's
+   statics, exactly why v7 uses an atomic for its same-ms counter; contexts
+   are single-threaded, so the mutex is uncontended in the common case. */
+static pthread_mutex_t dyn_ulid_mono_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t dyn_ulid_mono_ms;    /* 48-bit floor */
+static uint64_t dyn_ulid_mono_hi;    /* random bits 79..16 */
+static uint64_t dyn_ulid_mono_lo;    /* random bits 15..0 */
+
+/* ULID(atMillis?, opts?) -> 26 Crockford base32 chars: 48-bit big-endian
+   millisecond timestamp then 80 bits of entropy. opts: {monotonic: true}
+   switches the 80 random bits from fresh-per-call to a strictly incrementing
+   counter within a millisecond (the OK/monotonic-ULID rule): same-ms calls
+   return strictly ascending ids; a new millisecond re-seeds from entropy;
+   a clock step backwards (or an atMillis below the floor) HOLDS the previous
+   millisecond like v7 does. Without the option the output is the historical
+   fresh-entropy form, which is NOT monotonic. */
+static JSValue dyn_ulid(JSContext *ctx, JSValueConst this_val,
+                        int argc, JSValueConst *argv)
+{
+    uint8_t raw[16];
+    char out[26];
+    uint64_t ms;
+    double dv;
+    int i;
+
+    if (argc > 0 && !JS_IsUndefined(argv[0])) {
+        int64_t v;
+        if (JS_IsBigInt(ctx, argv[0])) {
+            /* JS_ToBigInt64 WRAPS modulo 2^64 (found by audit: the old
+             * JS_ToInt64 call never accepted a BigInt at all -- it ran
+             * ToNumber, which throws on BigInt, so ULID(5n) was always a
+             * TypeError). Round-trip the conversion and refuse anything
+             * not exact, so ULID(2n**64n + 5n) cannot silently become
+             * ULID(5n); the 48-bit guard below still applies to exact
+             * values. Same idiom as asn1_enc_int. */
+            if (JS_ToBigInt64(ctx, &v, argv[0]))
+                return JS_EXCEPTION;
+            {
+                JSValue back = JS_NewBigInt64(ctx, v);
+                int same;
+                if (JS_IsException(back))
+                    return JS_EXCEPTION;
+                same = JS_SameValue(ctx, back, argv[0]);
+                JS_FreeValue(ctx, back);
+                if (same < 0)
+                    return JS_EXCEPTION;
+                if (!same)
+                    return JS_ThrowRangeError(ctx,
+                        "ULID(atMillis): the timestamp must fit 48 bits");
+            }
+        } else {
+            /* Range-check Numbers as a double BEFORE converting:
+               JS_ToInt64 reduces modulo 2^64, so ULID(2**64 + n) used to
+               silently become ULID(n) and pass the 48-bit guard. Every
+               double in [2^48, 2^64) is rejected here; below 2^53 the
+               double is exact. */
+            if (JS_ToFloat64(ctx, &dv, argv[0]))
+                return JS_EXCEPTION;
+            if (!(dv >= 0 && dv <= 0xFFFFFFFFFFFFull))
+                return JS_ThrowRangeError(ctx,
+                    "ULID(atMillis): the timestamp must fit 48 bits");
+            /* Fractions are refused, matching NanoID: a sub-millisecond
+             * timestamp would silently truncate (ULID(6.5) read as 6). */
+            if (dv != floor(dv))
+                return JS_ThrowRangeError(ctx,
+                    "ULID(atMillis): the timestamp must be an integer number of milliseconds");
+            if (JS_ToInt64(ctx, &v, argv[0]))
+                return JS_EXCEPTION;
+        }
+        if (v < 0 || (uint64_t)v > 0xFFFFFFFFFFFFull)
+            return JS_ThrowRangeError(ctx,
+                "ULID(atMillis): the timestamp must fit 48 bits");
+        ms = (uint64_t)v;
+    } else {
+        struct timespec ts;
+        if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
+            return JS_ThrowInternalError(ctx, "ULID(): clock_gettime failed");
+        ms = (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000);
+        /* Same 48-bit rule as the argument branch: a clock past 2^48 ms
+           (year 11151) must throw, not silently wrap into the random bits. */
+        if (ms > 0xFFFFFFFFFFFFull)
+            return JS_ThrowRangeError(ctx,
+                "ULID(): the clock exceeds the 48-bit timestamp field");
+    }
+    for (i = 0; i < 6; i++)                       /* 48-bit time, big-endian */
+        raw[i] = (uint8_t)(ms >> (40 - 8 * i));
+    if (dyn_os_entropy(raw + 6, 10) < 0)        /* 80 bits of randomness */
+        return JS_ThrowInternalError(ctx, "dyna:uuid: OS entropy unavailable");
+
+    /* ---- opts: {monotonic: true} (strict bag; unknown keys rejected) ---- */
+    {
+        static const char *const allowed[] = { "monotonic" };
+        int monotonic = 0;
+
+        if (argc > 1 && !JS_IsUndefined(argv[1])) {
+            JSValue mv;
+            if (dyn_uuid_opts_check(ctx, argv[1], allowed, 1, "ULID(opts)"))
+                return JS_EXCEPTION;
+            if (!JS_IsObject(argv[1]))
+                return JS_ThrowTypeError(ctx, "ULID(opts): opts must be an object");
+            mv = JS_GetPropertyStr(ctx, argv[1], "monotonic");
+            if (JS_IsException(mv))
+                return JS_EXCEPTION;
+            if (!JS_IsUndefined(mv))
+                monotonic = JS_ToBool(ctx, mv);
+            JS_FreeValue(ctx, mv);
+        }
+        if (monotonic) {
+            /* Strict ascent within one millisecond: the 80-bit random field
+               becomes a counter that +1's per same-ms call. Entropy was drawn
+               above (outside the lock) and seeds the FIRST id of each new ms. */
+            pthread_mutex_lock(&dyn_ulid_mono_lock);
+            if (ms < dyn_ulid_mono_ms)
+                ms = dyn_ulid_mono_ms;        /* clock went back / old ts: hold */
+            /* the clamp may have moved ms: re-encode the time field, which the
+               pre-entropy loop wrote from the UNclamped value */
+            for (i = 0; i < 6; i++)
+                raw[i] = (uint8_t)(ms >> (40 - 8 * i));
+            if (ms == dyn_ulid_mono_ms) {
+                uint64_t lo = dyn_ulid_mono_lo + 1;
+                uint64_t hi = dyn_ulid_mono_hi;
+                if (lo > 0xFFFF) {            /* 16-bit low word carries */
+                    lo = 0;
+                    hi += 1;                  /* 2^80 wraps only after 2^80 ids */
+                }
+                dyn_ulid_mono_lo = lo;
+                dyn_ulid_mono_hi = hi;
+            } else {
+                uint64_t hi = 0, lo = 0;
+                int k;
+                for (k = 0; k < 8; k++)       /* raw[6..13], big-endian */
+                    hi = (hi << 8) | raw[6 + k];
+                lo = ((uint64_t)raw[14] << 8) | raw[15];
+                dyn_ulid_mono_ms = ms;
+                dyn_ulid_mono_hi = hi;
+                dyn_ulid_mono_lo = lo;
+            }
+            for (i = 0; i < 8; i++)           /* random 79..16, big-endian */
+                raw[6 + i] = (uint8_t)(dyn_ulid_mono_hi >> (56 - 8 * i));
+            raw[14] = (uint8_t)(dyn_ulid_mono_lo >> 8);
+            raw[15] = (uint8_t)dyn_ulid_mono_lo;
+            pthread_mutex_unlock(&dyn_ulid_mono_lock);
+        }
+    }
+
+    /* 128 bits into 26 base32 characters: the first character carries only the
+       top 2 bits (26 * 5 = 130), which is why a ULID never starts above '7'. */
+    for (i = 0; i < 26; i++) {
+        int bit = i * 5 - 2;                      /* -2 pads the leading 2 bits */
+        uint32_t acc = 0;
+        int b;
+        for (b = 0; b < 5; b++) {
+            int pos = bit + b;
+            int v = (pos < 0) ? 0
+                  : (raw[pos >> 3] >> (7 - (pos & 7))) & 1;
+            acc = (acc << 1) | (uint32_t)v;
+        }
+        out[i] = DYN_ULID_ALPHA[acc];
+    }
+    return JS_NewStringLen(ctx, out, 26);
+}
+
+/* ULIDTime(ulid) -> the millisecond timestamp encoded in the first 10 chars. */
+static JSValue dyn_ulid_time(JSContext *ctx, JSValueConst this_val,
+                             int argc, JSValueConst *argv)
+{
+    const char *s;
+    size_t n;
+    uint64_t ms = 0;
+    int i;
+
+    if (argc < 1 || !JS_IsString(argv[0]))
+        return JS_ThrowTypeError(ctx, "ULIDTime(ulid): argument must be a string");
+    s = JS_ToCStringLen(ctx, &n, argv[0]);
+    if (!s)
+        return JS_EXCEPTION;
+    if (n != 26) {
+        JS_FreeCString(ctx, s);
+        return JS_ThrowTypeError(ctx, "ULIDTime(ulid): a ULID is 26 characters");
+    }
+    /* Validate ALL 26 symbols, not just the 10 that carry the time: a string
+       with a bad character anywhere is not a ULID. */
+    for (i = 0; i < 26; i++) {
+        char c = s[i];
+        const char *p;
+        if (c >= 'a' && c <= 'z')
+            c = (char)(c - 'a' + 'A');       /* not toupper: that reads the locale */
+        p = strchr(DYN_ULID_ALPHA, c);
+        if (!p || c == 0) {
+            char bad = s[i];          /* read BEFORE the free, not after */
+            JS_FreeCString(ctx, s);
+            return JS_ThrowTypeError(ctx,
+                "ULIDTime(ulid): '%c' is not a Crockford base32 symbol", bad);
+        }
+        if (i < 10)
+            ms = (ms << 5) | (uint64_t)(p - DYN_ULID_ALPHA);
+    }
+    JS_FreeCString(ctx, s);
+    return JS_NewInt64(ctx, (int64_t)(ms & 0xFFFFFFFFFFFFull));
+}

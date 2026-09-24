@@ -1,0 +1,3 @@
+tools/../test262/test/staging/sm/regress/regress-1383630.js:28: strict mode: unexpected error: Test262Error: proxy must report the same value for the non-writable, non-configurable property Expected a TypeError to be thrown but no exception was thrown at all
+tools/../test262/test/staging/sm/statements/try-completion.js:11: unexpected error: Test262Error: Expected SameValue(«"try"», «undefined») to be true
+tools/../test262/test/staging/sm/statements/try-completion.js:11: strict mode: unexpected error: Test262Error: Expected SameValue(«"try"», «undefined») to be true

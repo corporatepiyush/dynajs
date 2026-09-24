@@ -1,0 +1,12 @@
+a ok
+b ok
+c SyntaxError
+d SyntaxError
+e SyntaxError
+f SyntaxError
+g ok
+h ok
+i TypeError
+j function undefined
+k undefined undefined undefined undefined function
+l ok,SyntaxError,SyntaxError,2,ok|undefined,undef

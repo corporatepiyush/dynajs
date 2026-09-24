@@ -1,0 +1,21 @@
+[SIGN] a/B sign=neg cpSign=pos
+[SIGN] A/b sign=neg cpSign=neg
+[SIGN] z/A sign=pos cpSign=pos
+[SIGN] a/Z sign=neg cpSign=pos
+[SIGN] Z/a sign=pos cpSign=neg
+[SIGN] b/A sign=pos cpSign=pos
+[SIGN] A/z sign=neg cpSign=neg
+[SIGN] q/Q sign=neg cpSign=pos
+[SIGN] Q/q sign=pos cpSign=neg
+[SIGN] a/a sign=eq cpSign=eq
+[SIGN] C/b sign=pos cpSign=neg
+[SIGN] c/B sign=pos cpSign=pos
+[SIGN] y/Z sign=neg cpSign=pos
+[SIGN] Y/e sign=pos cpSign=neg
+[SIGN] 0/a sign=neg cpSign=neg
+[SIGN] a/0 sign=pos cpSign=pos
+[SIGN] _/Z sign=neg cpSign=pos
+[SIGN] z/_ sign=pos cpSign=pos
+[SIGN] invariantFails=9
+[SIGN] wordInvariantFails=29
+[SIGN] hash=391917c1

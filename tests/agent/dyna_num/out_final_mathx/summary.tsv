@@ -1,0 +1,5 @@
+probe	rc	pass	fail	result
+mathx_expr	0	18	0	PASS
+mathx_integer	0	361	0	PASS
+mathx_libm	0	0	0	NORESULT
+mathx_special	0	239	0	PASS

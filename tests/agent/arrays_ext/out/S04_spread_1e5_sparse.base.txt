@@ -1,0 +1,6 @@
+sparse => len=100000 r7=seven r99999=tail r6=undefined r0=undefined own6=true
+proto => len=10 r3=P3 own3=true r5=five
+rev => last head len=100000
+slice => ["last",null] [null,"head"]
+mixed => len=54 [0,2]=1,undefined 27=mid end=[3,4]
+double => len=12 ["two","two"] holes=0

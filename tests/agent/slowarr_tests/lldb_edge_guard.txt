@@ -1,0 +1,79 @@
+lldb EDGE-GUARD proof — INT32_MAX tagged-atom bound in js_slow_array_shift_unshift
+
+probe: a = []; a[2147483647] = "tag"; a.unshift("u")  (dest index 2^31 would
+
+wrap __JS_AtomFromUInt32 to JS_ATOM_NULL before the guard; with the guard the
+
+fast path must refuse and the caller must fall back to JS_CopySubArray.
+
+
+
+Observed below: js_slow_array_shift_unshift entered with len=2147483648,
+
+delta=1 from js_array_push; the next mutator call is JS_CopySubArray(to_pos=1,
+
+from_pos=0, count=2147483648, dir=-1) -- i.e. the guard returned 0 and the
+
+proven generic path took over. Process killed before the O(len) generic loop
+
+completes (correctness of that path: construction + test262 58/83744).
+
+(lldb) target create "./dynajs"
+Current executable set to '/Users/piyush/ai/dynascript/.agent-work/work13_salvage/dynajs' (arm64).
+(lldb) command source -s 0 '/tmp/lldb_guard.cmds'
+Executing commands in '/tmp/lldb_guard.cmds'.
+(lldb) breakpoint set -n js_slow_array_shift_unshift
+Breakpoint 1: where = dynajs`js_slow_array_shift_unshift at bc_read.inc.c:6005:17, address = 0x00000001000690c0
+(lldb) breakpoint set -n JS_CopySubArray
+Breakpoint 2: where = dynajs`JS_CopySubArray + 60 at bc_read.inc.c:6225:31, address = 0x00000001000696dc
+(lldb) run /tmp/edge_probe.js
+Process 96091 launched: '/Users/piyush/ai/dynascript/.agent-work/work13_salvage/dynajs' (arm64)
+Process 96091 stopped
+* thread #1, queue = 'com.apple.main-thread', stop reason = breakpoint 1.1
+       frame #0: 0x00000001000690c0 dynajs`js_slow_array_shift_unshift(ctx=0x00000007b500a030, p=0x00000007b505aa50, len=2147483648, delta=1) at bc_read.inc.c:6005:17 [opt]
+   6002	    int occ = 0, cap = 0, k, kk, kk2, asc, ret = 0;
+   6003	    int64_t i, t;
+   6004	
+-> 6005	    if (len < 2 || len > UINT32_MAX)
+    	                ^
+   6006	        return 0;
+   6007	    /* targets must stay valid index atoms */
+   6008	    if (delta > 0 && len + delta > UINT32_MAX)
+Target 0: (dynajs) stopped.
+(lldb) thread backtrace 1
+* thread #1, queue = 'com.apple.main-thread', stop reason = breakpoint 1.1
+   * frame #0: 0x00000001000690c0 dynajs`js_slow_array_shift_unshift(ctx=0x00000007b500a030, p=0x00000007b505aa50, len=2147483648, delta=1) at bc_read.inc.c:6005:17 [opt]
+     frame #1: 0x0000000100068c40 dynajs`js_array_push(ctx=0x00000007b500a030, this_val=<unavailable>, argc=1, argv=0x000000016fdfe120, unshift=<unavailable>) at bc_read.inc.c:8235:17 [opt]
+     frame #2: 0x0000000100002988 dynajs`js_call_c_function(ctx=<unavailable>, func_obj=<unavailable>, this_obj=JSValue @ 0x0000000b3a943120, argc=<unavailable>, argv=<unavailable>, flags=<unavailable>) at property_set_convert.inc.c:8104:19 [opt]
+     frame #3: 0x00000001000171f4 dynajs`JS_CallInternal(caller_ctx=0x00000007b500a030, func_obj=<unavailable>, this_obj=<unavailable>, new_target=<unavailable>, argc=1, argv=0x000000016fdfe120, flags=0) at interpreter.inc.c:130:16 [opt]
+     frame #4: 0x0000000100019090 dynajs`JS_CallInternal(caller_ctx=<unavailable>, func_obj=<unavailable>, this_obj=<unavailable>, new_target=<unavailable>, argc=0, argv=0x0000000000000000, flags=2) at interpreter.inc.c:649:27 [opt]
+     frame #5: 0x0000000100027d64 dynajs`JS_CallFree(ctx=0x00000007b500a030, func_obj=<unavailable>, this_obj=<unavailable>, argc=0, argv=0x0000000000000000) at interpreter.inc.c:3856:19 [opt] [inlined]
+     frame #6: 0x0000000100027d34 dynajs`JS_EvalFunctionInternal(ctx=0x00000007b500a030, fun_obj=<unavailable>, this_obj=<unavailable>, var_refs=0x0000000000000000, sf=0x0000000000000000) at parser.inc.c:17423:19 [opt]
+     frame #7: 0x0000000100032c04 dynajs`__JS_EvalInternal(ctx=0x00000007b500a030, this_obj=<unavailable>, input=<unavailable>, input_len=<unavailable>, filename=<unavailable>, flags=0, scope_idx=<unavailable>) at parser.inc.c:17556:19 [opt]
+     frame #8: 0x00000001000282a0 dynajs`JS_EvalInternal(ctx=<unavailable>, this_obj=<unavailable>, input=<unavailable>, input_len=<unavailable>, filename=<unavailable>, flags=<unavailable>, scope_idx=-1) at parser.inc.c:17582:11 [opt] [inlined]
+     frame #9: 0x000000010002828c dynajs`JS_EvalThis(ctx=<unavailable>, this_obj=<unavailable>, input=<unavailable>, input_len=<unavailable>, filename=<unavailable>, eval_flags=<unavailable>) at parser.inc.c:17615:11 [opt]
+     frame #10: 0x0000000100028338 dynajs`JS_Eval(ctx=<unavailable>, input=<unavailable>, input_len=<unavailable>, filename=<unavailable>, eval_flags=<unavailable>) at parser.inc.c:17623:12 [opt] [artificial]
+     frame #11: 0x000000010000118c dynajs`eval_buf(ctx=0x00000007b500a030, buf=<unavailable>, buf_len=83, filename=<unavailable>, eval_flags=<unavailable>) at dyna-cli.c:71:15 [opt]
+     frame #12: 0x00000001000012d4 dynajs`eval_buf_cached(ctx=0x00000007b500a030, buf=0x000000016fdfe7c1, buf_len=83, filename="/tmp/edge_probe.js", eval_flags=0) at dyna-cli.c:214:16 [opt] [inlined]
+     frame #13: 0x000000010000129c dynajs`eval_file(ctx=0x00000007b500a030, filename="/tmp/edge_probe.js", module=<unavailable>, strict=0) at dyna-cli.c:295:11 [opt]
+     frame #14: 0x0000000100000d7c dynajs`main(argc=2, argv=0x000000016fdff1f0) at dyna-cli.c:692:17 [opt]
+     frame #15: 0x000000018a5204e4 dyld`start + 6992
+(lldb) breakpoint delete 1
+1 breakpoints deleted; 0 breakpoint locations disabled.
+(lldb) continue
+Process 96091 resuming
+Process 96091 stopped
+* thread #1, queue = 'com.apple.main-thread', stop reason = breakpoint 2.1
+       frame #0: 0x00000001000696dc dynajs`JS_CopySubArray(ctx=0x00000007b500a030, obj=JSValue @ 0x0000000b380396e0, to_pos=1, from_pos=0, count=2147483648, dir=-1) at bc_read.inc.c:6225:31 [opt]
+   6222	    int fromPresent;
+   6223	
+   6224	    p = NULL;
+-> 6225	    if (JS_VALUE_GET_TAG(obj) == JS_TAG_OBJECT) {
+    	                              ^
+   6226	        p = JS_VALUE_GET_OBJ(obj);
+   6227	        if (p->class_id != JS_CLASS_ARRAY || !p->fast_array) {
+   6228	            /* one hole (or a defineProperty) demoted this array: the generic
+Target 0: (dynajs) stopped.
+(lldb) kill
+Process 96091 exited with status = 9 (0x00000009) killed
+(lldb) quit

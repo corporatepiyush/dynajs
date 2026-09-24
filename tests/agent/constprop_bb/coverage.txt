@@ -1,0 +1,27 @@
+MATRIX CELL COVERAGE (3693 generated assert probes, manifest.tsv has per-probe rows)
+
+member counts      : 1,2,3,5,8,17,31,50,255,256,257,300,1000 (switchcore: 9 case-shapes x 13 counts x {all-int, +3 trailing non-int} x 3 modes = 702; biggrid/biggrid2 rotate counts; modfocus: 2,17,256)
+case-value shapes  : dense, stride(x7), negative-only, INT32_MIN/MAX alternating edges, mixed-sign, hit-default, gap-heavy(x1000), reversed(descending), duplicate values (modulo-3) [switchcore+biggrids]
+                     + int32trap: ToInt32-confusables 2^32+1, -2^32+1, 1e21, 2^31+0.5, +/-2^53, booleans, null, "1", -1e-7 as case labels
+                     + switchshape: default-first, default-middle w/ fallthrough-into-case, fallthrough pairs, no-default, only-default, member-as-discriminant, 2-case holes w/ boundary inputs, dense+INT32_MAX outlier, continue-in-loop, labeled break, recursive case body, nested switch sharing const, duplicate same-member label, no-match-no-default
+binding names      : OP, op, _, $, \u{10400}bc (astral), argum, argumes, argss, Object1, globalThis, constructor (top-level-legal) + NaN, undefined (function/block/module scopes) [names 210, biggrids rotate]
+                     + shadow family: arg-shadow (case-label discrimination), function self-name, class self-name, `arguments` binding (sloppy direct; strict via eval/new Function)
+scope shapes       : top-level, in-function, in-block, function-in-block, 10-deep block nest, inside switch case body, for-head-adjacent (per-iteration const) [biggrids full cross]
+decl positions     : first, after 1/5/50 statements, after another const object, after a function decl, inside try [declpos + biggrid2 rotation]
+use kinds          : case label dispatch (5 inputs incl. miss/default/out-of-range), plain reads, hot loop (500 iters), read inside called function (2 deep), derived arithmetic (+1, *2-1), nested ternary [biggrids full cross]
+freeze x mutation  : {frozen, plain} x {none, pre-use write, post-use write, direct eval write, Reflect.set, defineProperty writable flip, delete, seal(+write), freeze-twice}, mutation result AND post-state asserted (throw taxonomy + value) [mutation 54]
+Object-pristine    : var Object later (+TDZ-after-failed-init trick), Object.freeze = fn pre-decl (decoy return), Object["freeze"] = fn pre-decl, delete Object.freeze (+second-decl trick), (0,eval) globalThis.Object clobber (+second-decl trick), (0,eval) var Object shadow (+second-decl trick), let Object inner block, bare `Object = 1` assign (+second-decl trick) [objattack, objattack2]
+timing             : same-statement-family use, closure escape then Object clobber (frozen inert), second script via indirect eval (globalThis aliasing; plain gets eval-write), new Function body read, decl inside indirect eval / new Function / strict new Function units [timing, evaldecl]
+eval/with kills    : eval before/mid/after decl + eval-write observable; with({Object:1}) kill (sloppy), with-in-strict / with-in-module via eval [evalkill]
+modes              : sloppy script, strict script, module (-m / --input-type=module) for every family: 1209/1209/1275
+syntax/legality    : const NaN / const undefined at top (restricted global property), Nd-start astral name \u1040bc, duplicate const, let-in-case duplicate, if-clause const; each via (0,eval) AND new Function [syntax 18]
+non-int members    : string, double, NaN, Infinity, -0 (1/x sign), 2^31, 2^32, 2^53-1, -2^31-1, bigint 1n (case-label match on 1n, reject 1), undefined member, getter (double-read counter), duplicate key last-wins, __proto__:null [nonint 42]
+nested/multi consts: OUTER.IN.A chains, 2/3/10 consts sharing one switch, cross-const duplicate labels [nestedobj, multiconst]
+computed/alias     : OP["A"], OP[var], OP[0]/OP["0"], alias binding reads, optional chaining, case OP["A"] [computed]
+keyword atom keys  : {default, case, switch, Object, freeze, constructor, "0"} as member keys incl. case-label use [keyatoms]
+accessor->data     : getter converted via defineProperty then frozen [accessorconv]
+misc ops           : Object.assign copy, Object.create proto read, keys/values/hasOwnProperty/in/JSON/getOwnPropertyDescriptor/Reflect.get [misc]
+byte-identity set  : 60 dedicated plain-decl probes (5 shapes x 4 mutations x 3 modes) + all declined-flagged probes: patched stdout compared BYTE-EXACT vs pristine
+EFFICACY: dense 1000-case member-labeled switch, 2000 dispatches: patched 0.028s vs pre-feature 0.061s (jump table engages; ~2.2x, matches commit claim)
+
+FUZZ: 4500 random scripts (seed 20260911) + 3000 (seed 777) differential patched/pristine/node; repros below.
