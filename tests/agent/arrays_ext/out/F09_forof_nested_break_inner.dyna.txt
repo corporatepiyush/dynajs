@@ -1,0 +1,6 @@
+basic => o1 i10 i20 after1 o2 i10 i20 after2 o3 i10 i20 after3
+finally => f10 | f10 |
+triple => 4
+matrix => A1x . A2x . B1x . B2x .
+labels => 1:10
+pairs => 1,2,3,4

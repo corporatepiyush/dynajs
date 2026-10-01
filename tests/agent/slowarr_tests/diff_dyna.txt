@@ -1,0 +1,1097 @@
+inc dense undefined => false
+iof dense undefined => -1
+liof dense undefined => -1
+inc dense nan => false
+iof dense nan => -1
+liof dense nan => -1
+inc dense neg0 => true
+iof dense neg0 => 0
+liof dense neg0 => 0
+inc dense pos0 => true
+iof dense pos0 => 0
+liof dense pos0 => 0
+inc dense 30 => true
+iof dense 30 => 3
+liof dense 30 => 3
+inc dense 300 => false
+iof dense 300 => -1
+liof dense 300 => -1
+inc dense str30 => false
+iof dense str30 => -1
+liof dense str30 => -1
+inc dense obj => false
+iof dense obj => -1
+liof dense obj => -1
+inc dense symSame => false
+iof dense symSame => -1
+liof dense symSame => -1
+inc dense big90 => false
+iof dense big90 => -1
+liof dense big90 => -1
+inc dense big1 => false
+iof dense big1 => -1
+liof dense big1 => -1
+inc denseSlow undefined => false
+iof denseSlow undefined => -1
+liof denseSlow undefined => -1
+inc denseSlow nan => false
+iof denseSlow nan => -1
+liof denseSlow nan => -1
+inc denseSlow neg0 => true
+iof denseSlow neg0 => 0
+liof denseSlow neg0 => 0
+inc denseSlow pos0 => true
+iof denseSlow pos0 => 0
+liof denseSlow pos0 => 0
+inc denseSlow 30 => true
+iof denseSlow 30 => 3
+liof denseSlow 30 => 3
+inc denseSlow 300 => false
+iof denseSlow 300 => -1
+liof denseSlow 300 => -1
+inc denseSlow str30 => false
+iof denseSlow str30 => -1
+liof denseSlow str30 => -1
+inc denseSlow obj => false
+iof denseSlow obj => -1
+liof denseSlow obj => -1
+inc denseSlow symSame => false
+iof denseSlow symSame => -1
+liof denseSlow symSame => -1
+inc denseSlow big90 => false
+iof denseSlow big90 => -1
+liof denseSlow big90 => -1
+inc denseSlow big1 => false
+iof denseSlow big1 => -1
+liof denseSlow big1 => -1
+inc holeyMid undefined => true
+iof holeyMid undefined => -1
+liof holeyMid undefined => -1
+inc holeyMid nan => false
+iof holeyMid nan => -1
+liof holeyMid nan => -1
+inc holeyMid neg0 => true
+iof holeyMid neg0 => 0
+liof holeyMid neg0 => 0
+inc holeyMid pos0 => true
+iof holeyMid pos0 => 0
+liof holeyMid pos0 => 0
+inc holeyMid 30 => false
+iof holeyMid 30 => -1
+liof holeyMid 30 => -1
+inc holeyMid 300 => false
+iof holeyMid 300 => -1
+liof holeyMid 300 => -1
+inc holeyMid str30 => false
+iof holeyMid str30 => -1
+liof holeyMid str30 => -1
+inc holeyMid obj => false
+iof holeyMid obj => -1
+liof holeyMid obj => -1
+inc holeyMid symSame => false
+iof holeyMid symSame => -1
+liof holeyMid symSame => -1
+inc holeyMid big90 => false
+iof holeyMid big90 => -1
+liof holeyMid big90 => -1
+inc holeyMid big1 => false
+iof holeyMid big1 => -1
+liof holeyMid big1 => -1
+inc holeyStart undefined => true
+iof holeyStart undefined => -1
+liof holeyStart undefined => -1
+inc holeyStart nan => false
+iof holeyStart nan => -1
+liof holeyStart nan => -1
+inc holeyStart neg0 => false
+iof holeyStart neg0 => -1
+liof holeyStart neg0 => -1
+inc holeyStart pos0 => false
+iof holeyStart pos0 => -1
+liof holeyStart pos0 => -1
+inc holeyStart 30 => true
+iof holeyStart 30 => 3
+liof holeyStart 30 => 3
+inc holeyStart 300 => false
+iof holeyStart 300 => -1
+liof holeyStart 300 => -1
+inc holeyStart str30 => false
+iof holeyStart str30 => -1
+liof holeyStart str30 => -1
+inc holeyStart obj => false
+iof holeyStart obj => -1
+liof holeyStart obj => -1
+inc holeyStart symSame => false
+iof holeyStart symSame => -1
+liof holeyStart symSame => -1
+inc holeyStart big90 => false
+iof holeyStart big90 => -1
+liof holeyStart big90 => -1
+inc holeyStart big1 => false
+iof holeyStart big1 => -1
+liof holeyStart big1 => -1
+inc holeyEnd undefined => true
+iof holeyEnd undefined => -1
+liof holeyEnd undefined => -1
+inc holeyEnd nan => false
+iof holeyEnd nan => -1
+liof holeyEnd nan => -1
+inc holeyEnd neg0 => true
+iof holeyEnd neg0 => 0
+liof holeyEnd neg0 => 0
+inc holeyEnd pos0 => true
+iof holeyEnd pos0 => 0
+liof holeyEnd pos0 => 0
+inc holeyEnd 30 => true
+iof holeyEnd 30 => 3
+liof holeyEnd 30 => 3
+inc holeyEnd 300 => false
+iof holeyEnd 300 => -1
+liof holeyEnd 300 => -1
+inc holeyEnd str30 => false
+iof holeyEnd str30 => -1
+liof holeyEnd str30 => -1
+inc holeyEnd obj => false
+iof holeyEnd obj => -1
+liof holeyEnd obj => -1
+inc holeyEnd symSame => false
+iof holeyEnd symSame => -1
+liof holeyEnd symSame => -1
+inc holeyEnd big90 => false
+iof holeyEnd big90 => -1
+liof holeyEnd big90 => -1
+inc holeyEnd big1 => false
+iof holeyEnd big1 => -1
+liof holeyEnd big1 => -1
+inc verySparse undefined => true
+iof verySparse undefined => -1
+liof verySparse undefined => -1
+inc verySparse nan => false
+iof verySparse nan => -1
+liof verySparse nan => -1
+inc verySparse neg0 => false
+iof verySparse neg0 => -1
+liof verySparse neg0 => -1
+inc verySparse pos0 => false
+iof verySparse pos0 => -1
+liof verySparse pos0 => -1
+inc verySparse 30 => false
+iof verySparse 30 => -1
+liof verySparse 30 => -1
+inc verySparse 300 => false
+iof verySparse 300 => -1
+liof verySparse 300 => -1
+inc verySparse str30 => false
+iof verySparse str30 => -1
+liof verySparse str30 => -1
+inc verySparse obj => false
+iof verySparse obj => -1
+liof verySparse obj => -1
+inc verySparse symSame => false
+iof verySparse symSame => -1
+liof verySparse symSame => -1
+inc verySparse big90 => false
+iof verySparse big90 => -1
+liof verySparse big90 => -1
+inc verySparse big1 => false
+iof verySparse big1 => -1
+liof verySparse big1 => -1
+inc allHoles undefined => true
+iof allHoles undefined => -1
+liof allHoles undefined => -1
+inc allHoles nan => false
+iof allHoles nan => -1
+liof allHoles nan => -1
+inc allHoles neg0 => false
+iof allHoles neg0 => -1
+liof allHoles neg0 => -1
+inc allHoles pos0 => false
+iof allHoles pos0 => -1
+liof allHoles pos0 => -1
+inc allHoles 30 => false
+iof allHoles 30 => -1
+liof allHoles 30 => -1
+inc allHoles 300 => false
+iof allHoles 300 => -1
+liof allHoles 300 => -1
+inc allHoles str30 => false
+iof allHoles str30 => -1
+liof allHoles str30 => -1
+inc allHoles obj => false
+iof allHoles obj => -1
+liof allHoles obj => -1
+inc allHoles symSame => false
+iof allHoles symSame => -1
+liof allHoles symSame => -1
+inc allHoles big90 => false
+iof allHoles big90 => -1
+liof allHoles big90 => -1
+inc allHoles big1 => false
+iof allHoles big1 => -1
+liof allHoles big1 => -1
+inc withUndef undefined => true
+iof withUndef undefined => 3
+liof withUndef undefined => 3
+inc withUndef nan => false
+iof withUndef nan => -1
+liof withUndef nan => -1
+inc withUndef neg0 => true
+iof withUndef neg0 => 0
+liof withUndef neg0 => 0
+inc withUndef pos0 => true
+iof withUndef pos0 => 0
+liof withUndef pos0 => 0
+inc withUndef 30 => false
+iof withUndef 30 => -1
+liof withUndef 30 => -1
+inc withUndef 300 => false
+iof withUndef 300 => -1
+liof withUndef 300 => -1
+inc withUndef str30 => false
+iof withUndef str30 => -1
+liof withUndef str30 => -1
+inc withUndef obj => false
+iof withUndef obj => -1
+liof withUndef obj => -1
+inc withUndef symSame => false
+iof withUndef symSame => -1
+liof withUndef symSame => -1
+inc withUndef big90 => false
+iof withUndef big90 => -1
+liof withUndef big90 => -1
+inc withUndef big1 => false
+iof withUndef big1 => -1
+liof withUndef big1 => -1
+inc withNeg0 undefined => false
+iof withNeg0 undefined => -1
+liof withNeg0 undefined => -1
+inc withNeg0 nan => false
+iof withNeg0 nan => -1
+liof withNeg0 nan => -1
+inc withNeg0 neg0 => true
+iof withNeg0 neg0 => 0
+liof withNeg0 neg0 => 3
+inc withNeg0 pos0 => true
+iof withNeg0 pos0 => 0
+liof withNeg0 pos0 => 3
+inc withNeg0 30 => false
+iof withNeg0 30 => -1
+liof withNeg0 30 => -1
+inc withNeg0 300 => false
+iof withNeg0 300 => -1
+liof withNeg0 300 => -1
+inc withNeg0 str30 => false
+iof withNeg0 str30 => -1
+liof withNeg0 str30 => -1
+inc withNeg0 obj => false
+iof withNeg0 obj => -1
+liof withNeg0 obj => -1
+inc withNeg0 symSame => false
+iof withNeg0 symSame => -1
+liof withNeg0 symSame => -1
+inc withNeg0 big90 => false
+iof withNeg0 big90 => -1
+liof withNeg0 big90 => -1
+inc withNeg0 big1 => false
+iof withNeg0 big1 => -1
+liof withNeg0 big1 => -1
+inc withNaN undefined => false
+iof withNaN undefined => -1
+liof withNaN undefined => -1
+inc withNaN nan => true
+iof withNaN nan => -1
+liof withNaN nan => -1
+inc withNaN neg0 => true
+iof withNaN neg0 => 0
+liof withNaN neg0 => 0
+inc withNaN pos0 => true
+iof withNaN pos0 => 0
+liof withNaN pos0 => 0
+inc withNaN 30 => false
+iof withNaN 30 => -1
+liof withNaN 30 => -1
+inc withNaN 300 => false
+iof withNaN 300 => -1
+liof withNaN 300 => -1
+inc withNaN str30 => false
+iof withNaN str30 => -1
+liof withNaN str30 => -1
+inc withNaN obj => false
+iof withNaN obj => -1
+liof withNaN obj => -1
+inc withNaN symSame => false
+iof withNaN symSame => -1
+liof withNaN symSame => -1
+inc withNaN big90 => false
+iof withNaN big90 => -1
+liof withNaN big90 => -1
+inc withNaN big1 => false
+iof withNaN big1 => -1
+liof withNaN big1 => -1
+inc withSym undefined => false
+iof withSym undefined => -1
+liof withSym undefined => -1
+inc withSym nan => false
+iof withSym nan => -1
+liof withSym nan => -1
+inc withSym neg0 => true
+iof withSym neg0 => 0
+liof withSym neg0 => 0
+inc withSym pos0 => true
+iof withSym pos0 => 0
+liof withSym pos0 => 0
+inc withSym 30 => false
+iof withSym 30 => -1
+liof withSym 30 => -1
+inc withSym 300 => false
+iof withSym 300 => -1
+liof withSym 300 => -1
+inc withSym str30 => false
+iof withSym str30 => -1
+liof withSym str30 => -1
+inc withSym obj => false
+iof withSym obj => -1
+liof withSym obj => -1
+inc withSym symSame => true
+iof withSym symSame => 3
+liof withSym symSame => 3
+inc withSym big90 => true
+iof withSym big90 => 4
+liof withSym big90 => 4
+inc withSym big1 => false
+iof withSym big1 => -1
+liof withSym big1 => -1
+inc frozen undefined => true
+iof frozen undefined => -1
+liof frozen undefined => -1
+inc frozen nan => false
+iof frozen nan => -1
+liof frozen nan => -1
+inc frozen neg0 => true
+iof frozen neg0 => 0
+liof frozen neg0 => 0
+inc frozen pos0 => true
+iof frozen pos0 => 0
+liof frozen pos0 => 0
+inc frozen 30 => false
+iof frozen 30 => -1
+liof frozen 30 => -1
+inc frozen 300 => false
+iof frozen 300 => -1
+liof frozen 300 => -1
+inc frozen str30 => false
+iof frozen str30 => -1
+liof frozen str30 => -1
+inc frozen obj => false
+iof frozen obj => -1
+liof frozen obj => -1
+inc frozen symSame => false
+iof frozen symSame => -1
+liof frozen symSame => -1
+inc frozen big90 => false
+iof frozen big90 => -1
+liof frozen big90 => -1
+inc frozen big1 => false
+iof frozen big1 => -1
+liof frozen big1 => -1
+inc sealed undefined => true
+iof sealed undefined => -1
+liof sealed undefined => -1
+inc sealed nan => false
+iof sealed nan => -1
+liof sealed nan => -1
+inc sealed neg0 => true
+iof sealed neg0 => 0
+liof sealed neg0 => 0
+inc sealed pos0 => true
+iof sealed pos0 => 0
+liof sealed pos0 => 0
+inc sealed 30 => false
+iof sealed 30 => -1
+liof sealed 30 => -1
+inc sealed 300 => false
+iof sealed 300 => -1
+liof sealed 300 => -1
+inc sealed str30 => false
+iof sealed str30 => -1
+liof sealed str30 => -1
+inc sealed obj => false
+iof sealed obj => -1
+liof sealed obj => -1
+inc sealed symSame => false
+iof sealed symSame => -1
+liof sealed symSame => -1
+inc sealed big90 => false
+iof sealed big90 => -1
+liof sealed big90 => -1
+inc sealed big1 => false
+iof sealed big1 => -1
+liof sealed big1 => -1
+inc getter undefined => false
+iof getter undefined => -1
+liof getter undefined => -1
+inc getter nan => false
+iof getter nan => -1
+liof getter nan => -1
+inc getter neg0 => true
+iof getter neg0 => 0
+liof getter neg0 => 0
+inc getter pos0 => true
+iof getter pos0 => 0
+liof getter pos0 => 0
+inc getter 30 => false
+iof getter 30 => -1
+liof getter 30 => -1
+inc getter 300 => false
+iof getter 300 => -1
+liof getter 300 => -1
+inc getter str30 => false
+iof getter str30 => -1
+liof getter str30 => -1
+inc getter obj => false
+iof getter obj => -1
+liof getter obj => -1
+inc getter symSame => false
+iof getter symSame => -1
+liof getter symSame => -1
+inc getter big90 => false
+iof getter big90 => -1
+liof getter big90 => -1
+inc getter big1 => false
+iof getter big1 => -1
+liof getter big1 => -1
+inc sub undefined => true
+iof sub undefined => -1
+liof sub undefined => -1
+inc sub nan => false
+iof sub nan => -1
+liof sub nan => -1
+inc sub neg0 => true
+iof sub neg0 => 0
+liof sub neg0 => 0
+inc sub pos0 => true
+iof sub pos0 => 0
+liof sub pos0 => 0
+inc sub 30 => false
+iof sub 30 => -1
+liof sub 30 => -1
+inc sub 300 => false
+iof sub 300 => -1
+liof sub 300 => -1
+inc sub str30 => false
+iof sub str30 => -1
+liof sub str30 => -1
+inc sub obj => false
+iof sub obj => -1
+liof sub obj => -1
+inc sub symSame => false
+iof sub symSame => -1
+liof sub symSame => -1
+inc sub big90 => false
+iof sub big90 => -1
+liof sub big90 => -1
+inc sub big1 => false
+iof sub big1 => -1
+liof sub big1 => -1
+inc arrayLike undefined => throw TypeError
+iof arrayLike undefined => throw TypeError
+liof arrayLike undefined => throw TypeError
+inc arrayLike nan => throw TypeError
+iof arrayLike nan => throw TypeError
+liof arrayLike nan => throw TypeError
+inc arrayLike neg0 => throw TypeError
+iof arrayLike neg0 => throw TypeError
+liof arrayLike neg0 => throw TypeError
+inc arrayLike pos0 => throw TypeError
+iof arrayLike pos0 => throw TypeError
+liof arrayLike pos0 => throw TypeError
+inc arrayLike 30 => throw TypeError
+iof arrayLike 30 => throw TypeError
+liof arrayLike 30 => throw TypeError
+inc arrayLike 300 => throw TypeError
+iof arrayLike 300 => throw TypeError
+liof arrayLike 300 => throw TypeError
+inc arrayLike str30 => throw TypeError
+iof arrayLike str30 => throw TypeError
+liof arrayLike str30 => throw TypeError
+inc arrayLike obj => throw TypeError
+iof arrayLike obj => throw TypeError
+liof arrayLike obj => throw TypeError
+inc arrayLike symSame => throw TypeError
+iof arrayLike symSame => throw TypeError
+liof arrayLike symSame => throw TypeError
+inc arrayLike big90 => throw TypeError
+iof arrayLike big90 => throw TypeError
+liof arrayLike big90 => throw TypeError
+inc arrayLike big1 => throw TypeError
+iof arrayLike big1 => throw TypeError
+liof arrayLike big1 => throw TypeError
+inc holeyMid fi=undef => false
+iof holeyMid fi=undef => -1
+liof holeyMid fi=undef => -1
+incU holeyMid fi=undef => true
+iofU holeyMid fi=undef => -1
+liofU holeyMid fi=undef => -1
+inc holeyMid fi=0 => false
+iof holeyMid fi=0 => -1
+liof holeyMid fi=0 => -1
+incU holeyMid fi=0 => true
+iofU holeyMid fi=0 => -1
+liofU holeyMid fi=0 => -1
+inc holeyMid fi=neg3 => false
+iof holeyMid fi=neg3 => -1
+liof holeyMid fi=neg3 => -1
+incU holeyMid fi=neg3 => false
+iofU holeyMid fi=neg3 => -1
+liofU holeyMid fi=neg3 => -1
+inc holeyMid fi=neg100 => false
+iof holeyMid fi=neg100 => -1
+liof holeyMid fi=neg100 => -1
+incU holeyMid fi=neg100 => true
+iofU holeyMid fi=neg100 => -1
+liofU holeyMid fi=neg100 => -1
+inc holeyMid fi=8 => false
+iof holeyMid fi=8 => -1
+liof holeyMid fi=8 => -1
+incU holeyMid fi=8 => false
+iofU holeyMid fi=8 => -1
+liofU holeyMid fi=8 => -1
+inc holeyMid fi=100 => false
+iof holeyMid fi=100 => -1
+liof holeyMid fi=100 => -1
+incU holeyMid fi=100 => false
+iofU holeyMid fi=100 => -1
+liofU holeyMid fi=100 => -1
+inc holeyMid fi=half => false
+iof holeyMid fi=half => -1
+liof holeyMid fi=half => -1
+incU holeyMid fi=half => true
+iofU holeyMid fi=half => -1
+liofU holeyMid fi=half => -1
+inc holeyMid fi=nanF => false
+iof holeyMid fi=nanF => -1
+liof holeyMid fi=nanF => -1
+incU holeyMid fi=nanF => true
+iofU holeyMid fi=nanF => -1
+liofU holeyMid fi=nanF => -1
+inc holeyMid fi=i32max => false
+iof holeyMid fi=i32max => -1
+liof holeyMid fi=i32max => -1
+incU holeyMid fi=i32max => false
+iofU holeyMid fi=i32max => -1
+liofU holeyMid fi=i32max => -1
+inc holeyMid fi=i32min => false
+iof holeyMid fi=i32min => -1
+liof holeyMid fi=i32min => -1
+incU holeyMid fi=i32min => true
+iofU holeyMid fi=i32min => -1
+liofU holeyMid fi=i32min => -1
+inc holeyMid fi=str2 => false
+iof holeyMid fi=str2 => -1
+liof holeyMid fi=str2 => -1
+incU holeyMid fi=str2 => true
+iofU holeyMid fi=str2 => -1
+liofU holeyMid fi=str2 => -1
+inc verySparse fi=undef => false
+iof verySparse fi=undef => -1
+liof verySparse fi=undef => -1
+incU verySparse fi=undef => true
+iofU verySparse fi=undef => -1
+liofU verySparse fi=undef => -1
+inc verySparse fi=0 => false
+iof verySparse fi=0 => -1
+liof verySparse fi=0 => -1
+incU verySparse fi=0 => true
+iofU verySparse fi=0 => -1
+liofU verySparse fi=0 => -1
+inc verySparse fi=neg3 => false
+iof verySparse fi=neg3 => -1
+liof verySparse fi=neg3 => -1
+incU verySparse fi=neg3 => true
+iofU verySparse fi=neg3 => -1
+liofU verySparse fi=neg3 => -1
+inc verySparse fi=neg100 => false
+iof verySparse fi=neg100 => -1
+liof verySparse fi=neg100 => -1
+incU verySparse fi=neg100 => true
+iofU verySparse fi=neg100 => -1
+liofU verySparse fi=neg100 => -1
+inc verySparse fi=8 => false
+iof verySparse fi=8 => -1
+liof verySparse fi=8 => -1
+incU verySparse fi=8 => true
+iofU verySparse fi=8 => -1
+liofU verySparse fi=8 => -1
+inc verySparse fi=100 => false
+iof verySparse fi=100 => -1
+liof verySparse fi=100 => -1
+incU verySparse fi=100 => true
+iofU verySparse fi=100 => -1
+liofU verySparse fi=100 => -1
+inc verySparse fi=half => false
+iof verySparse fi=half => -1
+liof verySparse fi=half => -1
+incU verySparse fi=half => true
+iofU verySparse fi=half => -1
+liofU verySparse fi=half => -1
+inc verySparse fi=nanF => false
+iof verySparse fi=nanF => -1
+liof verySparse fi=nanF => -1
+incU verySparse fi=nanF => true
+iofU verySparse fi=nanF => -1
+liofU verySparse fi=nanF => -1
+inc verySparse fi=i32max => false
+iof verySparse fi=i32max => -1
+liof verySparse fi=i32max => -1
+incU verySparse fi=i32max => false
+iofU verySparse fi=i32max => -1
+liofU verySparse fi=i32max => -1
+inc verySparse fi=i32min => false
+iof verySparse fi=i32min => -1
+liof verySparse fi=i32min => -1
+incU verySparse fi=i32min => true
+iofU verySparse fi=i32min => -1
+liofU verySparse fi=i32min => -1
+inc verySparse fi=str2 => false
+iof verySparse fi=str2 => -1
+liof verySparse fi=str2 => -1
+incU verySparse fi=str2 => true
+iofU verySparse fi=str2 => -1
+liofU verySparse fi=str2 => -1
+inc allHoles fi=undef => false
+iof allHoles fi=undef => -1
+liof allHoles fi=undef => -1
+incU allHoles fi=undef => true
+iofU allHoles fi=undef => -1
+liofU allHoles fi=undef => -1
+inc allHoles fi=0 => false
+iof allHoles fi=0 => -1
+liof allHoles fi=0 => -1
+incU allHoles fi=0 => true
+iofU allHoles fi=0 => -1
+liofU allHoles fi=0 => -1
+inc allHoles fi=neg3 => false
+iof allHoles fi=neg3 => -1
+liof allHoles fi=neg3 => -1
+incU allHoles fi=neg3 => true
+iofU allHoles fi=neg3 => -1
+liofU allHoles fi=neg3 => -1
+inc allHoles fi=neg100 => false
+iof allHoles fi=neg100 => -1
+liof allHoles fi=neg100 => -1
+incU allHoles fi=neg100 => true
+iofU allHoles fi=neg100 => -1
+liofU allHoles fi=neg100 => -1
+inc allHoles fi=8 => false
+iof allHoles fi=8 => -1
+liof allHoles fi=8 => -1
+incU allHoles fi=8 => false
+iofU allHoles fi=8 => -1
+liofU allHoles fi=8 => -1
+inc allHoles fi=100 => false
+iof allHoles fi=100 => -1
+liof allHoles fi=100 => -1
+incU allHoles fi=100 => false
+iofU allHoles fi=100 => -1
+liofU allHoles fi=100 => -1
+inc allHoles fi=half => false
+iof allHoles fi=half => -1
+liof allHoles fi=half => -1
+incU allHoles fi=half => true
+iofU allHoles fi=half => -1
+liofU allHoles fi=half => -1
+inc allHoles fi=nanF => false
+iof allHoles fi=nanF => -1
+liof allHoles fi=nanF => -1
+incU allHoles fi=nanF => true
+iofU allHoles fi=nanF => -1
+liofU allHoles fi=nanF => -1
+inc allHoles fi=i32max => false
+iof allHoles fi=i32max => -1
+liof allHoles fi=i32max => -1
+incU allHoles fi=i32max => false
+iofU allHoles fi=i32max => -1
+liofU allHoles fi=i32max => -1
+inc allHoles fi=i32min => false
+iof allHoles fi=i32min => -1
+liof allHoles fi=i32min => -1
+incU allHoles fi=i32min => true
+iofU allHoles fi=i32min => -1
+liofU allHoles fi=i32min => -1
+inc allHoles fi=str2 => false
+iof allHoles fi=str2 => -1
+liof allHoles fi=str2 => -1
+incU allHoles fi=str2 => true
+iofU allHoles fi=str2 => -1
+liofU allHoles fi=str2 => -1
+inc denseSlow fi=undef => true
+iof denseSlow fi=undef => 3
+liof denseSlow fi=undef => -1
+incU denseSlow fi=undef => false
+iofU denseSlow fi=undef => -1
+liofU denseSlow fi=undef => -1
+inc denseSlow fi=0 => true
+iof denseSlow fi=0 => 3
+liof denseSlow fi=0 => -1
+incU denseSlow fi=0 => false
+iofU denseSlow fi=0 => -1
+liofU denseSlow fi=0 => -1
+inc denseSlow fi=neg3 => false
+iof denseSlow fi=neg3 => -1
+liof denseSlow fi=neg3 => 3
+incU denseSlow fi=neg3 => false
+iofU denseSlow fi=neg3 => -1
+liofU denseSlow fi=neg3 => -1
+inc denseSlow fi=neg100 => true
+iof denseSlow fi=neg100 => 3
+liof denseSlow fi=neg100 => -1
+incU denseSlow fi=neg100 => false
+iofU denseSlow fi=neg100 => -1
+liofU denseSlow fi=neg100 => -1
+inc denseSlow fi=8 => false
+iof denseSlow fi=8 => -1
+liof denseSlow fi=8 => 3
+incU denseSlow fi=8 => false
+iofU denseSlow fi=8 => -1
+liofU denseSlow fi=8 => -1
+inc denseSlow fi=100 => false
+iof denseSlow fi=100 => -1
+liof denseSlow fi=100 => 3
+incU denseSlow fi=100 => false
+iofU denseSlow fi=100 => -1
+liofU denseSlow fi=100 => -1
+inc denseSlow fi=half => true
+iof denseSlow fi=half => 3
+liof denseSlow fi=half => -1
+incU denseSlow fi=half => false
+iofU denseSlow fi=half => -1
+liofU denseSlow fi=half => -1
+inc denseSlow fi=nanF => true
+iof denseSlow fi=nanF => 3
+liof denseSlow fi=nanF => -1
+incU denseSlow fi=nanF => false
+iofU denseSlow fi=nanF => -1
+liofU denseSlow fi=nanF => -1
+inc denseSlow fi=i32max => false
+iof denseSlow fi=i32max => -1
+liof denseSlow fi=i32max => 3
+incU denseSlow fi=i32max => false
+iofU denseSlow fi=i32max => -1
+liofU denseSlow fi=i32max => -1
+inc denseSlow fi=i32min => true
+iof denseSlow fi=i32min => 3
+liof denseSlow fi=i32min => -1
+incU denseSlow fi=i32min => false
+iofU denseSlow fi=i32min => -1
+liofU denseSlow fi=i32min => -1
+inc denseSlow fi=str2 => true
+iof denseSlow fi=str2 => 3
+liof denseSlow fi=str2 => -1
+incU denseSlow fi=str2 => false
+iofU denseSlow fi=str2 => -1
+liofU denseSlow fi=str2 => -1
+iof hugeLen fi=4294967294 => 4294967294
+inc hugeLen fi=4294967290 => true
+liof hugeLen => 4294967294
+proto5 iof holey => len=4 names=[0,1,2,3,length] keys=[0,1,2,3] descs=[0=val:3;1=val:true;2=val:3;3=val:4;length=val:4!e!c]
+proto5 iof shifted => len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:proto;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+proto5 iof unshifted => len=9 names=[0,1,2,3,5,6,7,8,length] keys=[0,1,2,3,5,6,7,8] descs=[0=val:u;1=val:0;2=val:10;3=val:20;5=val:40;6=val:50;7=val:60;8=val:70;length=val:9!e!c]
+objproto5 iof holey => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:3;1=val:true;length=val:2!e!c]
+protoReversed holey => len=8 names=[0,1,2,3,5,6,7,length] keys=[0,1,2,3,5,6,7] descs=[0=val:70;1=val:60;2=val:50;3=val:40;5=val:20;6=val:10;7=val:0;length=val:8!e!c]
+protoSliced holey => len=7 names=[0,1,3,4,5,6,length] keys=[0,1,3,4,5,6] descs=[0=val:10;1=val:20;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+protoConcated holey => len=9 names=[0,1,2,4,5,6,7,8,length] keys=[0,1,2,4,5,6,7,8] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;8=val:1;length=val:9!e!c]
+protoGainedAfterGuard => len=8 names=[0,1,2,4,5,6,7,length] keys=[0,1,2,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+shift dense => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:0;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:30;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c];length=val:2!e!c]
+unshift dense => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:u;1=val:0;2=val:10;3=val:20;4=val:30;5=val:40;6=val:50;7=val:60;8=val:70;length=val:9!e!c]
+unshift2 dense => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:u1;1=val:u2;2=val:0;3=val:10;4=val:20;5=val:30;6=val:40;7=val:50;8=val:60;9=val:70;length=val:10!e!c]
+pop dense => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:70;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;length=val:7!e!c];length=val:2!e!c]
+shift denseSlow => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:0;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:30;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c];length=val:2!e!c]
+unshift denseSlow => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:u;1=val:0;2=val:10;3=val:20;4=val:30;5=val:40;6=val:50;7=val:60;8=val:70;length=val:9!e!c]
+unshift2 denseSlow => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:u1;1=val:u2;2=val:0;3=val:10;4=val:20;5=val:30;6=val:40;7=val:50;8=val:60;9=val:70;length=val:10!e!c]
+pop denseSlow => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:70;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;length=val:7!e!c];length=val:2!e!c]
+shift holeyMid => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:0;1=val:len=7 names=[0,1,3,4,5,6,length] keys=[0,1,3,4,5,6] descs=[0=val:10;1=val:20;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c];length=val:2!e!c]
+unshift holeyMid => len=9 names=[0,1,2,3,5,6,7,8,length] keys=[0,1,2,3,5,6,7,8] descs=[0=val:u;1=val:0;2=val:10;3=val:20;5=val:40;6=val:50;7=val:60;8=val:70;length=val:9!e!c]
+unshift2 holeyMid => len=10 names=[0,1,2,3,4,6,7,8,9,length] keys=[0,1,2,3,4,6,7,8,9] descs=[0=val:u1;1=val:u2;2=val:0;3=val:10;4=val:20;6=val:40;7=val:50;8=val:60;9=val:70;length=val:10!e!c]
+pop holeyMid => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:70;1=val:len=7 names=[0,1,2,4,5,6,length] keys=[0,1,2,4,5,6] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;length=val:7!e!c];length=val:2!e!c]
+shift holeyStart => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:undefined;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:30;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c];length=val:2!e!c]
+unshift holeyStart => len=9 names=[0,2,3,4,5,6,7,8,length] keys=[0,2,3,4,5,6,7,8] descs=[0=val:u;2=val:10;3=val:20;4=val:30;5=val:40;6=val:50;7=val:60;8=val:70;length=val:9!e!c]
+unshift2 holeyStart => len=10 names=[0,1,3,4,5,6,7,8,9,length] keys=[0,1,3,4,5,6,7,8,9] descs=[0=val:u1;1=val:u2;3=val:10;4=val:20;5=val:30;6=val:40;7=val:50;8=val:60;9=val:70;length=val:10!e!c]
+pop holeyStart => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:70;1=val:len=7 names=[1,2,3,4,5,6,length] keys=[1,2,3,4,5,6] descs=[1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;length=val:7!e!c];length=val:2!e!c]
+shift holeyEnd => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:0;1=val:len=7 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:10;1=val:20;2=val:30;3=val:40;4=val:50;5=val:60;length=val:7!e!c];length=val:2!e!c]
+unshift holeyEnd => len=9 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:u;1=val:0;2=val:10;3=val:20;4=val:30;5=val:40;6=val:50;7=val:60;length=val:9!e!c]
+unshift2 holeyEnd => len=10 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:u1;1=val:u2;2=val:0;3=val:10;4=val:20;5=val:30;6=val:40;7=val:50;8=val:60;length=val:10!e!c]
+pop holeyEnd => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:undefined;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;length=val:7!e!c];length=val:2!e!c]
+shift verySparse => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:undefined;1=val:len=1000000 names=[999999,length] keys=[999999] descs=[999999=val:7;length=val:1000000!e!c];length=val:2!e!c]
+unshift verySparse => len=1000002 names=[0,1000001,length] keys=[0,1000001] descs=[0=val:u;1000001=val:7;length=val:1000002!e!c]
+unshift2 verySparse => len=1000003 names=[0,1,1000002,length] keys=[0,1,1000002] descs=[0=val:u1;1=val:u2;1000002=val:7;length=val:1000003!e!c]
+pop verySparse => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:7;1=val:len=1000000 names=[length] keys=[] descs=[length=val:1000000!e!c];length=val:2!e!c]
+shift allHoles => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:undefined;1=val:len=4 names=[length] keys=[] descs=[length=val:4!e!c];length=val:2!e!c]
+unshift allHoles => len=6 names=[0,length] keys=[0] descs=[0=val:u;length=val:6!e!c]
+unshift2 allHoles => len=7 names=[0,1,length] keys=[0,1] descs=[0=val:u1;1=val:u2;length=val:7!e!c]
+pop allHoles => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:undefined;1=val:len=4 names=[length] keys=[] descs=[length=val:4!e!c];length=val:2!e!c]
+shift withUndef => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:0;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:undefined;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c];length=val:2!e!c]
+unshift withUndef => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:u;1=val:0;2=val:10;3=val:20;4=val:undefined;5=val:40;6=val:50;7=val:60;8=val:70;length=val:9!e!c]
+unshift2 withUndef => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:u1;1=val:u2;2=val:0;3=val:10;4=val:20;5=val:undefined;6=val:40;7=val:50;8=val:60;9=val:70;length=val:10!e!c]
+pop withUndef => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:70;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:0;1=val:10;2=val:20;3=val:undefined;4=val:40;5=val:50;6=val:60;length=val:7!e!c];length=val:2!e!c]
+shift withNeg0 => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:0;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:0;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c];length=val:2!e!c]
+unshift withNeg0 => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:u;1=val:0;2=val:10;3=val:20;4=val:0;5=val:40;6=val:50;7=val:60;8=val:70;length=val:9!e!c]
+unshift2 withNeg0 => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:u1;1=val:u2;2=val:0;3=val:10;4=val:20;5=val:0;6=val:40;7=val:50;8=val:60;9=val:70;length=val:10!e!c]
+pop withNeg0 => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:70;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:0;1=val:10;2=val:20;3=val:0;4=val:40;5=val:50;6=val:60;length=val:7!e!c];length=val:2!e!c]
+shift withNaN => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:0;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:NaN;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c];length=val:2!e!c]
+unshift withNaN => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:u;1=val:0;2=val:10;3=val:20;4=val:NaN;5=val:40;6=val:50;7=val:60;8=val:70;length=val:9!e!c]
+unshift2 withNaN => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:u1;1=val:u2;2=val:0;3=val:10;4=val:20;5=val:NaN;6=val:40;7=val:50;8=val:60;9=val:70;length=val:10!e!c]
+pop withNaN => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:70;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:0;1=val:10;2=val:20;3=val:NaN;4=val:40;5=val:50;6=val:60;length=val:7!e!c];length=val:2!e!c]
+shift withSym => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:0;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:Symbol(s);3=val:90;4=val:50;5=val:60;6=val:70;length=val:7!e!c];length=val:2!e!c]
+unshift withSym => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:u;1=val:0;2=val:10;3=val:20;4=val:Symbol(s);5=val:90;6=val:50;7=val:60;8=val:70;length=val:9!e!c]
+unshift2 withSym => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:u1;1=val:u2;2=val:0;3=val:10;4=val:20;5=val:Symbol(s);6=val:90;7=val:50;8=val:60;9=val:70;length=val:10!e!c]
+pop withSym => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:70;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:0;1=val:10;2=val:20;3=val:Symbol(s);4=val:90;5=val:50;6=val:60;length=val:7!e!c];length=val:2!e!c]
+shift frozen => throw TypeError
+unshift frozen => throw TypeError
+unshift2 frozen => throw TypeError
+pop frozen => throw TypeError
+shift sealed => throw TypeError
+unshift sealed => throw TypeError
+unshift2 sealed => throw TypeError
+pop sealed => throw TypeError
+shift getter => throw TypeError
+unshift getter => throw TypeError
+unshift2 getter => throw TypeError
+pop getter => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:70;1=val:len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:0;1=val:10;2=val:20;3=accessor!w;4=val:40;5=val:50;6=val:60;length=val:7!e!c];length=val:2!e!c]
+shift sub => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:0;1=val:len=4 names=[0,1,3,length] keys=[0,1,3] descs=[0=val:10;1=val:20;3=val:40;length=val:4!e!c];length=val:2!e!c]
+unshift sub => len=6 names=[0,1,2,3,5,length] keys=[0,1,2,3,5] descs=[0=val:u;1=val:0;2=val:10;3=val:20;5=val:40;length=val:6!e!c]
+unshift2 sub => len=7 names=[0,1,2,3,4,6,length] keys=[0,1,2,3,4,6] descs=[0=val:u1;1=val:u2;2=val:0;3=val:10;4=val:20;6=val:40;length=val:7!e!c]
+pop sub => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:40;1=val:len=4 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:0;1=val:10;2=val:20;length=val:4!e!c];length=val:2!e!c]
+shift arrayLike => throw TypeError
+unshift arrayLike => throw TypeError
+unshift2 arrayLike => throw TypeError
+pop arrayLike => throw TypeError
+shift frozen => throw TypeError
+unshift frozen => throw TypeError
+shift sealed => throw TypeError
+shift mixedWritability => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:throw;1=val:TypeError;2=val:len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:10;1=val:10!w;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c];length=val:3!e!c]
+shift proxy => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:0;1=val:len=7 names=[0,1,3,4,5,6,length] keys=[0,1,3,4,5,6] descs=[0=val:10;1=val:20;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c];length=val:2!e!c]
+unshift proxy => len=9 names=[0,1,2,3,5,6,7,8,length] keys=[0,1,2,3,5,6,7,8] descs=[0=val:u;1=val:0;2=val:10;3=val:20;5=val:40;6=val:50;7=val:60;8=val:70;length=val:9!e!c]
+shift mutatedDuring => throw TypeError
+slice dense [0] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice dense [1] => len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:30;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+slice dense [2,6] => len=4 names=[0,1,2,3,length] keys=[0,1,2,3] descs=[0=val:20;1=val:30;2=val:40;3=val:50;length=val:4!e!c]
+slice dense [-3] => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:50;1=val:60;2=val:70;length=val:3!e!c]
+slice dense [3] => len=5 names=[0,1,2,3,4,length] keys=[0,1,2,3,4] descs=[0=val:30;1=val:40;2=val:50;3=val:60;4=val:70;length=val:5!e!c]
+slice dense [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice dense [-100,100] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice dense [2,] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:30;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice dense [2.5] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:30;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice dense [-2.5] => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:60;1=val:70;length=val:2!e!c]
+slice denseSlow [0] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice denseSlow [1] => len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:30;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+slice denseSlow [2,6] => len=4 names=[0,1,2,3,length] keys=[0,1,2,3] descs=[0=val:20;1=val:30;2=val:40;3=val:50;length=val:4!e!c]
+slice denseSlow [-3] => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:50;1=val:60;2=val:70;length=val:3!e!c]
+slice denseSlow [3] => len=5 names=[0,1,2,3,4,length] keys=[0,1,2,3,4] descs=[0=val:30;1=val:40;2=val:50;3=val:60;4=val:70;length=val:5!e!c]
+slice denseSlow [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice denseSlow [-100,100] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice denseSlow [2,] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:30;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice denseSlow [2.5] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:30;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice denseSlow [-2.5] => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:60;1=val:70;length=val:2!e!c]
+slice holeyMid [0] => len=8 names=[0,1,2,4,5,6,7,length] keys=[0,1,2,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice holeyMid [1] => len=7 names=[0,1,3,4,5,6,length] keys=[0,1,3,4,5,6] descs=[0=val:10;1=val:20;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+slice holeyMid [2,6] => len=4 names=[0,2,3,length] keys=[0,2,3] descs=[0=val:20;2=val:40;3=val:50;length=val:4!e!c]
+slice holeyMid [-3] => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:50;1=val:60;2=val:70;length=val:3!e!c]
+slice holeyMid [3] => len=5 names=[1,2,3,4,length] keys=[1,2,3,4] descs=[1=val:40;2=val:50;3=val:60;4=val:70;length=val:5!e!c]
+slice holeyMid [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice holeyMid [-100,100] => len=8 names=[0,1,2,4,5,6,7,length] keys=[0,1,2,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice holeyMid [2,] => len=6 names=[0,2,3,4,5,length] keys=[0,2,3,4,5] descs=[0=val:20;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice holeyMid [2.5] => len=6 names=[0,2,3,4,5,length] keys=[0,2,3,4,5] descs=[0=val:20;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice holeyMid [-2.5] => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:60;1=val:70;length=val:2!e!c]
+slice holeyStart [0] => len=8 names=[1,2,3,4,5,6,7,length] keys=[1,2,3,4,5,6,7] descs=[1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice holeyStart [1] => len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:30;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+slice holeyStart [2,6] => len=4 names=[0,1,2,3,length] keys=[0,1,2,3] descs=[0=val:20;1=val:30;2=val:40;3=val:50;length=val:4!e!c]
+slice holeyStart [-3] => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:50;1=val:60;2=val:70;length=val:3!e!c]
+slice holeyStart [3] => len=5 names=[0,1,2,3,4,length] keys=[0,1,2,3,4] descs=[0=val:30;1=val:40;2=val:50;3=val:60;4=val:70;length=val:5!e!c]
+slice holeyStart [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice holeyStart [-100,100] => len=8 names=[1,2,3,4,5,6,7,length] keys=[1,2,3,4,5,6,7] descs=[1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice holeyStart [2,] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:30;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice holeyStart [2.5] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:30;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice holeyStart [-2.5] => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:60;1=val:70;length=val:2!e!c]
+slice holeyEnd [0] => len=8 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;length=val:8!e!c]
+slice holeyEnd [1] => len=7 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:10;1=val:20;2=val:30;3=val:40;4=val:50;5=val:60;length=val:7!e!c]
+slice holeyEnd [2,6] => len=4 names=[0,1,2,3,length] keys=[0,1,2,3] descs=[0=val:20;1=val:30;2=val:40;3=val:50;length=val:4!e!c]
+slice holeyEnd [-3] => len=3 names=[0,1,length] keys=[0,1] descs=[0=val:50;1=val:60;length=val:3!e!c]
+slice holeyEnd [3] => len=5 names=[0,1,2,3,length] keys=[0,1,2,3] descs=[0=val:30;1=val:40;2=val:50;3=val:60;length=val:5!e!c]
+slice holeyEnd [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice holeyEnd [-100,100] => len=8 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;length=val:8!e!c]
+slice holeyEnd [2,] => len=6 names=[0,1,2,3,4,length] keys=[0,1,2,3,4] descs=[0=val:20;1=val:30;2=val:40;3=val:50;4=val:60;length=val:6!e!c]
+slice holeyEnd [2.5] => len=6 names=[0,1,2,3,4,length] keys=[0,1,2,3,4] descs=[0=val:20;1=val:30;2=val:40;3=val:50;4=val:60;length=val:6!e!c]
+slice holeyEnd [-2.5] => len=2 names=[0,length] keys=[0] descs=[0=val:60;length=val:2!e!c]
+slice verySparse [0] => len=1000001 names=[1000000,length] keys=[1000000] descs=[1000000=val:7;length=val:1000001!e!c]
+slice verySparse [1] => len=1000000 names=[999999,length] keys=[999999] descs=[999999=val:7;length=val:1000000!e!c]
+slice verySparse [2,6] => len=4 names=[length] keys=[] descs=[length=val:4!e!c]
+slice verySparse [-3] => len=3 names=[2,length] keys=[2] descs=[2=val:7;length=val:3!e!c]
+slice verySparse [3] => len=999998 names=[999997,length] keys=[999997] descs=[999997=val:7;length=val:999998!e!c]
+slice verySparse [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice verySparse [-100,100] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice verySparse [2,] => len=999999 names=[999998,length] keys=[999998] descs=[999998=val:7;length=val:999999!e!c]
+slice verySparse [2.5] => len=999999 names=[999998,length] keys=[999998] descs=[999998=val:7;length=val:999999!e!c]
+slice verySparse [-2.5] => len=2 names=[1,length] keys=[1] descs=[1=val:7;length=val:2!e!c]
+slice allHoles [0] => len=5 names=[length] keys=[] descs=[length=val:5!e!c]
+slice allHoles [1] => len=4 names=[length] keys=[] descs=[length=val:4!e!c]
+slice allHoles [2,6] => len=3 names=[length] keys=[] descs=[length=val:3!e!c]
+slice allHoles [-3] => len=3 names=[length] keys=[] descs=[length=val:3!e!c]
+slice allHoles [3] => len=2 names=[length] keys=[] descs=[length=val:2!e!c]
+slice allHoles [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice allHoles [-100,100] => len=5 names=[length] keys=[] descs=[length=val:5!e!c]
+slice allHoles [2,] => len=3 names=[length] keys=[] descs=[length=val:3!e!c]
+slice allHoles [2.5] => len=3 names=[length] keys=[] descs=[length=val:3!e!c]
+slice allHoles [-2.5] => len=2 names=[length] keys=[] descs=[length=val:2!e!c]
+slice withUndef [0] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:undefined;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice withUndef [1] => len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:undefined;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+slice withUndef [2,6] => len=4 names=[0,1,2,3,length] keys=[0,1,2,3] descs=[0=val:20;1=val:undefined;2=val:40;3=val:50;length=val:4!e!c]
+slice withUndef [-3] => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:50;1=val:60;2=val:70;length=val:3!e!c]
+slice withUndef [3] => len=5 names=[0,1,2,3,4,length] keys=[0,1,2,3,4] descs=[0=val:undefined;1=val:40;2=val:50;3=val:60;4=val:70;length=val:5!e!c]
+slice withUndef [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice withUndef [-100,100] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:undefined;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice withUndef [2,] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:undefined;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice withUndef [2.5] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:undefined;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice withUndef [-2.5] => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:60;1=val:70;length=val:2!e!c]
+slice withNeg0 [0] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:0;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice withNeg0 [1] => len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:0;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+slice withNeg0 [2,6] => len=4 names=[0,1,2,3,length] keys=[0,1,2,3] descs=[0=val:20;1=val:0;2=val:40;3=val:50;length=val:4!e!c]
+slice withNeg0 [-3] => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:50;1=val:60;2=val:70;length=val:3!e!c]
+slice withNeg0 [3] => len=5 names=[0,1,2,3,4,length] keys=[0,1,2,3,4] descs=[0=val:0;1=val:40;2=val:50;3=val:60;4=val:70;length=val:5!e!c]
+slice withNeg0 [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice withNeg0 [-100,100] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:0;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice withNeg0 [2,] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:0;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice withNeg0 [2.5] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:0;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice withNeg0 [-2.5] => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:60;1=val:70;length=val:2!e!c]
+slice withNaN [0] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:NaN;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice withNaN [1] => len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:NaN;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+slice withNaN [2,6] => len=4 names=[0,1,2,3,length] keys=[0,1,2,3] descs=[0=val:20;1=val:NaN;2=val:40;3=val:50;length=val:4!e!c]
+slice withNaN [-3] => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:50;1=val:60;2=val:70;length=val:3!e!c]
+slice withNaN [3] => len=5 names=[0,1,2,3,4,length] keys=[0,1,2,3,4] descs=[0=val:NaN;1=val:40;2=val:50;3=val:60;4=val:70;length=val:5!e!c]
+slice withNaN [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice withNaN [-100,100] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:NaN;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice withNaN [2,] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:NaN;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice withNaN [2.5] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:NaN;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice withNaN [-2.5] => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:60;1=val:70;length=val:2!e!c]
+slice withSym [0] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:Symbol(s);4=val:90;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice withSym [1] => len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:Symbol(s);3=val:90;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+slice withSym [2,6] => len=4 names=[0,1,2,3,length] keys=[0,1,2,3] descs=[0=val:20;1=val:Symbol(s);2=val:90;3=val:50;length=val:4!e!c]
+slice withSym [-3] => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:50;1=val:60;2=val:70;length=val:3!e!c]
+slice withSym [3] => len=5 names=[0,1,2,3,4,length] keys=[0,1,2,3,4] descs=[0=val:Symbol(s);1=val:90;2=val:50;3=val:60;4=val:70;length=val:5!e!c]
+slice withSym [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice withSym [-100,100] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:Symbol(s);4=val:90;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice withSym [2,] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:Symbol(s);2=val:90;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice withSym [2.5] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:Symbol(s);2=val:90;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice withSym [-2.5] => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:60;1=val:70;length=val:2!e!c]
+slice frozen [0] => len=8 names=[0,1,2,4,5,6,7,length] keys=[0,1,2,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice frozen [1] => len=7 names=[0,1,3,4,5,6,length] keys=[0,1,3,4,5,6] descs=[0=val:10;1=val:20;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+slice frozen [2,6] => len=4 names=[0,2,3,length] keys=[0,2,3] descs=[0=val:20;2=val:40;3=val:50;length=val:4!e!c]
+slice frozen [-3] => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:50;1=val:60;2=val:70;length=val:3!e!c]
+slice frozen [3] => len=5 names=[1,2,3,4,length] keys=[1,2,3,4] descs=[1=val:40;2=val:50;3=val:60;4=val:70;length=val:5!e!c]
+slice frozen [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice frozen [-100,100] => len=8 names=[0,1,2,4,5,6,7,length] keys=[0,1,2,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice frozen [2,] => len=6 names=[0,2,3,4,5,length] keys=[0,2,3,4,5] descs=[0=val:20;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice frozen [2.5] => len=6 names=[0,2,3,4,5,length] keys=[0,2,3,4,5] descs=[0=val:20;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice frozen [-2.5] => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:60;1=val:70;length=val:2!e!c]
+slice sealed [0] => len=8 names=[0,1,2,4,5,6,7,length] keys=[0,1,2,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice sealed [1] => len=7 names=[0,1,3,4,5,6,length] keys=[0,1,3,4,5,6] descs=[0=val:10;1=val:20;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+slice sealed [2,6] => len=4 names=[0,2,3,length] keys=[0,2,3] descs=[0=val:20;2=val:40;3=val:50;length=val:4!e!c]
+slice sealed [-3] => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:50;1=val:60;2=val:70;length=val:3!e!c]
+slice sealed [3] => len=5 names=[1,2,3,4,length] keys=[1,2,3,4] descs=[1=val:40;2=val:50;3=val:60;4=val:70;length=val:5!e!c]
+slice sealed [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice sealed [-100,100] => len=8 names=[0,1,2,4,5,6,7,length] keys=[0,1,2,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice sealed [2,] => len=6 names=[0,2,3,4,5,length] keys=[0,2,3,4,5] descs=[0=val:20;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice sealed [2.5] => len=6 names=[0,2,3,4,5,length] keys=[0,2,3,4,5] descs=[0=val:20;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice sealed [-2.5] => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:60;1=val:70;length=val:2!e!c]
+slice getter [0] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:999;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice getter [1] => len=7 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:10;1=val:20;2=val:999;3=val:40;4=val:50;5=val:60;6=val:70;length=val:7!e!c]
+slice getter [2,6] => len=4 names=[0,1,2,3,length] keys=[0,1,2,3] descs=[0=val:20;1=val:999;2=val:40;3=val:50;length=val:4!e!c]
+slice getter [-3] => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:50;1=val:60;2=val:70;length=val:3!e!c]
+slice getter [3] => len=5 names=[0,1,2,3,4,length] keys=[0,1,2,3,4] descs=[0=val:999;1=val:40;2=val:50;3=val:60;4=val:70;length=val:5!e!c]
+slice getter [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice getter [-100,100] => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;3=val:999;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice getter [2,] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:999;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice getter [2.5] => len=6 names=[0,1,2,3,4,5,length] keys=[0,1,2,3,4,5] descs=[0=val:20;1=val:999;2=val:40;3=val:50;4=val:60;5=val:70;length=val:6!e!c]
+slice getter [-2.5] => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:60;1=val:70;length=val:2!e!c]
+slice sub [0] => len=5 names=[0,1,2,4,length] keys=[0,1,2,4] descs=[0=val:0;1=val:10;2=val:20;4=val:40;length=val:5!e!c]
+slice sub [1] => len=4 names=[0,1,3,length] keys=[0,1,3] descs=[0=val:10;1=val:20;3=val:40;length=val:4!e!c]
+slice sub [2,6] => len=3 names=[0,2,length] keys=[0,2] descs=[0=val:20;2=val:40;length=val:3!e!c]
+slice sub [-3] => len=3 names=[0,2,length] keys=[0,2] descs=[0=val:20;2=val:40;length=val:3!e!c]
+slice sub [3] => len=2 names=[1,length] keys=[1] descs=[1=val:40;length=val:2!e!c]
+slice sub [5,3] => len=0 names=[length] keys=[] descs=[length=val:0!e!c]
+slice sub [-100,100] => len=5 names=[0,1,2,4,length] keys=[0,1,2,4] descs=[0=val:0;1=val:10;2=val:20;4=val:40;length=val:5!e!c]
+slice sub [2,] => len=3 names=[0,2,length] keys=[0,2] descs=[0=val:20;2=val:40;length=val:3!e!c]
+slice sub [2.5] => len=3 names=[0,2,length] keys=[0,2] descs=[0=val:20;2=val:40;length=val:3!e!c]
+slice sub [-2.5] => len=2 names=[1,length] keys=[1] descs=[1=val:40;length=val:2!e!c]
+slice arrayLike [0] => throw TypeError
+slice arrayLike [1] => throw TypeError
+slice arrayLike [2,6] => throw TypeError
+slice arrayLike [-3] => throw TypeError
+slice arrayLike [3] => throw TypeError
+slice arrayLike [5,3] => throw TypeError
+slice arrayLike [-100,100] => throw TypeError
+slice arrayLike [2,] => throw TypeError
+slice arrayLike [2.5] => throw TypeError
+slice arrayLike [-2.5] => throw TypeError
+slice speciesArr => len=8 names=[0,1,2,4,5,6,7,length] keys=[0,1,2,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+slice speciesMutator => throw TypeError
+slice speciesThrowGetter => throw:TypeError
+slice subResult => len=3 names=[0,1,length] keys=[0,1] descs=[0=val:10;1=val:20;length=val:3!e!c]
+concat dense => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;8=val:1;9=val:2;length=val:10!e!c]
+concatArg dense => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;8=val:5;length=val:9!e!c]
+concat denseSlow => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;8=val:1;9=val:2;length=val:10!e!c]
+concatArg denseSlow => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;8=val:5;length=val:9!e!c]
+concat holeyMid => len=10 names=[0,1,2,4,5,6,7,8,9,length] keys=[0,1,2,4,5,6,7,8,9] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;8=val:1;9=val:2;length=val:10!e!c]
+concatArg holeyMid => len=9 names=[0,1,2,4,5,6,7,8,length] keys=[0,1,2,4,5,6,7,8] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;8=val:5;length=val:9!e!c]
+concat holeyStart => len=10 names=[1,2,3,4,5,6,7,8,9,length] keys=[1,2,3,4,5,6,7,8,9] descs=[1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;8=val:1;9=val:2;length=val:10!e!c]
+concatArg holeyStart => len=9 names=[1,2,3,4,5,6,7,8,length] keys=[1,2,3,4,5,6,7,8] descs=[1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:70;8=val:5;length=val:9!e!c]
+concat holeyEnd => len=10 names=[0,1,2,3,4,5,6,8,9,length] keys=[0,1,2,3,4,5,6,8,9] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;8=val:1;9=val:2;length=val:10!e!c]
+concatArg holeyEnd => len=9 names=[0,1,2,3,4,5,6,8,length] keys=[0,1,2,3,4,5,6,8] descs=[0=val:0;1=val:10;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;8=val:5;length=val:9!e!c]
+concat verySparse => len=1000003 names=[1000000,1000001,1000002,length] keys=[1000000,1000001,1000002] descs=[1000000=val:7;1000001=val:1;1000002=val:2;length=val:1000003!e!c]
+concatArg verySparse => len=1000002 names=[1000000,1000001,length] keys=[1000000,1000001] descs=[1000000=val:7;1000001=val:5;length=val:1000002!e!c]
+concat allHoles => len=7 names=[5,6,length] keys=[5,6] descs=[5=val:1;6=val:2;length=val:7!e!c]
+concatArg allHoles => len=6 names=[5,length] keys=[5] descs=[5=val:5;length=val:6!e!c]
+concat withUndef => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:0;1=val:10;2=val:20;3=val:undefined;4=val:40;5=val:50;6=val:60;7=val:70;8=val:1;9=val:2;length=val:10!e!c]
+concatArg withUndef => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:0;1=val:10;2=val:20;3=val:undefined;4=val:40;5=val:50;6=val:60;7=val:70;8=val:5;length=val:9!e!c]
+concat withNeg0 => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:0;1=val:10;2=val:20;3=val:0;4=val:40;5=val:50;6=val:60;7=val:70;8=val:1;9=val:2;length=val:10!e!c]
+concatArg withNeg0 => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:0;1=val:10;2=val:20;3=val:0;4=val:40;5=val:50;6=val:60;7=val:70;8=val:5;length=val:9!e!c]
+concat withNaN => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:0;1=val:10;2=val:20;3=val:NaN;4=val:40;5=val:50;6=val:60;7=val:70;8=val:1;9=val:2;length=val:10!e!c]
+concatArg withNaN => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:0;1=val:10;2=val:20;3=val:NaN;4=val:40;5=val:50;6=val:60;7=val:70;8=val:5;length=val:9!e!c]
+concat withSym => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:0;1=val:10;2=val:20;3=val:Symbol(s);4=val:90;5=val:50;6=val:60;7=val:70;8=val:1;9=val:2;length=val:10!e!c]
+concatArg withSym => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:0;1=val:10;2=val:20;3=val:Symbol(s);4=val:90;5=val:50;6=val:60;7=val:70;8=val:5;length=val:9!e!c]
+concat frozen => len=10 names=[0,1,2,4,5,6,7,8,9,length] keys=[0,1,2,4,5,6,7,8,9] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;8=val:1;9=val:2;length=val:10!e!c]
+concatArg frozen => len=9 names=[0,1,2,4,5,6,7,8,length] keys=[0,1,2,4,5,6,7,8] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;8=val:5;length=val:9!e!c]
+concat sealed => len=10 names=[0,1,2,4,5,6,7,8,9,length] keys=[0,1,2,4,5,6,7,8,9] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;8=val:1;9=val:2;length=val:10!e!c]
+concatArg sealed => len=9 names=[0,1,2,4,5,6,7,8,length] keys=[0,1,2,4,5,6,7,8] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;8=val:5;length=val:9!e!c]
+concat getter => len=10 names=[0,1,2,3,4,5,6,7,8,9,length] keys=[0,1,2,3,4,5,6,7,8,9] descs=[0=val:0;1=val:10;2=val:20;3=val:999;4=val:40;5=val:50;6=val:60;7=val:70;8=val:1;9=val:2;length=val:10!e!c]
+concatArg getter => len=9 names=[0,1,2,3,4,5,6,7,8,length] keys=[0,1,2,3,4,5,6,7,8] descs=[0=val:0;1=val:10;2=val:20;3=val:999;4=val:40;5=val:50;6=val:60;7=val:70;8=val:5;length=val:9!e!c]
+concat sub => len=7 names=[0,1,2,4,5,6,length] keys=[0,1,2,4,5,6] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:1;6=val:2;length=val:7!e!c]
+concatArg sub => len=6 names=[0,1,2,4,5,length] keys=[0,1,2,4,5] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:5;length=val:6!e!c]
+concat arrayLike => throw TypeError
+concatArg arrayLike => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:[object Object];1=val:5;length=val:2!e!c]
+concat subSpecies => len=13 names=[0,1,2,4,5,6,7,8,9,10,12,length] keys=[0,1,2,4,5,6,7,8,9,10,12] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;8=val:0;9=val:10;10=val:20;12=val:40;length=val:13!e!c]
+concat proxyArg => len=8 names=[0,1,2,4,5,6,7,length] keys=[0,1,2,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+reverse dense => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:70;1=val:60;2=val:50;3=val:40;4=val:30;5=val:20;6=val:10;7=val:0;length=val:8!e!c]
+reverse denseSlow => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:70;1=val:60;2=val:50;3=val:40;4=val:30;5=val:20;6=val:10;7=val:0;length=val:8!e!c]
+reverse holeyMid => len=8 names=[0,1,2,3,5,6,7,length] keys=[0,1,2,3,5,6,7] descs=[0=val:70;1=val:60;2=val:50;3=val:40;5=val:20;6=val:10;7=val:0;length=val:8!e!c]
+reverse holeyStart => len=8 names=[0,1,2,3,4,5,6,length] keys=[0,1,2,3,4,5,6] descs=[0=val:70;1=val:60;2=val:50;3=val:40;4=val:30;5=val:20;6=val:10;length=val:8!e!c]
+reverse holeyEnd => len=8 names=[1,2,3,4,5,6,7,length] keys=[1,2,3,4,5,6,7] descs=[1=val:60;2=val:50;3=val:40;4=val:30;5=val:20;6=val:10;7=val:0;length=val:8!e!c]
+reverse verySparse => len=1000001 names=[0,length] keys=[0] descs=[0=val:7;length=val:1000001!e!c]
+reverse allHoles => len=5 names=[length] keys=[] descs=[length=val:5!e!c]
+reverse withUndef => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:70;1=val:60;2=val:50;3=val:40;4=val:undefined;5=val:20;6=val:10;7=val:0;length=val:8!e!c]
+reverse withNeg0 => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:70;1=val:60;2=val:50;3=val:40;4=val:0;5=val:20;6=val:10;7=val:0;length=val:8!e!c]
+reverse withNaN => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:70;1=val:60;2=val:50;3=val:40;4=val:NaN;5=val:20;6=val:10;7=val:0;length=val:8!e!c]
+reverse withSym => len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:70;1=val:60;2=val:50;3=val:90;4=val:Symbol(s);5=val:20;6=val:10;7=val:0;length=val:8!e!c]
+reverse frozen => throw TypeError
+reverse sealed => throw TypeError
+reverse getter => throw TypeError
+reverse sub => len=5 names=[0,2,3,4,length] keys=[0,2,3,4] descs=[0=val:40;2=val:20;3=val:10;4=val:0;length=val:5!e!c]
+reverse arrayLike => throw TypeError
+reverse frozen => throw TypeError
+reverse sealed => throw TypeError
+reverse mixedWritability => len=3 names=[0,1,2,length] keys=[0,1,2] descs=[0=val:throw;1=val:TypeError;2=val:len=8 names=[0,1,2,3,4,5,6,7,length] keys=[0,1,2,3,4,5,6,7] descs=[0=val:70;1=val:10!w;2=val:20;3=val:30;4=val:40;5=val:50;6=val:60;7=val:0;length=val:8!e!c];length=val:3!e!c]
+reverse proxy => len=8 names=[0,1,2,3,5,6,7,length] keys=[0,1,2,3,5,6,7] descs=[0=val:70;1=val:60;2=val:50;3=val:40;5=val:20;6=val:10;7=val:0;length=val:8!e!c]
+reverse double => len=8 names=[0,1,2,4,5,6,7,length] keys=[0,1,2,4,5,6,7] descs=[0=val:0;1=val:10;2=val:20;4=val:40;5=val:50;6=val:60;7=val:70;length=val:8!e!c]
+search on string => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:1;1=val:true;length=val:2!e!c]
+shift on arrayLike => len=2 names=[0,1,length] keys=[0,1] descs=[0=val:undefined;1=val:{"1":"x","length":4};length=val:2!e!c]
+slice on arrayLike => len=5 names=[2,length] keys=[2] descs=[2=val:x;length=val:5!e!c]
+END

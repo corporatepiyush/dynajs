@@ -1,0 +1,16 @@
+__EXP = null;
+function f() {
+    const M = Object.freeze({ A: 1, B: 2, S: "x" });
+    let acc = 0;
+    outer:
+    for (let i = 0; i < 3; i++) {
+        for (let j = 0; j < 3; j++) {
+            if (j === 1) { acc += M.A; continue outer; }
+            acc += M.B + M.S.length;
+        }
+    }
+    return acc;
+}
+
+test("f", function () { assert_eq(String((function(){ return f(); })()), "12", "f"); });
+summary("constprop_waveB");

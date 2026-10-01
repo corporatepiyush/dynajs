@@ -1,0 +1,6 @@
+push-sparse => [null,null,"two",null,null] len=5 own0=true
+len-lie => [1,2] reads-length=true
+call-sparse => 4:x,,,y
+lit => [null,"mid",null] 3
+1e5 => len=100000 mid=mid head=undefined tail=undefined own=true
+many => len=150 [null,0,null,null,1,null] last=undefined

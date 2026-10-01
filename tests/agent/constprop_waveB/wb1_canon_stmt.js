@@ -1,0 +1,5 @@
+__EXP = null;
+const M = Object.freeze({ C: "7", D: "00" });
+test("stmt0", function () { assert_eq(String((function(){ return M.C; })()), "7", "stmt0"); });
+test("id", function () { assert_eq(String((function(){ return 1; })()), "1", "id"); });
+summary("constprop_waveB");

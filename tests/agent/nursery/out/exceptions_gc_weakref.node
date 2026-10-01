@@ -1,0 +1,6 @@
+exc: 1 2 true
+ctor-esc: 3 ctor boom
+spike: 120 true
+weakref: 42
+weakref-after-churn: object
+fin: registered ok

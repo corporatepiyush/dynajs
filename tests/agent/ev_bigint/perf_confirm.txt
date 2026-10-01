@@ -1,0 +1,8 @@
+=== confirm high-iters ===
+mul d=10000 r= iters=300 patched=16ms control=34ms speedup=2.12
+mul d=40000 r= iters=40 patched=21ms control=73ms speedup=3.48
+mulbal d=10000 r= iters=300 patched=22ms control=69ms speedup=3.14
+mulbal d=40000 r= iters=40 patched=27ms control=146ms speedup=5.41
+tostr d=10000 r=10 iters=400 patched=161ms control=686ms speedup=4.26
+tostr d=40000 r=10 iters=60 patched=245ms control=1643ms speedup=6.71
+mulbal d=500 r= iters=20000 patched=12ms control=12ms speedup=1.0

@@ -1,0 +1,35 @@
+(lldb) target create "./base_dynajs"
+Current executable set to '/tmp//base_dynajs' (arm64).
+(lldb) settings set -- target.run-args  "slowarr_tests/lldb_probe_move.js"
+(lldb) command source -s 0 'slowarr_tests/lldb_hits.cmds'
+Executing commands in '/tmp//slowarr_tests/lldb_hits.cmds'.
+(lldb) command script import /Users/piyush/ai/dynascript/.agent-work/tools/hitscript.py
+(lldb) breakpoint set -n JS_GetPropertyInt64
+error: base_dynajs debug map object file "/private/tmp//.obj/repl.o" changed (actual: 0x6aa3dfb2, debug map: 0x6aa3c889) since this executable was linked, debug info will not be loaded
+error: base_dynajs debug map object file "/private/tmp//.obj/dynajs.o" changed (actual: 0x6aa3dfb2, debug map: 0x6aa3c888) since this executable was linked, debug info will not be loaded
+Breakpoint 1: where = base_dynajs`JS_GetPropertyInt64, address = 0x000000010002dc6c
+(lldb) breakpoint command add -F hitscript.bp_cb
+(lldb) breakpoint set -n JS_TryGetPropertyInt64
+Breakpoint 2: where = base_dynajs`JS_TryGetPropertyInt64, address = 0x0000000100069300
+(lldb) breakpoint command add -F hitscript.bp_cb
+(lldb) breakpoint set -n JS_CopySubArray
+Breakpoint 3: where = base_dynajs`JS_CopySubArray, address = 0x0000000100069028
+(lldb) breakpoint command add -F hitscript.bp_cb
+(lldb) breakpoint set -n js_slow_array_shift_unshift
+Breakpoint 4: no locations (pending).
+WARNING:  Unable to resolve breakpoint to any actual locations.
+(lldb) breakpoint command add -F hitscript.bp_cb
+(lldb) breakpoint set -n js_slow_array_try_convert_fast
+Breakpoint 5: no locations (pending).
+WARNING:  Unable to resolve breakpoint to any actual locations.
+(lldb) breakpoint command add -F hitscript.bp_cb
+(lldb) breakpoint set -n js_slow_array_scan_start
+Breakpoint 6: no locations (pending).
+WARNING:  Unable to resolve breakpoint to any actual locations.
+(lldb) breakpoint command add -F hitscript.bp_cb
+(lldb) run
+Process 29398 launched: '/tmp//base_dynajs' (arm64)
+Process 29398 exited with status = 0 (0x00000000)
+(lldb) hitreport
+HITCOUNT 2002
+(lldb) quit

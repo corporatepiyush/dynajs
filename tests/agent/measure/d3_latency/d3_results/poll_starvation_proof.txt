@@ -1,0 +1,43 @@
+  fired at set=987246542.693ms
+run  0: eval=291.5ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987246821.231ms
+run  1: eval=290.3ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987247124.600ms
+run  2: eval=282.2ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987247406.704ms
+run  3: eval=266.8ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987247671.322ms
+run  4: eval=266.2ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987247946.561ms
+run  5: eval=293.6ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987248236.417ms
+run  6: eval=279.0ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987248518.157ms
+run  7: eval=282.8ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987248804.694ms
+run  8: eval=284.0ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987249098.602ms
+run  9: eval=283.4ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987249381.975ms
+run 10: eval=287.3ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987249676.721ms
+run 11: eval=280.0ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987249962.518ms
+run 12: eval=292.6ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987250253.247ms
+run 13: eval=289.0ms exc=0 served=-1.000ms lat=-1.000ms
+  fired at set=987250554.397ms
+run 14: eval=286.4ms exc=0 served=-1.000ms lat=-1.000ms
+
+# poll_starvation_proof.txt -- captured from scratch/diag2.c (same mechanics
+# as latency_harness): 15 consecutive runs of
+#   let s=0; for(let k=0;k<300;k++){ s+='abcdefgh'.repeat(4194304).length; } s
+# The atomic interrupt flag is set mid-eval every run ("fired at ..."), yet in
+# 15/15 runs (each ~290ms of JS execution) the engine's interrupt handler is
+# NEVER invoked (served=-1.000ms) and the eval completes normally (exc=0).
+# Mechanism: js_poll_interrupts decrements a per-context counter initialized
+# to JS_INTERRUPT_COUNTER_INIT=10000; it only calls the handler when it hits
+# zero, and it is reset only at that moment. A 300-iteration loop never
+# crosses the boundary; the counter persists across evals, so delivery is
+# probabilistic across consecutive runs. Interrupt latency under such loops
+# is unbounded (no poll at all), not merely large.

@@ -1,0 +1,5 @@
+del-noproto => 1,2,U,4,5
+del-proto => 1,2,D2,4
+own-wins => 1,2,3
+del-all => 1,U,U,U,U
+del-current => 1,2,3 len=3 keys=0

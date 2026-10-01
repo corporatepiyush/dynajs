@@ -1,0 +1,7 @@
+1 {"value":1,"done":false}
+2 E:gen-boom
+r {"value":"r","done":true}
+t E:ext
+q {"value":2,"done":false}
+post {"done":true}
+t E:injected caught:injected,g2fin

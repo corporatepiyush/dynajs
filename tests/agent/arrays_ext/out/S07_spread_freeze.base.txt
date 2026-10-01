@@ -1,0 +1,6 @@
+frozen-src => [1,2,3] frozen(r)=false
+frozen-res => push=TypeError set=TypeError del=TypeError
+frozen-sparse => len=8 2=two 0=undefined holes=none idx=2 inc=true
+sealed-res => push=TypeError set=changed
+search => 1 2 true
+frozen-bulk => [5,6]

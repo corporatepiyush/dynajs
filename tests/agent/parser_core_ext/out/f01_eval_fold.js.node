@@ -1,0 +1,15 @@
+e1 5
+e2 4
+e3 true
+e4 768
+e5 42
+e6 123
+e7 42
+e8 yes
+e9 0
+e9 5
+e9 10
+e10 T:ReferenceError
+e11 25
+e12 T:ReferenceError
+e13 true

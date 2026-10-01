@@ -1,0 +1,8 @@
+A concat=[1,"P1",3,4,5] own1=true len=5
+B ta=[1,{"0":7,"1":8},9] isArray=true
+C mix=[0,{"0":1.5,"1":2.5},null,null,null,"s3"] len=6 holes=2
+D objproto=[0,1,"O2",null,"O2"] own2=false
+E slowrecv=[0,null,null,null] len=100003 tag=undefined far-present=true isArray=true
+F like=[0,{"0":"x","1":"y","length":2}] len=2
+G spreadable=[0,"x","y"] len=3
+H self=[1,2,1,2] len=4 orig=2

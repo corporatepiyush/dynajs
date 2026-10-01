@@ -1,0 +1,2 @@
+chain0=43
+typeof=stringbooleanobject

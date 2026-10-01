@@ -1,0 +1,5 @@
+a C0,C1,C2
+b true C
+c T:ReferenceError,function,T:ReferenceError,function
+d 10,20 true true false true
+e e2,e2

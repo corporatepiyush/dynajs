@@ -1,0 +1,9 @@
+on-break => calls=1
+on-complete => calls=0
+on-body-throw => RangeError calls=1
+nonobject => TypeError
+throwret => EvalError
+nested => o1 i10 o2 i10 calls=2
+typed-shared => calls=1
+lookup-site => undefined function
+restored => undefined

@@ -1,0 +1,8 @@
+idx => 10 500000 999999 -1
+idx-undef => -1 -1 (expect -1 -1)
+inc-undef => true true false
+nan => idx=-1 inc=true last=-1
+zero => idx0=50 idxm0=50 inc0=true
+obj => 250 -1 true
+from => 500000 -1 -1 500000 999999 true
+coerce => 1 1 2 0 1 -1

@@ -1,0 +1,32 @@
+__EXP = {};
+__EXP[0] = ["PASS 09_slice_concat"];
+var s = parent(4000);
+var t = s.slice(100, 3000);
+var c1 = t + "tail";
+eq(c1, s.slice(100, 3000) + "tail", "slice+flat");
+eq(c1.length, 2904, "c1 len");
+var c2 = t + s.slice(2000, 4000);
+eq(c2, s.slice(100, 3000) + s.slice(2000, 4000), "slice+slice overlapping parents");
+var acc = "";
+for (var i = 0; i < 500; i++) acc += t.slice(i, i + 400);
+ok(acc.length > 0, "churn produced");
+eq(t, s.slice(100, 3000), "slice intact after churn");
+eq(s[100], t[0], "parent intact after churn");
+function makeSlice() { var big = parent(9000); return big.slice(10, 8000); }
+var joined = makeSlice() + "tailtailtail";
+eq(joined.slice(-12), "tailtailtail", "rc1 slice concat tail");
+eq(joined.slice(0, 5), s.slice(10, 15), "rc1 slice concat head");
+var r1 = makeSlice(), r2 = makeSlice();
+var big = (r1 + r2);
+eq(big.length, 15980, "big concat len");
+eq(big.slice(7990, 8010).length, 20, "big concat middle");
+eq(t + 1, s.slice(100, 3000) + "1", "slice + number");
+eq(t + undefined, s.slice(100, 3000) + "undefined", "slice + undefined");
+eq(null + t.slice(0, 5), "null" + s.slice(100, 105), "null + slice");
+var acc2 = "head";
+for (var k = 0; k < 50; k++) acc2 += s.slice(k, k + 500);
+eq(acc2.length, 4 + 50 * 500, "accum len");
+eq(acc2.slice(4, 9), s.slice(0, 5), "accum content");
+__L(0, "PASS 09_slice_concat");
+
+summary("sliced_strings");

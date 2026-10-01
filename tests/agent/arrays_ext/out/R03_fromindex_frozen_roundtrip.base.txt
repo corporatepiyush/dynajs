@@ -1,0 +1,7 @@
+neg => 0 3 2 -1 1 3 false true true
+big => -1 false 0 -1 false -1
+2g31 => idx=2147483647 inc=true last=2147483647 lastNeg=2147483647 miss=2147483647
+frozen => 1 2 true -1
+sealed-holey => 1 true 2
+round => 100000,1,clean | -1,5,2 | 99999,-1
+named => 1 1 true hole=true -1 after-delete-proto

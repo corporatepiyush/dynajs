@@ -1,0 +1,8 @@
+v 1
+v 2
+afin
+broke
+w 3
+afin
+q {"value":1,"done":false} {"value":2,"done":false}
+post {"done":true}

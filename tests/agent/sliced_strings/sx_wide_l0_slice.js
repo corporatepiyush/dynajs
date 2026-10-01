@@ -1,0 +1,19 @@
+__EXP = null;
+__EXP = null;
+function mkParent(n) {
+    var s = "";
+    for (var i = 0; i < n; i++) {
+        s += String.fromCharCode(0x100 + ((i * 7) % 500));
+    }
+    return s;
+}
+var parent = mkParent(1200);
+var s = parent.slice(100, 100 + 0);
+test("slice01", function () { assert_eq(String((function(){ return s.slice(0, 1); })()), "", "slice01"); });
+test("slice-neg", function () { assert_eq(String((function(){ return s.slice(-2); })()), "", "slice-neg"); });
+test("slice-mid", function () { assert_eq(String((function(){ return s.slice(1, 1); })()), "", "slice-mid"); });
+test("slice-len", function () { assert_eq(String((function(){ return s.length; })()), "0", "slice-len"); });
+test("len", function () { assert_eq(String((function(){ return s.length; })()), "0", "len"); });
+summary("sliced_strings");
+
+summary("sliced_strings");

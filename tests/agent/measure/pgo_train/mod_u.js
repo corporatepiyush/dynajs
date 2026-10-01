@@ -1,0 +1,9 @@
+export function stringBuild(n) {
+  const parts = [];
+  for (let i = 0; i < n; i++) parts.push("item" + i + ":" + (i * 31));
+  const joined = parts.join(",");
+  let sink = 0;
+  for (const p of parts) sink += p.length;
+  return (joined.length + sink) % 149;
+}
+

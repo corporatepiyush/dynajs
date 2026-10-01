@@ -1,0 +1,18 @@
+__EXP = null;
+__EXP = null;
+function mkParent(n) {
+    var s = "";
+    for (var i = 0; i < n; i++) {
+        s += String.fromCodePoint(0x1F600 + (i % 8));
+    }
+    return s;
+}
+var parent = mkParent(1200);
+var s = parent.slice(0, 1);
+test("idx0", function () { assert_eq(String((function(){ return s[0]; })()), "\ud83d", "idx0"); });
+test("idxk", function () { assert_eq(String((function(){ return s[0]; })()), "\ud83d", "idxk"); });
+test("idx-oob", function () { assert_eq(String((function(){ return s[5]; })()), "undefined", "idx-oob"); });
+test("len", function () { assert_eq(String((function(){ return s.length; })()), "1", "len"); });
+summary("sliced_strings");
+
+summary("sliced_strings");

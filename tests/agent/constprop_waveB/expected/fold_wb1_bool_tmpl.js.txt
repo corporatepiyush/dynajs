@@ -1,0 +1,2 @@
+tmpl0=t=true
+id=1

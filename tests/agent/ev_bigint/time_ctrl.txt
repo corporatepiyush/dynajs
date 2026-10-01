@@ -1,0 +1,1 @@
+../work12_base/dynajs ev/diff_battery.js 20000 > ev/diff_full_ctrl.txt 2>&1  162.66s user 0.62s system 99% cpu 2:44.42 total

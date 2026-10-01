@@ -1,0 +1,8 @@
+10^1000 d10 len=1001 hash=ab1bcd1c
+10^4999 d10 len=5000 hash=331527c4
+2^10000 d10 len=3011 hash=b1aac44
+2^10000-1 d10 len=3011 hash=e1ab0fd
+3^5000 d10 len=2386 hash=eb470e7a
+999..x9 d10 len=1001 hash=816edc97
+2^10000 digitCount=3011 head=1995063116 tail=2596709376
+fails=0 hash=ef253f32

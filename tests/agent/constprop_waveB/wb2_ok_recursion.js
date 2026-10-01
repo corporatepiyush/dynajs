@@ -1,0 +1,7 @@
+__EXP = null;
+function r(n) { const K = Object.freeze({ V: 3 });
+    if (n <= 0) return 0; return K.V + r(n - 1); }
+
+test("r4", function () { assert_eq(String((function(){ return r(4); })()), "12", "r4"); });
+test("r0", function () { assert_eq(String((function(){ return r(0); })()), "0", "r0"); });
+summary("constprop_waveB");

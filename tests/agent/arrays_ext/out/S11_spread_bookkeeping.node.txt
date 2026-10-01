@@ -1,0 +1,7 @@
+A sparse len=5 owns=11111 keys=["0","1","2","3","4"]
+B holey-tail len=4 owns=1111 keys=["0","1","2","3"]
+C elisions len=3 owns=010 keys=["1"]
+D tail-sparse len=10001 owns=111111111111111111111111111111111111111111111 lenonly=10001
+E keys=["0","1","2","z","a"] len=3
+F ctor=Array isArray=true subIsArray=true [1,2]
+G len=1 owns=1 keys=["0"] neg=undefined max32=undefined

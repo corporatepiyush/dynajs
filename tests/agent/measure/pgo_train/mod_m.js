@@ -1,0 +1,5 @@
+export function promises() {
+  return Promise.all([1, 2, 3, 4, 5].map(i => Promise.resolve(i).then(v => v * 2)))
+    .then(rs => rs.reduce((a, b) => a + b, 0));
+}
+

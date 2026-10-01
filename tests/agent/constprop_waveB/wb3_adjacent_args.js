@@ -1,0 +1,6 @@
+__EXP = null;
+const M = Object.freeze({ A: 1, B: 2, S: "z" });
+function sum() { let t = M.A; for (var i = 0; i < arguments.length; i++) t += arguments[i]; return t; }
+
+test("s", function () { assert_eq(String((function(){ return sum(M.A, M.B, M.S); })()), "4z", "s"); });
+summary("constprop_waveB");

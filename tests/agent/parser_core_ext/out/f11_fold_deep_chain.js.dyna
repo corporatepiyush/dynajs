@@ -1,0 +1,7 @@
+left 5995
+right 400
+mix -4 -4
+cmp true true 3
+bigstr 500 true
+unary 7 number
+bool true

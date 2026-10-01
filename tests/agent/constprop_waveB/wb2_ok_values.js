@@ -1,0 +1,9 @@
+__EXP = null;
+function f() {
+    const M = Object.freeze({ S: "ss", T: true, N: null, I: -5 });
+    return M.S + ":" + (M.T === true) + ":" + (M.N === null) + ":" + (M.I < 0);
+}
+
+test("f", function () { assert_eq(String((function(){ return f(); })()), "ss:true:true:true", "f"); });
+test("f2", function () { assert_eq(String((function(){ return f(); })()), "ss:true:true:true", "f2"); });
+summary("constprop_waveB");

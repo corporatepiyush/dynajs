@@ -1,0 +1,18 @@
+__EXP = null;
+__EXP = null;
+function mkParent(n) {
+    var s = "";
+    for (var i = 0; i < n; i++) {
+        s += String.fromCharCode(97 + (i % 26));
+    }
+    return s;
+}
+var parent = mkParent(1200);
+var s = parent.slice(100, 100 + 128);
+test("charat0", function () { assert_eq(String((function(){ return s.charAt(0); })()), "w", "charat0"); });
+test("charat-k", function () { assert_eq(String((function(){ return s.charAt(3); })()), "z", "charat-k"); });
+test("charat-oob", function () { assert_eq(String((function(){ return s.charAt(133); })()), "", "charat-oob"); });
+test("len", function () { assert_eq(String((function(){ return s.length; })()), "128", "len"); });
+summary("sliced_strings");
+
+summary("sliced_strings");

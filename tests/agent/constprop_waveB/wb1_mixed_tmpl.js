@@ -1,0 +1,5 @@
+__EXP = null;
+const M = Object.freeze({ S: "hello", W: "\u00e9\u4e2d", C: "7", T: true, F: false, N: null, I: 42 });
+test("tmpl0", function () { assert_eq(String((function(){ return "t=" + M.I; })()), "t=42", "tmpl0"); });
+test("typeof", function () { assert_eq(String((function(){ return typeof M.S + typeof M.T + typeof M.N; })()), "stringbooleanobject", "typeof"); });
+summary("constprop_waveB");

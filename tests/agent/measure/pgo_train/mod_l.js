@@ -1,0 +1,8 @@
+export function* gen(n) { for (let i = 0; i < n; i++) yield i * 2; }
+export function generators(n) {
+  let sink = 0;
+  for (const x of gen(n)) sink += x;
+  for (const x of gen(n / 2)) sink += x % 7;
+  return sink % 103;
+}
+

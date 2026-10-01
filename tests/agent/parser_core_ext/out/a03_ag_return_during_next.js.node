@@ -1,0 +1,4 @@
+r {"value":1,"done":false} {"value":2,"done":false} {"value":3,"done":false} {"value":"stop","done":true}
+after {"done":true}
+r2 {"value":2,"done":false} {"value":"early","done":true} g2fin
+done2 {"done":true}

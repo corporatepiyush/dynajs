@@ -1,0 +1,6 @@
+c1 {"value":"s1","done":false}
+c2 {"done":true}
+c3 {"done":true}
+d E:pre-rejected
+a A1,E:consumer-B,C3,E:consumer-D
+b {"done":true}

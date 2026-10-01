@@ -1,0 +1,8 @@
+export function maps(n) {
+  const m = new Map(), s = new Set(); let sink = 0;
+  for (let i = 0; i < n; i++) { m.set(i, i * 3); s.add(i % (n / 2)); }
+  for (const [k, v] of m) sink += (k ^ v) % 11;
+  for (const x of s) sink += x % 13;
+  return sink % 107;
+}
+

@@ -1,0 +1,6 @@
+shrink-after-done => n=10 true true true
+regrow-undone => undefined:true
+regrow-gets-new => undefined:true
+boundary => undefined:true undefined:true
+done-increments => undefined:true
+slow-mid => 1,2,3 slow

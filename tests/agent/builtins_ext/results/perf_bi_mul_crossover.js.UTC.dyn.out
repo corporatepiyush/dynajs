@@ -1,0 +1,12 @@
+RAW mul 512 digits: 0.0011 ms/op
+RAW mul 1024 digits: 0.0034 ms/op
+RAW mul 2048 digits: 0.0091 ms/op
+RAW mul 4096 digits: 0.0256 ms/op
+RAW mul 8192 digits: 0.0752 ms/op
+RAW ratio 512->1024: 3.09
+RAW ratio 1024->2048: 2.70
+RAW ratio 2048->4096: 2.82
+RAW ratio 4096->8192: 2.93
+VERDICT: schoolbook_512_1024=OK raw=3.09
+VERDICT: karatsuba_4k8k=OK raw=2.82
+VERDICT: subquadratic=OK raw=22.32

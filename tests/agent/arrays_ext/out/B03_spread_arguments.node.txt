@@ -1,0 +1,11 @@
+strict => object|3|1|2|3
+strict2 => object|3|1|2|3
+strict-empty => object|0|||
+spread-args => [9,8,7] [9,8,7] len=3
+count => 7
+sloppy-map => 42:[42]:true
+strict-map => 1:[42]:true
+arrow => [4,5,6]
+ctor => [1,2,3]
+bound => 1:2
+proxy-apply => trapped:2:pf:7,8

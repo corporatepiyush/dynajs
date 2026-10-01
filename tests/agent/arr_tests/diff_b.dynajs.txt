@@ -1,0 +1,30 @@
+res.shape => ["value,done",1,true,true,true,false,true,true,true,true,"value,done"]
+res.identity => [true,true,true,"0,1,2,","false,false,false,true"]
+res.mutation => ["{\"value\":\"mutated\",\"done\":\"yes\",\"tag\":\"T1\"}","{\"value\":\"b\",\"done\":false}",true,null,true]
+res.mutation2 => [99,2]
+res.delete-readd => ["done,value","{\"done\":false,\"value\":7}"]
+res.seal => ["{\"value\":1,\"done\":true}"]
+res.preventext => ["{\"value\":1,\"done\":false}","added"]
+res.defineprop => ["{\"value\":1,\"done\":false}",false]
+res.proto-mutate => ["{\"value\":1,\"done\":false}",false]
+res.set-iterator => [1,2,true,"value,done"]
+res.map-entries => ["[\"a\",1]",false]
+res.set-entries-kind => ["[\"x\",\"x\"]","value,done"]
+res.generator => ["{\"value\":10,\"done\":false}","{\"value\":20,\"done\":true}","{\"done\":true}"]
+res.regexp-string-iterator => ["object",false,"value,done"]
+res.json-order => "{\"k\":[\"value\",\"done\"],\"s\":\"{\\\"value\\\":1,\\\"done\\\":false}\"}"
+res.spread-keys-iterator => "0,1,2,3"
+res.spread-entries-iterator => "[[0,0],[1,1]]"
+res.forof-entries => "[0,\"a\"] [1,\"b\"]"
+res.string-iterator-codepoints => "h|é|l|l|o"
+res.exhaustion-undefined => [true,null,true,true]
+res.typedarray-iterator-detach => [0,"TypeError"]
+res.explicit-shrink => ["1",2,false]
+res.explicit-grow => [1,2,3,true]
+res.holey-proto => "1|H|3"
+res.arguments-iterator !! TypeError
+res.generic-obj-iterator => 0
+res.forof-map => "[1,\"a\"] [2,\"b\"]"
+res.forof-string => "a+b"
+res.arrayfrom-uses-iterator-results => 10
+DIFF_B_END

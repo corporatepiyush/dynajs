@@ -1,0 +1,18 @@
+__EXP = null;
+__EXP = null;
+function mkParent(n) {
+    var s = "";
+    for (var i = 0; i < n; i++) {
+        s += String.fromCodePoint(0x1F600 + (i % 8));
+    }
+    return s;
+}
+var parent = mkParent(1200);
+var s = parent.slice(0, 1);
+test("indexOf-head", function () { assert_eq(String((function(){ return s.indexOf('x'); })()), "-1", "indexOf-head"); });
+test("indexOf-sub", function () { assert_eq(String((function(){ return s.indexOf('x'); })()), "-1", "indexOf-sub"); });
+test("indexOf-miss", function () { assert_eq(String((function(){ return s.indexOf('\u0001'); })()), "-1", "indexOf-miss"); });
+test("len", function () { assert_eq(String((function(){ return s.length; })()), "1", "len"); });
+summary("sliced_strings");
+
+summary("sliced_strings");

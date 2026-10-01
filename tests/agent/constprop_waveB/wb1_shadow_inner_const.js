@@ -1,0 +1,7 @@
+__EXP = null;
+const M = Object.freeze({ S: "hello" });
+function f() { const M = Object.freeze({ S: "in" }); return M.S; }
+
+test("inner_const", function () { assert_eq(String((function(){ return f() + M.S; })()), "inhello", "inner_const"); });
+test("top", function () { assert_eq(String((function(){ return M.S; })()), "hello", "top"); });
+summary("constprop_waveB");

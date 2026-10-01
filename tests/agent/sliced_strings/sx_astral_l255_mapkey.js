@@ -1,0 +1,17 @@
+__EXP = null;
+__EXP = null;
+function mkParent(n) {
+    var s = "";
+    for (var i = 0; i < n; i++) {
+        s += String.fromCodePoint(0x1F600 + (i % 8));
+    }
+    return s;
+}
+var parent = mkParent(1200);
+var s = parent.slice(0, 255);
+test("mapkey", function () { assert_eq(String((function(){ return (function(){ var m = new Map(); m.set(s, 7); return m.get(s); })(); })()), "7", "mapkey"); });
+test("mapsize", function () { assert_eq(String((function(){ return (function(){ var m2 = new Map(); m2.set(s.slice(0, 1), 1); return m2.size; })(); })()), "1", "mapsize"); });
+test("len", function () { assert_eq(String((function(){ return s.length; })()), "255", "len"); });
+summary("sliced_strings");
+
+summary("sliced_strings");

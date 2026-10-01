@@ -1,0 +1,32 @@
+__EXP = {};
+__EXP[0] = ["PASS 12_slice_conversions"];
+var s = parent(500);
+var t = s.slice(10, 60);
+eq(String(t), t, "String()");
+eq("" + t, t, "concat coercion");
+eq(`${t}`, t, "template coercion");
+eq(Number("  123  ".slice(0, 50).trim() === "123" ? "123" : "x"), 123, "number via slice");
+eq(Number("42abc".slice(0, 2)), 42, "Number of slice");
+eq(Number(t.slice(0, 0)), 0, "Number of empty slice");
+ok(!!t, "slice truthy");
+ok(!t.slice(0, 0), "empty slice falsy");
+var a = "aaa".repeat(100).slice(0, 99);
+var b = "aab".repeat(100).slice(0, 99);
+ok(a < b, "lt");
+ok(b > a, "gt");
+ok(a <= a.slice(0), "le self");
+ok(("abc" + parent(100)).slice(0, 3) === "abc", "eq");
+var sp = "   x   ".repeat(100);
+eq(sp.slice(0, 7).trim(), "x", "trim of slice");
+eq(sp.slice(700, 707).trim(), "", "trim of empty window");
+eq(t.slice(0, 5).padStart(10, "."), "....." + s.slice(10, 15), "padStart");
+eq(t.slice(0, 5).padEnd(10, "."), s.slice(10, 15) + ".....", "padEnd");
+eq(t.slice(0, 5).repeat(3), s.slice(10, 15) + s.slice(10, 15) + s.slice(10, 15), "repeat of slice");
+eq(t.slice(0, 3).localeCompare(t.slice(0, 3)), 0, "localeCompare self");
+eq(encodeURI(t.slice(0, 20)), encodeURI(s.slice(10, 30)), "encodeURI");
+eq(decodeURIComponent(encodeURIComponent(t)), t, "uri roundtrip");
+try { null.x } catch (e) { ok(String(e).length > 0, "error string"); }
+eq([t.slice(0, 2), t.slice(2, 4)].join("-"), s.slice(10, 12) + "-" + s.slice(12, 14), "join slices");
+__L(0, "PASS 12_slice_conversions");
+
+summary("sliced_strings");

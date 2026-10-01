@@ -1,0 +1,10 @@
+-e case	pristine_ns	patched_ns	ratio
+T1_atom_narrow_256_slice_mid_100	39.5	40.8	0.97
+T1_atom_narrow_4096_slice_mid_100	39.1	40.4	0.97
+T1_atom_narrow_4096_slice_tail_2048	42.2	42.7	0.99
+T1_atom_slice_read_back	58.4	58.8	0.99
+T1_atom_slice_streq	23.0	23.3	0.99
+T1_atom_wide_2048_slice_tail_1024	142.7	43.7	3.27
+T1_atom_wide_256_slice_mid_100	39.4	40.4	0.98
+T1_value_narrow_4096_slice_mid_100	40.3	40.3	1.00
+T1_value_wide_2048_slice_tail_1024	41.9	42.8	0.98

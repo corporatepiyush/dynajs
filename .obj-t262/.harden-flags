@@ -1,0 +1,3 @@
+23.1.2
+flags;-fstack-protector-strong;-ftrivial-auto-var-init=zero;-fno-delete-null-pointer-checks;-Wshadow;-Wcast-qual;-Wpointer-arith;-Wvla;-Wformat=2;-Wformat-security;-Wstrict-prototypes;-Wmissing-prototypes;-Wdate-time;-Wswitch-enum;-Wdouble-promotion;-mbranch-protection=standard;
+fortify;-D_FORTIFY_SOURCE=3;

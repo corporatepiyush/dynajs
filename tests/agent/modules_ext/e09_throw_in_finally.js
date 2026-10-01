@@ -1,0 +1,20 @@
+__EXP = {};
+__EXP[1] = ["n1:v1|finally|ret:EError|n2:vundefineddtrue"];
+__EXP[2] = ["DONE"];
+const out = (typeof print === 'function') ? print : ((...a) => console.log(...a));
+const log = [];
+async function* g() {
+  try {
+    yield 1;
+  } finally {
+    log.push('finally');
+    throw new Error('fin-boom');
+  }
+}
+const gen = g();
+const n1 = gen.next().then(r => log.push('n1:v' + r.value));
+const ret = gen.return('R').then(r => log.push('ret:v' + r.value), e => log.push('ret:E' + (e && e.name)));
+const n2 = gen.next().then(r => log.push('n2:v' + r.value + 'd' + r.done), e => log.push('n2:E' + (e && e.name)));
+Promise.all([n1, ret, n2]).then(() => { __L(1, log.join('|')); __L(2, 'DONE'); });
+
+__FINISH("modules_ext");

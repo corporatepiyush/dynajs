@@ -1,0 +1,5 @@
+hit_str=s
+hit_int=1
+miss=d
+str2=s
+miss2=d2

@@ -1,0 +1,7 @@
+apply-parity => [1,2,3,"a","b","c"] [1,2,3,"a","b","c"] eq=true
+unshift-parity => [null,"mid",null,0] [null,"mid",null,0] eq=true
+apply-like => ["x",null,"z"] len=3
+spread-like => TypeError
+concat => [1,2,3] spread => [1,2,3]
+chain => [2,5,5] [1,2,3,4,5]
+ta-push => TypeError

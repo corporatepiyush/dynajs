@@ -1,0 +1,6 @@
+A now=[0,1,"P1",3] own1=true own2=true a1=1 a2=P1 join=0,1,P1,3
+B now=["P1",3] len=2 own0=true own1=true b0=P1 b1=3
+C now=[null,3,4] len=3 owns=falsetruetrue
+D now=[0,1,"O1",3] own1=true d1=1 d2=O1
+E now=["x","y",1,"P1",3,null,5] owns=111101 join=x,y,1,P1,3,,5
+F frozen-shift => TypeError

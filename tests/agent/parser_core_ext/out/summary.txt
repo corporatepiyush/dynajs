@@ -1,0 +1,65 @@
+PASS a01_ag_multi_consumers.js
+PASS a02_ag_consumer_throws.js
+PASS a03_ag_return_during_next.js
+PASS d01_decl_50k.js
+PASS d02_shadow_tower.js
+PASS d03_eval_delete_redeclare.js
+PASS d04_redeclare_cycles.js
+PASS d05_closure_heavy.js
+PASS d06_incr_var_hash.js
+PASS d07_global_churn.js
+PASS f01_eval_fold.js
+PASS f02_with_fold.js
+PASS f03_try_fold.js
+PASS f04_case_fold.js
+PASS f05_label_fold.js
+PASS f06_cpool_fold_boundary.js
+PASS f07_spread_destr_fold.js
+PASS f08_gen_fold.js
+PASS f09_int32_wrap.js
+PASS f10_string_fold.js
+PASS f11_fold_deep_chain.js
+WLIST p01_ptc_eval_boundary.js (outputs differ; whitelist: deep-tail PTC)
+WLIST p02_ptc_strict_sloppy.js (outputs differ; whitelist: deep-tail PTC)
+PASS p03_ptc_forof_close.js
+PASS p04_ptc_spread_notail.js
+WLIST p05_ptc_cycle5_arity.js (outputs differ; whitelist: deep-tail PTC)
+WLIST p06_ptc_bigframe.js (outputs differ; whitelist: deep-tail PTC)
+WLIST p07_ptc_with_write.js (outputs differ; whitelist: deep-tail PTC)
+WLIST p08_ptc_method_this.js (outputs differ; whitelist: deep-tail PTC)
+PASS p09_ptc_bound_fallback.js
+WLIST p10_ptc_arguments.js (outputs differ; whitelist: deep-tail PTC)
+WLIST p11_ptc_strict_eval_prologue.js (outputs differ; whitelist: deep-tail PTC)
+PASS p12_ptc_try_unwind.js
+PASS rt01_showcase.js
+PASS rt01_showcase.js [dynajsc round-trip]
+PASS rt02_fused_serial.js
+PASS rt02_fused_serial.js [dynajsc round-trip]
+PASS s01_switch300_mixed.js
+PASS s02_switch_identity_valueof.js
+PASS s04_switch_varprop_getter.js
+PASS s05_switch300_wide.js
+PASS s06_switch_dupes_fold.js
+PASS s07_switch_gen.js
+PASS t01_tdz_other_let.js
+PASS t02_tdz_with_shadow.js
+PASS t03_tdz_eval_mutate.js
+PASS t04_tdz_labeled_continue.js
+PASS t05_tdz_nested_reuse.js
+PASS t06_tdz_forinf_redeclare.js
+PASS t07_gen_outlives_loop.js
+PASS t08_tdz_class_loop.js
+PASS t09_tdz_switch_case_let.js
+PASS t10_tdz_forin_forof.js
+PASS t11_tdz_head_extra_ref.js
+PASS t12_tdz_gen_resume.js
+PASS t13_tdz_try_unwind.js
+PASS x1_decl_let_func_conflict.js
+PASS x1b_let_func_order_matrix.js
+PASS x1c_let_func_order_edges.js
+PASS x2_loop_binding_labeled_continue.js
+PASS x2b_per_iteration_shapes.js
+PASS x3_ag_forawait_close_order.js
+PASS x3b_forawait_close_shapes.js
+PASS x4_ag_throw_drain_hang.js
+---- pass=54 wlist=8 fail=0 ----

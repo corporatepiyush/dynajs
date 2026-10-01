@@ -1,0 +1,38 @@
+# INCLUDE-PATTERN WHITELIST (owner directive): everything not listed here is
+# kept OUT of the build context, so VCS, build outputs, the test262 checkout
+# and host binaries/artifacts never enter any image. Line 1 excludes the
+# world; the ! lines re-admit exactly what the build consumes (the same set
+# build.sh's TREE_NEEDS names, plus docker/ and the PGO data). Re-exclude
+# compiler artifacts afterwards: inside admitted directories a host-built
+# *.a/*.o/*.so must never leak into an image (an arm64 archive cannot link
+# in an amd64 image — that bug is why the artifact rules exist).
+*
+!build.sh
+!VERSION
+!.build-variant
+!repl.js
+!repl.c
+!dynajs.d.ts
+!install.sh
+!README.md
+!API.md
+!src
+!tests
+!third_party
+!tools
+!examples
+!bench
+!docker
+!pgo-data
+!hello.c
+!test_fib.c
+**/*.o
+**/*.d
+**/*.a
+**/*.so
+dynajs
+dynajsc
+dynajs-debug
+run-test262
+run-test262-debug
+host-dynajsc

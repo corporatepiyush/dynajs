@@ -1,0 +1,7 @@
+A merged=[1,null,3,3,4,{"0":5,"1":6}] idx3=2 last3=3 inc6=false len=6
+B spread-search => 1 3 true
+C slice-search => 5 true 6 len=7
+D ta => 1 3 true false fromneg=3 1
+E splice-search => [1,3,4] 2 -1
+F rev-search => [5,4,3,2,1] 0 4
+G unshift-search => [1,2,3,4] 3 0

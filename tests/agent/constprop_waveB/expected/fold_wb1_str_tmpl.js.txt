@@ -1,0 +1,2 @@
+tmpl0=t=hello
+id=1

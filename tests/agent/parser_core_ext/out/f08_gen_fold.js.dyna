@@ -1,0 +1,8 @@
+g1 {"value":5,"done":false} {"value":"xy20","done":false}
+g2 {"value":102,"done":false} {"value":"mid10","done":false}
+g3 {"value":103,"done":false} {"value":"end64","done":true} {"done":true}
+g4 {"value":101,"done":false} {"value":101,"done":false}
+g5 5,xy20,101,102,mid10,103
+gb 255 5591810 6640386 {"done":true}
+gb 257 5723904 6772480 {"done":true}
+g6 18 6

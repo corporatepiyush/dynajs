@@ -1,0 +1,7 @@
+__EXP = null;
+const M = Object.freeze({ S: "hello" });
+function h() { var M = { S: "var-shadow" }; return M.S; }
+
+test("var", function () { assert_eq(String((function(){ return h(); })()), "var-shadow", "var"); });
+test("top", function () { assert_eq(String((function(){ return M.S; })()), "hello", "top"); });
+summary("constprop_waveB");

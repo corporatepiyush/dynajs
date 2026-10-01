@@ -1,0 +1,4 @@
+shrink => 0,0,0
+grow => 0,0,0,0,0,0 n=6
+to-zero => 0
+manual => 0:false 0:false undefined:true

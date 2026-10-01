@@ -1,0 +1,7 @@
+set => [1,2,3] lit=[0,1,2,3]
+map => [["k1",1],["k2",2]] keys=["k1","k2"] push=[1,2]
+string => len=3 0=a 1=1f600 push=["x","y"]
+inherited => ["i0","i1"] lit=["i0","i1"]
+like => TypeError TypeError
+bad-next => TypeError
+no-next => TypeError

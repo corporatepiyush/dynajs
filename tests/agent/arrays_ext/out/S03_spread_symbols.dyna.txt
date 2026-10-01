@@ -1,0 +1,5 @@
+excluded => [1,2,3] len=3 hasK1=true hasFoo=true
+included => symbol true true len=3
+sym-acc => [1] reads=0
+named-excluded => [4,5] true
+wkt => [1] tag=undefined

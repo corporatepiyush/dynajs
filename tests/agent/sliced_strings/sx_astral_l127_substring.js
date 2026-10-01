@@ -1,0 +1,18 @@
+__EXP = null;
+__EXP = null;
+function mkParent(n) {
+    var s = "";
+    for (var i = 0; i < n; i++) {
+        s += String.fromCodePoint(0x1F600 + (i % 8));
+    }
+    return s;
+}
+var parent = mkParent(1200);
+var s = parent.slice(0, 127);
+test("substring01", function () { assert_eq(String((function(){ return s.substring(0, 1); })()), "\ud83d", "substring01"); });
+test("substring-mid", function () { assert_eq(String((function(){ return s.substring(0, 3); })()), "\ud83d\ude00\ud83d", "substring-mid"); });
+test("substring-swap", function () { assert_eq(String((function(){ return s.substring(3, 0); })()), "\ud83d\ude00\ud83d", "substring-swap"); });
+test("len", function () { assert_eq(String((function(){ return s.length; })()), "127", "len"); });
+summary("sliced_strings");
+
+summary("sliced_strings");

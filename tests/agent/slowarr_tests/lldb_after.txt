@@ -1,0 +1,26 @@
+lldb AFTER evidence — patched build (./dynajs, this tree)
+probe: slowarr_tests/lldb_probe_move.js (identical to lldb_before.txt run)
+
+Per-function breakpoint hit counts:
+
+  JS_GetPropertyInt64          HITCOUNT 1   <- shift result read (spec Get(O,0))
+  JS_TryGetPropertyInt64       HITCOUNT 0   <- was 2000 in base
+  JS_CopySubArray              HITCOUNT 0   <- was 2 in base
+  js_slow_array_shift_unshift  HITCOUNT 2   <- the occupied-entry batch move
+  js_slow_array_try_convert_fast  HITCOUNT 2   <- attempted, refused (holes)
+  js_slow_array_scan_start     HITCOUNT 2   <- prototype-chain guard
+
+macOS sample(1) profile of the full p5.js workload (20000 unshift+shift pairs
+on holey-1k), 3s attach to ./dynajs slowarr_tests/p5.js — most frequent
+engine frames in the sample text:
+
+  js_slow_array_shift_unshift (dominant)
+  js_slow_array_try_convert_fast
+  js_slow_array_scan_start
+  (JS_CopySubArray absent)
+
+=> AFTER: the per-element generic walk is gone; the operation runs in the
+   batch occupied-entry move. End-to-end p5.js: 865.3 ms (base) -> 571.0 ms
+   (patched) for 20000 pairs, 3-rep min; bench P5 43.2 -> 27.9 us/pair,
+   P7 denseSlow 43.0 -> 1.125 us/pair (convert + memmove), P12 shift
+   sparse1e6 35919 -> 2.96 us/shift.

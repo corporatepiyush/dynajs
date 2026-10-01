@@ -1,0 +1,4 @@
+alt => A1 A2 B3 B4 C5 C6
+manual => p:false [q] r:false [] undefined:true
+three => 10 20 30 left=40:true
+two-iters => 1 a 2 b

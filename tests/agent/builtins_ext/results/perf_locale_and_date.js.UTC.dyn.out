@@ -1,0 +1,6 @@
+RAW localeCompare equal-wide 50k: 3 ms acc=0
+RAW localeCompare equal-ascii 50k: 2 ms acc=0
+RAW date-setter-thrash 5k: 2 ms sink=6
+RAW date-getters 200k: 22 ms sink=0
+VERDICT: localeCompare all-zero=OK
+VERDICT: date-thrash-completed=OK

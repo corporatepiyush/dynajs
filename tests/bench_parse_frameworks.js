@@ -1,0 +1,106 @@
+import * as std from "std";
+import * as os from "os";
+
+const DIR = "bench/frameworks";
+
+const SLOW = ["babel.dev.js", "babel.min.js", "bootstrap.dev.js",
+              "echarts.dev.js", "echarts.min.js", "prettier.dev.js"];
+
+const args = scriptArgs.slice(1);
+const ALL = args.includes("--all");
+const bi = args.indexOf("--budget");
+const BUDGET_MS = bi >= 0 ? parseInt(args[bi + 1], 10) : 20000;
+
+function listFiles(dir) {
+    const [names, err] = os.readdir(dir);
+    if (err) return [];
+    return names.filter(n => n.endsWith(".js")).sort();
+}
+
+const names = listFiles(DIR);
+if (names.length === 0) {
+    print("no corpus: run tests/fetch_frameworks.sh first");
+    std.exit(1);
+}
+
+function kindOf(n) {
+    const server = ["typescript", "babel", "prettier", "terser", "acorn",
+                    "axios", "socketio", "corejs"];
+    return server.some(s => n.startsWith(s)) ? "server" : "client";
+}
+function formOf(n) { return n.includes(".min.") ? "min" : "dev"; }
+
+function parseOnce(src) {
+    const t0 = performance.now();
+    let status = "ok";
+    try {
+        new Function(src);
+    } catch (e) {
+        const m = String(e && e.message || e);
+        status = (m.indexOf("stack overflow") >= 0)
+            ? "STACK-OVERFLOW"
+            : (e && e.constructor ? e.constructor.name : "error") + ":" +
+              m.slice(0, 40).replace(/\s+/g, " ");
+    }
+    return { ms: performance.now() - t0, status };
+}
+
+print("bench_parse_frameworks: " + names.length + " files in " + DIR +
+      (ALL ? "  [--all]" : "  [skipping " + SLOW.length + " pathological]") +
+      "  budget=" + BUDGET_MS + "ms/file");
+print("");
+print("  file                    kind   form      KB      ms      MB/s  status");
+
+let totBytes = 0, totMs = 0, skipped = 0, failed = 0;
+const byGroup = {};
+
+for (const n of names) {
+    if (!ALL && SLOW.indexOf(n) >= 0) { skipped++; continue; }
+    const src = std.loadFile(DIR + "/" + n);
+    if (src === null) { print("  LOAD-FAIL " + n); failed++; continue; }
+
+    const warm = parseOnce(src);
+    if (warm.ms > BUDGET_MS) {
+        print("  " + n.padEnd(22) + " OVER BUDGET (" + warm.ms.toFixed(0) +
+              " ms) -- add to SLOW or raise --budget");
+        failed++;
+        continue;
+    }
+    const r = parseOnce(src);
+
+    const bytes = src.length;
+    const mbps = (bytes / (1024 * 1024)) / (r.ms / 1000);
+    const kind = kindOf(n), form = formOf(n);
+    print("  " + n.padEnd(22) + " " + kind.padEnd(6) + " " + form.padEnd(4) +
+          String((bytes / 1024).toFixed(0)).padStart(7) +
+          String(r.ms.toFixed(1)).padStart(8) +
+          String(mbps.toFixed(1)).padStart(10) + "  " + r.status);
+    print("#B " + n + " " + kind + " " + form + " " + bytes + " " +
+          r.ms.toFixed(3) + " " + mbps.toFixed(2) + " " + r.status);
+
+    if (r.status !== "ok") failed++;
+    totBytes += bytes; totMs += r.ms;
+    const g = kind + "/" + form;
+    byGroup[g] = byGroup[g] || { bytes: 0, ms: 0, n: 0 };
+    byGroup[g].bytes += bytes; byGroup[g].ms += r.ms; byGroup[g].n++;
+}
+
+print("");
+print("  group          files        KB       ms      MB/s");
+for (const g of Object.keys(byGroup).sort()) {
+    const v = byGroup[g];
+    print("  " + g.padEnd(14) + String(v.n).padStart(5) +
+          String((v.bytes / 1024).toFixed(0)).padStart(10) +
+          String(v.ms.toFixed(1)).padStart(9) +
+          String(((v.bytes / (1024 * 1024)) / (v.ms / 1000)).toFixed(1)).padStart(10));
+    print("#G " + g + " " + v.n + " " + v.bytes + " " + v.ms.toFixed(3) + " " +
+          ((v.bytes / (1024 * 1024)) / (v.ms / 1000)).toFixed(2));
+}
+print("");
+print("#B TOTAL all all " + totBytes + " " + totMs.toFixed(3) + " " +
+      ((totBytes / (1024 * 1024)) / (totMs / 1000)).toFixed(2) + " " +
+      (failed ? failed + "-failed" : "ok"));
+print("bench_parse_frameworks: " + (totBytes / 1024 / 1024).toFixed(2) + " MB in " +
+      totMs.toFixed(1) + " ms  (" +
+      ((totBytes / (1024 * 1024)) / (totMs / 1000)).toFixed(1) + " MB/s), " +
+      "skipped=" + skipped + " failed=" + failed);

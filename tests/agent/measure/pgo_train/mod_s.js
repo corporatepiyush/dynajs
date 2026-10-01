@@ -1,0 +1,10 @@
+export function jsonDrive(sample, n) {
+  let sink = 0;
+  for (let i = 0; i < n; i++) {
+    const o = JSON.parse(sample);
+    o.k[0] = i; o.o.n = i;
+    sink += JSON.stringify(o).length % 19;
+  }
+  return sink % 137;
+}
+

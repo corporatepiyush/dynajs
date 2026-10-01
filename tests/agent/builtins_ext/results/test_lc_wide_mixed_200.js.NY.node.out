@@ -1,0 +1,5 @@
+pref 0 ok=true sign=neg
+pref 1 ok=true sign=pos
+pref 2 ok=true sign=neg
+pref 3 ok=true sign=pos
+[SIGN] fails=0 invFails=28 hash=74949d49

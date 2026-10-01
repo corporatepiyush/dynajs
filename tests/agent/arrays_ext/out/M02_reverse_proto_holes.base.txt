@@ -1,0 +1,8 @@
+A rev=[4,3,"P1",1] own1=true own3=true
+B rev=[5,"P3",3,"P1",1] own1=true own3=true a2=3
+C rev=[4,3,"O1",1] own1=true
+D rev=[4,"D2",2,1] own0=true own2=true a0=4
+E rev=[null,3,2,1] own0=false own3=true
+F rev-len=100001 head=["far",null,null] far@99999=2 tag=T
+G frozen-rev => TypeError
+H [] [7]

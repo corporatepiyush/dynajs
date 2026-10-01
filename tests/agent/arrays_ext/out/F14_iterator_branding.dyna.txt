@@ -1,0 +1,6 @@
+A protos=true nextShared=true
+B brand => ok TypeError
+C 123 done=false
+D true undefined:true
+E {"value":9,"done":false} {"done":true} keys=["value","done"]
+F self-it=true forof-twice=1

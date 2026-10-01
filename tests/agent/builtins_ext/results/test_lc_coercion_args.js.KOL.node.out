@@ -1,0 +1,10 @@
+[SIGN] undef=SIGN:zero
+[SIGN] null=SIGN:zero
+[SIGN] num=SIGN:zero neg=SIGN:zero
+[SIGN] bool=SIGN:zero
+[SIGN] obj=SIGN:zero
+[SIGN] objValueOf=SIGN:pos
+throw=THROW:RangeError
+[SIGN] selfNull=THROW:TypeError
+[SIGN] recvNum=THROW:TypeError
+hash=f97a33d9

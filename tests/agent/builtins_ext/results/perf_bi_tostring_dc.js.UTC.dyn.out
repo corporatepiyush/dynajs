@@ -1,0 +1,11 @@
+RAW toString 1000 digits: 0.0181 ms len=1000 head=95821367 tail=49172986
+RAW toString 2000 digits: 0.0427 ms len=2000 head=22808999 tail=13160134
+RAW toString 4000 digits: 0.1211 ms len=4000 head=56204265 tail=18093046
+RAW toString 8000 digits: 0.3750 ms len=8000 head=95770446 tail=11637779
+RAW toString 16000 digits: 1.2031 ms len=16000 head=94396536 tail=83656662
+RAW ratio 1000->2000: 2.36
+RAW ratio 2000->4000: 2.83
+RAW ratio 4000->8000: 3.10
+RAW ratio 8000->16000: 3.21
+RAW worst ratio 3.21 (quadratic=4)
+VERDICT: dc_tostring=OK

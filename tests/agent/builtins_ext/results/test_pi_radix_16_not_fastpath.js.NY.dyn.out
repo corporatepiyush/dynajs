@@ -1,0 +1,5 @@
+FAIL 255/16=591
+FAIL 8/8=NaN
+FAIL 35/36=125
+FAIL 36/36=132
+fails=4 hash=dea74f7e

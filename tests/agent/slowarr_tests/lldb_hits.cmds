@@ -1,0 +1,16 @@
+command script import /Users/piyush/ai/dynascript/.agent-work/tools/hitscript.py
+breakpoint set -n JS_GetPropertyInt64
+breakpoint command add -F hitscript.bp_cb
+breakpoint set -n JS_TryGetPropertyInt64
+breakpoint command add -F hitscript.bp_cb
+breakpoint set -n JS_CopySubArray
+breakpoint command add -F hitscript.bp_cb
+breakpoint set -n js_slow_array_shift_unshift
+breakpoint command add -F hitscript.bp_cb
+breakpoint set -n js_slow_array_try_convert_fast
+breakpoint command add -F hitscript.bp_cb
+breakpoint set -n js_slow_array_scan_start
+breakpoint command add -F hitscript.bp_cb
+run
+hitreport
+quit

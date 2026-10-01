@@ -1,0 +1,2 @@
+bracket0=42
+typeof=stringbooleanobject

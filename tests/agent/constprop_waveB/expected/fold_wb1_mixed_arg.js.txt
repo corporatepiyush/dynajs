@@ -1,0 +1,2 @@
+arg0=42
+typeof=stringbooleanobject

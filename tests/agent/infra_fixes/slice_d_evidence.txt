@@ -1,0 +1,12 @@
+== dynajs.pristine ==
+  N=100  strings_size=6843  delta_from_prev=NA
+  N=101  strings_size=6906  delta_from_prev=63
+  N=102  strings_size=6969  delta_from_prev=63
+  N=103  strings_size=7032  delta_from_prev=63
+  N=200  strings_size=13143  delta_from_prev=6111
+== dynajs ==
+  N=100  strings_size=983748  delta_from_prev=NA
+  N=101  strings_size=983966  delta_from_prev=218
+  N=102  strings_size=984181  delta_from_prev=215
+  N=103  strings_size=984392  delta_from_prev=211
+  N=200  strings_size=996255  delta_from_prev=11863

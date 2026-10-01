@@ -1,0 +1,7 @@
+export class P { constructor(x) { this._x = x; } get x() { return this._x; } set x(v) { this._x = v; } }
+export function getters(n) {
+  let sink = 0; const p = new P(1);
+  for (let i = 0; i < n; i++) { p.x = i; sink += p.x; }
+  return sink % 113;
+}
+

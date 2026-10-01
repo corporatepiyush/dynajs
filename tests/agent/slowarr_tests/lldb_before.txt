@@ -1,0 +1,28 @@
+lldb BEFORE evidence — pristine base control (./base_dynajs, base commit 1570356)
+probe: slowarr_tests/lldb_probe_move.js (holey-1k, one hole, then unshift(9) + shift())
+
+Per-function breakpoint hit counts (hitscript.py auto-continue counter,
+lldb -b -s <cmds> ./base_dynajs):
+
+  JS_GetPropertyInt64          HITCOUNT 0
+  JS_TryGetPropertyInt64       HITCOUNT 2000   <- per-element generic loop
+                                                (999 unshift + 999 shift + 2)
+  JS_CopySubArray              HITCOUNT 2      <- once per mutator call
+  js_slow_array_shift_unshift  Breakpoint 1: no locations (symbol absent in base)
+  js_slow_array_try_convert_fast  Breakpoint 1: no locations (absent in base)
+
+Combined-session counter (all five breakpoints, one run): HITCOUNT 2002.
+
+macOS sample(1) profile of the full p5.js workload (20000 unshift+shift pairs
+on holey-1k), 3s attach to ./base_dynajs slowarr_tests/p5.js — most frequent
+engine frames in the sample text:
+
+  JS_SetPropertyValue / JS_ValueToAtom / JS_TryGetPropertyInt64 /
+  JS_GetPropertyValue / JS_SetPropertyInternal / JS_HasProperty /
+  JS_CopySubArray / JS_GetPropertyInternal
+
+=> BEFORE: the unshift/shift cost is dominated by JS_CopySubArray's
+   per-element JS_TryGetPropertyInt64 + JS_SetPropertyInt64 generic walks.
+
+(note: base_dynajs debug-map warnings under lldb are from the worktree having
+been relocated after the control was linked; symbol resolution is unaffected.)
