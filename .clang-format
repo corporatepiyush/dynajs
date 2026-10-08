@@ -1,0 +1,11 @@
+# Owner directive: the whole C tree is clang-format clean. WebKit base
+# matches the engine's hand style (4-space, attached braces, right pointers).
+# ColumnLimit 0: never re-wrap authored lines — spacing/indent only.
+# SortIncludes Never: include order is load-bearing in places; do not touch.
+BasedOnStyle: WebKit
+ColumnLimit: 0
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+SortIncludes: Never
+IncludeBlocks: Preserve

@@ -1,0 +1,8 @@
+corpus_robots/*
+corpus_dataframe/*
+corpus_ml/*
+corpus_yaml_hostile/*
+corpus_archive/*
+corpus_bceval/*
+!corpus_bceval/hostile_*.bin
+!corpus_bceval/valid_*.bin

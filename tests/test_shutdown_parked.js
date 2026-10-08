@@ -1,0 +1,150 @@
+// flags: --std
+import { Exec, Which, getEnv } from "dyna:sys";
+import { makeTempDir, readFile, removeAll, Path } from "dyna:file";
+import { pipe, fromBytes, toFile, lines } from "dyna:stream";
+
+let pass = 0, fail = 0, skip = 0;
+const REQUIRE = getEnv("DYNAJS_REQUIRE_TOOLS") === "1";
+const ok = (c, w, d) => { if (c) { pass++; print("  ok    " + w); }
+                          else { fail++; print("  FAIL  " + w + (d ? "  [" + d + "]" : "")); } };
+function skipped(w) {
+    if (REQUIRE) { fail++; print("  FAIL  REQUIRED: " + w); return; }
+    skip++; print("  SKIP  " + w);
+}
+const sh = (c) => Exec("/bin/sh", ["-c", c]).code;
+
+if (!Which("timeout")) {
+    skipped("timeout missing -- child exit shapes cannot be bounded");
+    print("test_shutdown_parked: " + pass + " passed, " + fail + " failed, " +
+          skip + " skipped");
+    if (fail) throw new Error("test_shutdown_parked: " + fail + " failures");
+} else {
+    const T = makeTempDir("shutdown_parked");
+    const CHILD = "tests/test_shutdown_parked_child.js";
+
+    function runShape(shape, budget, flags) {
+        sh(`timeout -k 5 ${budget ? budget : 25} ./dynajs ${flags ? flags + " " : ""}${CHILD} ${shape} ${T} ` +
+           `> ${T}/${shape}.out 2> ${T}/${shape}.err; ` +
+           `echo $? > ${T}/${shape}.rc`);
+        let rc = parseInt(readFile(new Path(T + "/" + shape + ".rc")), 10);
+        return {
+            rc,
+            out: readFile(new Path(T + "/" + shape + ".out")),
+            err: readFile(new Path(T + "/" + shape + ".err")),
+        };
+    }
+    const noAbort = (r, w) =>
+        ok(r.err.indexOf("Assertion failed") < 0 &&
+           r.err.indexOf("Segmentation") < 0, w + ": no teardown abort");
+    const noRow = (r, w, tag) =>
+        ok(r.out.indexOf(tag) < 0, w + ": " + tag + " never printed");
+
+    {
+        const r = runShape("stream-normal");
+        ok(r.rc === 0, "parked pipe exits 0 (got " + r.rc + ")");
+        noAbort(r, "parked pipe");
+        ok(r.out.indexOf("REJECTED pipe: stream.pipe: aborted at engine shutdown") >= 0,
+           "the parked pipe rejected with the shutdown reason");
+    }
+
+    {
+        const r = runShape("stream-lines-normal");
+        ok(r.rc === 0, "parked lines next() exits 0 (got " + r.rc + ")");
+        noAbort(r, "parked lines next()");
+        ok(r.out.indexOf("REJECTED lines: stream.lines: next() aborted at engine shutdown") >= 0,
+           "the parked next() rejected with the shutdown reason");
+    }
+
+    {
+        const r = runShape("scrape-normal");
+        ok(r.rc === 0, "parked crawl exits 0 (got " + r.rc + ")");
+        noAbort(r, "parked crawl");
+        ok(r.out.indexOf("REJECTED crawl: Crawl: next() aborted at engine shutdown") >= 0,
+           "the parked crawl next() rejected with the shutdown reason");
+    }
+
+    {
+        const r = runShape("multi-throw");
+        ok(r.rc === 1, "multi-module parks + throw exits 1 (got " + r.rc + ")");
+        noAbort(r, "multi-module parks + throw");
+        const n = r.out.split("REJECTED ").length - 1;
+        ok(n === 3, "all THREE parked operations failed (got " + n + ")");
+        ok(r.out.indexOf("stream.lines: next() aborted at engine shutdown") >= 0 &&
+           r.out.indexOf("stream.pipe: aborted at engine shutdown") >= 0 &&
+           r.out.indexOf("Crawl: next() aborted at engine shutdown") >= 0,
+           "each park failed with its own named reason");
+    }
+
+    {
+        const r = runShape("multi-normal");
+        ok(r.rc === 0, "multi-module parks exit 0 (got " + r.rc + ")");
+        noAbort(r, "multi-module parks");
+        const n = r.out.split("REJECTED ").length - 1;
+        ok(n === 3, "all THREE parked operations failed (got " + n + ")");
+    }
+
+    {
+        const r = runShape("multi-gc-drop");
+        ok(r.rc === 0, "GC-dropped parks exit 0 (got " + r.rc + ")");
+        noAbort(r, "GC-dropped parks");
+    }
+
+    {
+        const r = runShape("scrape-park-uncaught");
+        ok(r.rc === 1, "parked crawl + throw exits 1 (got " + r.rc + ")");
+        noAbort(r, "parked crawl + throw");
+        ok(r.out.indexOf("REJECTED crawl:") >= 0,
+           "the parked crawl still failed observably");
+    }
+
+    {
+        const r = runShape("http-async-inflight");
+        ok(r.rc === 1, "parked http exchange + throw exits 1 (got " + r.rc + ")");
+        noAbort(r, "parked http exchange");
+        ok(r.out.indexOf("REJECTED http:") >= 0,
+           "the parked exchange still failed observably");
+    }
+    {
+        const r = runShape("http-app-parked");
+        ok(r.rc === 1, "parked app rpc + waiting client + throw exits 1 (got " + r.rc + ")");
+        noAbort(r, "parked app rpc");
+        ok(r.out.indexOf("REJECTED app:") >= 0,
+           "the waiting client still sees the failure");
+    }
+
+    {
+        const r = runShape("worker-then-rejection", 25, "--std");
+        if (r.out.indexOf("SKIP worker-unavailable") >= 0) {
+            skipped("worker-then-rejection: os.Worker unavailable");
+        } else {
+            ok(r.rc === 1, "rejection after a worker runtime died exits 1 (got " +
+               r.rc + ")");
+            ok(r.err.indexOf("post-worker-rejection") >= 0,
+               "the parent runtime's rejection is still reported");
+            noRow(r, "worker-then-rejection", "survived");
+            noAbort(r, "worker-then-rejection");
+        }
+    }
+
+    {
+        const enc = (s) => new TextEncoder().encode(s);
+        const dec = (u) => new TextDecoder().decode(u);
+        const total = await pipe(fromBytes(enc("in-flight bytes")),
+                                 toFile(new Path(T + "/ctl.bin")));
+        ok(total === 15, "an in-flight pipeline runs to completion (" + total + ")");
+        const got = readFile(new Path(T + "/ctl.bin"));
+        ok(got === "in-flight bytes", "the pipeline's bytes landed");
+        const it = lines(fromBytes(enc("a\nb\n")));
+        const r1 = await it.next();
+        const r2 = await it.next();
+        const r3 = await it.next();
+        ok(r1.value === "a" && r2.value === "b" && r3.done === true,
+           "an in-flight line iterator drains normally");
+    }
+
+    try { removeAll(new Path(T)); } catch (e) {}
+
+    print("test_shutdown_parked: " + pass + " passed, " + fail + " failed, " +
+          skip + " skipped");
+    if (fail) throw new Error("test_shutdown_parked: " + fail + " failures");
+}

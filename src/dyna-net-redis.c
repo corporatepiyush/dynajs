@@ -1,0 +1,1987 @@
+#include "dyna-nat.h"
+#ifdef CONFIG_TLS
+#include "dyna-tls.h"
+#endif
+#include "dyna-aio.h"
+#include "core/dyn-resp.h"
+#include "core/dyn-timer.h"
+
+#if defined(CONFIG_NATIVE_MODULES) && defined(CONFIG_NATIVE_MODULE_NET)
+
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+
+#ifndef countof
+#define countof(x) (sizeof(x) / sizeof((x)[0]))
+#endif
+
+static int dyn_opts_strict(JSContext* ctx, JSValueConst opts,
+    const char* const* keys, int nkeys)
+{
+    JSPropertyEnum* props = NULL;
+    uint32_t nprops = 0, i;
+    int j, k, bad = 0;
+
+    if (!JS_IsObject(opts))
+        return 0;
+    if (JS_GetOwnPropertyNames(ctx, &props, &nprops, opts,
+            JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY))
+        return -1;
+    for (i = 0; i < nprops && !bad; i++) {
+        const char* name = JS_AtomToCString(ctx, props[i].atom);
+        if (!name) {
+            bad = 1;
+            break;
+        }
+        for (k = 0; k < nkeys; k++) {
+            if (strcmp(name, keys[k]) == 0)
+                break;
+        }
+        if (k == nkeys) {
+            size_t need = 1, l;
+            char *valid, *w;
+            for (k = 0; k < nkeys; k++)
+                need += strlen(keys[k]) + 2;
+            valid = (char*)js_malloc(ctx, need);
+            if (!valid) {
+                JS_FreeCString(ctx, name);
+                bad = 1;
+                break;
+            }
+            w = valid;
+            for (k = 0; k < nkeys; k++) {
+                l = strlen(keys[k]);
+                if (k) {
+                    *w++ = ',';
+                    *w++ = ' ';
+                }
+                memcpy(w, keys[k], l);
+                w += l;
+            }
+            *w = '\0';
+            JS_ThrowTypeError(ctx, "unknown option \"%s\" (valid: %s)",
+                name, valid);
+            js_free(ctx, valid);
+            bad = 1;
+        }
+        JS_FreeCString(ctx, name);
+    }
+    for (j = 0; j < (int)nprops; j++)
+        JS_FreeAtom(ctx, props[j].atom);
+    js_free(ctx, props);
+    return bad ? -1 : 0;
+}
+
+static const char* const rd_ctor_keys[] = {
+    "tls",
+    "ca",
+    "host",
+    "path",
+    "username",
+    "password",
+    "port",
+    "db",
+    "binary",
+    "bigint",
+    "maxReplyBytes",
+    "maxPending",
+    "connectTimeoutMs",
+    "commandTimeoutMs",
+};
+
+#define RD_ST_CONNECTING 0
+#define RD_ST_HANDSHAKE 1
+#define RD_ST_READY 2
+#define RD_ST_DEAD 3
+
+#define RD_INT_NONE 0
+#define RD_INT_HELLO 1
+#define RD_INT_AUTH 2
+#define RD_INT_SELECT 3
+
+#define RD_DEFAULT_MAXBULK (64u * 1024u * 1024u)
+#define RD_DEFAULT_PENDING 4096
+#define RD_CONNECT_TIMEOUT 10000
+
+typedef struct dyn_redis_pending {
+    struct dyn_redis_pending* next;
+    JSValue resolve, reject;
+    JSValue acc;
+    uint8_t* bytes;
+    size_t nbytes;
+    int internal;
+    int is_sub_cmd;
+    int sub_left;
+    int want;
+    int got;
+    uint64_t deadline_ms;
+} dyn_redis_pending_t;
+
+typedef struct {
+    JSContext* ctx;
+    JSRuntime* rt;
+    dyn_aio_t* aio;
+    int fd;
+    int state;
+    int proto;
+    int binary;
+    int bigint;
+    int hooked;
+    int released;
+    int hello_queued;
+    char *host, *path, *user, *pass;
+    uint16_t port;
+    int port_i;
+    int db;
+    size_t maxbulk;
+    int maxpending;
+    uint64_t connect_deadline_ms;
+    int cb_depth;
+    int closing;
+    uint64_t command_timeout_ms;
+    dyn_resp_scan_t rscan;
+    JSValue self;
+    int self_held;
+
+    uint8_t* rbuf;
+    size_t rcap, rlen, rpos;
+    uint8_t* obuf;
+    size_t ocap, olen;
+
+    dyn_redis_pending_t *head, *tail;
+    dyn_redis_pending_t *wq_head, *wq_tail;
+    int npending, nwait;
+    int flush_queued;
+    int subscribed;
+    int sub_guess;
+    int sub_cp;
+    int sub_shard;
+    JSValue h_push, h_error;
+#ifdef CONFIG_TLS
+    int use_tls;
+    char* tls_ca;
+    dyn_tls_ctx_t* tls_ctx;
+#endif
+} dyn_redis_t;
+
+static void dyn_redis_teardown(dyn_redis_t* r);
+
+static JSClassID dyn_redis_class_id;
+
+#define RD_MAX_FLUSH 256
+static _Thread_local dyn_redis_t* net_flush_pending[RD_MAX_FLUSH];
+static _Thread_local int net_n_flush;
+
+static void redis_fail_all(dyn_redis_t* r, const char* msg);
+static void redis_tick(void* udata);
+static void redis_cb_exit(dyn_redis_t* r);
+static void redis_release_if_idle(dyn_redis_t* r);
+static void redis_client_sweep(JSContext* ctx, JSRuntime* rt, void* opaque);
+
+static JSValue redis_release_job(JSContext* ctx, int argc, JSValueConst* argv)
+{
+    (void)ctx;
+    (void)argc;
+    (void)argv;
+    return JS_UNDEFINED;
+}
+
+static void redis_client_sweep(JSContext* ctx, JSRuntime* rt, void* opaque)
+{
+    dyn_redis_t* r = (dyn_redis_t*)opaque;
+    JSValue s;
+
+    (void)ctx;
+    if (!r || !r->self_held)
+        return;
+    s = r->self;
+    r->self = JS_UNDEFINED;
+    r->self_held = 0;
+    JS_FreeValueRT(rt, s);
+}
+
+static void redis_hold(JSContext* ctx, JSValueConst obj, dyn_redis_t* r)
+{
+    if (r->self_held)
+        return;
+    r->self = JS_DupValue(ctx, obj);
+    r->self_held = 1;
+    JS_AddShutdownSweep(r->rt, redis_client_sweep, r);
+}
+
+static void redis_release_if_idle(dyn_redis_t* r)
+{
+    JSValue s;
+
+    if (!r->self_held || r->npending != 0 || r->nwait != 0)
+        return;
+    s = r->self;
+    r->self = JS_UNDEFINED;
+    r->self_held = 0;
+    JS_RemoveShutdownSweep(r->rt, redis_client_sweep, r);
+    if (JS_EnqueueJob(r->ctx, redis_release_job, 1,
+            (JSValueConst*)&s) < 0) {
+        r->self = s;
+        r->self_held = 1;
+        JS_AddShutdownSweep(r->rt, redis_client_sweep, r);
+        return;
+    }
+    JS_FreeValue(r->ctx, s);
+}
+
+static int buf_reserve(uint8_t** p, size_t* cap, size_t need)
+{
+    size_t c = *cap;
+    uint8_t* n;
+    if (need <= c)
+        return 0;
+    if (c == 0)
+        c = 512;
+    while (c < need)
+        c = c < (1u << 20) ? c * 2 : c + (c / 4);
+    n = (uint8_t*)realloc(*p, c);
+    if (!n)
+        return -1;
+    *p = n;
+    *cap = c;
+    return 0;
+}
+
+static dyn_redis_pending_t* pend_new(JSContext* ctx)
+{
+    dyn_redis_pending_t* p = (dyn_redis_pending_t*)calloc(1, sizeof(*p));
+    (void)ctx;
+    if (!p)
+        return NULL;
+    p->resolve = p->reject = p->acc = JS_UNDEFINED;
+    p->want = 1;
+    return p;
+}
+
+static void redis_secure_zero(void* p, size_t n)
+{
+    volatile unsigned char* v = (volatile unsigned char*)p;
+    while (n--)
+        *v++ = 0;
+}
+
+static void pend_wipe_bytes(dyn_redis_pending_t* p)
+{
+    if (p->bytes && p->internal)
+        redis_secure_zero(p->bytes, p->nbytes);
+}
+
+static void pend_free(JSContext* ctx, dyn_redis_pending_t* p)
+{
+    JS_FreeValue(ctx, p->resolve);
+    JS_FreeValue(ctx, p->reject);
+    JS_FreeValue(ctx, p->acc);
+    pend_wipe_bytes(p);
+    free(p->bytes);
+    free(p);
+}
+
+static void pend_free_rt(JSRuntime* rt, dyn_redis_pending_t* p)
+{
+    JS_FreeValueRT(rt, p->resolve);
+    JS_FreeValueRT(rt, p->reject);
+    JS_FreeValueRT(rt, p->acc);
+    pend_wipe_bytes(p);
+    free(p->bytes);
+    free(p);
+}
+
+static void pend_push(dyn_redis_pending_t** head, dyn_redis_pending_t** tail,
+    dyn_redis_pending_t* p)
+{
+    p->next = NULL;
+    if (*tail)
+        (*tail)->next = p;
+    else
+        *head = p;
+    *tail = p;
+}
+
+static dyn_redis_pending_t* pend_pop(dyn_redis_pending_t** head,
+    dyn_redis_pending_t** tail)
+{
+    dyn_redis_pending_t* p = *head;
+    if (!p)
+        return NULL;
+    *head = p->next;
+    if (!*head)
+        *tail = NULL;
+    p->next = NULL;
+    return p;
+}
+
+static void redis_settle(dyn_redis_t* r, dyn_redis_pending_t* p, int reject,
+    JSValue v)
+{
+    JSValue fn = reject ? p->reject : p->resolve;
+    if (JS_IsFunction(r->ctx, fn)) {
+        JSValueConst a[1] = { v };
+        r->cb_depth++;
+        JSValue res = JS_Call(r->ctx, fn, JS_UNDEFINED, 1, a);
+        r->cb_depth--;
+        JS_FreeValue(r->ctx, res);
+    }
+    JS_FreeValue(r->ctx, v);
+    pend_free(r->ctx, p);
+    redis_release_if_idle(r);
+}
+
+static JSValue redis_error_value(JSContext* ctx, const char* text, size_t len)
+{
+    JSValue e = JS_NewError(ctx);
+    size_t i = 0;
+    while (i < len && text[i] != ' ')
+        i++;
+    JS_DefinePropertyValueStr(ctx, e, "message", JS_NewStringLen(ctx, text, len),
+        JS_PROP_C_W_E);
+    JS_DefinePropertyValueStr(ctx, e, "code", JS_NewStringLen(ctx, text, i),
+        JS_PROP_C_W_E);
+    JS_DefinePropertyValueStr(ctx, e, "redis", JS_TRUE, JS_PROP_C_W_E);
+    return e;
+}
+
+static JSValue redis_conn_error(JSContext* ctx, const char* msg)
+{
+    JSValue e = JS_NewError(ctx);
+    JS_DefinePropertyValueStr(ctx, e, "message", JS_NewString(ctx, msg),
+        JS_PROP_C_W_E);
+    JS_DefinePropertyValueStr(ctx, e, "code", JS_NewString(ctx, "CONNECTION"),
+        JS_PROP_C_W_E);
+    return e;
+}
+
+static JSValue redis_bytes(JSContext* ctx, const uint8_t* p, size_t n)
+{
+    JSValue ab = JS_NewArrayBufferCopy(ctx, p, n), ta;
+    JSValueConst a3[3];
+    if (JS_IsException(ab))
+        return ab;
+    a3[0] = ab;
+    a3[1] = JS_NewInt32(ctx, 0);
+    a3[2] = JS_NewInt32(ctx, (int)n);
+    ta = JS_NewTypedArray(ctx, 3, a3, JS_TYPED_ARRAY_UINT8);
+    JS_FreeValue(ctx, ab);
+    return ta;
+}
+
+static JSValue redis_bignum(JSContext* ctx, const char* p, size_t n)
+{
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue ctor = JS_GetPropertyStr(ctx, global, "BigInt");
+    JSValue arg = JS_NewStringLen(ctx, p, n), out;
+    JSValueConst a1[1];
+
+    JS_FreeValue(ctx, global);
+    if (JS_IsException(arg) || !JS_IsFunction(ctx, ctor)) {
+        JS_FreeValue(ctx, ctor);
+        return JS_IsException(arg) ? arg : JS_NewStringLen(ctx, p, n);
+    }
+    a1[0] = arg;
+    out = JS_Call(ctx, ctor, JS_UNDEFINED, 1, a1);
+    JS_FreeValue(ctx, ctor);
+    if (JS_IsException(out)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        return arg;
+    }
+    JS_FreeValue(ctx, arg);
+    return out;
+}
+
+static JSValue redis_value(JSContext* ctx, dyn_redis_t* r,
+    dyn_resp_reader_t* rd, int depth, int* is_err)
+{
+    dyn_resp_item_t it;
+    int rc;
+
+    if (depth >= DYN_RESP_MAX_DEPTH)
+        return JS_ThrowInternalError(ctx, "Redis: %s",
+            dyn_resp_strerror(DYN_RESP_E_DEPTH));
+    rc = dyn_resp_next(rd, &it);
+
+    if (rc != DYN_RESP_OK)
+        return JS_ThrowInternalError(ctx, "Redis: %s", dyn_resp_strerror(rc));
+
+    switch (it.type) {
+    case DYN_RESP_SIMPLE:
+        return JS_NewStringLen(ctx, (const char*)it.str, it.slen);
+    case DYN_RESP_ERROR:
+    case DYN_RESP_BLOBERR:
+        if (is_err)
+            *is_err = 1;
+        return redis_error_value(ctx, (const char*)it.str, it.slen);
+    case DYN_RESP_INT:
+        if (r->bigint)
+            return JS_NewBigInt64(ctx, it.ival);
+        if (it.ival > 9007199254740992LL || it.ival < -9007199254740992LL)
+            return JS_NewStringLen(ctx, (const char*)it.str, it.slen);
+        return JS_NewInt64(ctx, it.ival);
+    case DYN_RESP_NULL:
+        return JS_NULL;
+    case DYN_RESP_BOOL:
+        return JS_NewBool(ctx, (int)it.ival);
+    case DYN_RESP_DOUBLE:
+        return JS_NewFloat64(ctx, it.dval);
+    case DYN_RESP_BIGNUM:
+        if (r->bigint)
+            return redis_bignum(ctx, (const char*)it.str, it.slen);
+        return JS_NewStringLen(ctx, (const char*)it.str, it.slen);
+    case DYN_RESP_BULK:
+    case DYN_RESP_VERB: {
+        const uint8_t* p = it.str;
+        size_t n = it.slen;
+        if (it.isnull)
+            return JS_NULL;
+        if (it.type == DYN_RESP_VERB && n >= 4 && p[3] == ':') {
+            p += 4;
+            n -= 4;
+        }
+        if (r->binary)
+            return redis_bytes(ctx, p, n);
+        return JS_NewStringLen(ctx, (const char*)p, n);
+    }
+    case DYN_RESP_ARRAY:
+    case DYN_RESP_SET:
+    case DYN_RESP_PUSH: {
+        JSValue arr;
+        int64_t i;
+        if (it.isnull)
+            return JS_NULL;
+        arr = JS_NewArray(ctx);
+        if (JS_IsException(arr))
+            return arr;
+        for (i = 0; i < it.count; i++) {
+            JSValue v = redis_value(ctx, r, rd, depth + 1, is_err);
+            if (JS_IsException(v)) {
+                JS_FreeValue(ctx, arr);
+                return v;
+            }
+            JS_DefinePropertyValueUint32(ctx, arr, (uint32_t)i, v,
+                JS_PROP_C_W_E);
+        }
+        return arr;
+    }
+    case DYN_RESP_ATTR: {
+        int64_t i;
+        for (i = 0; i < it.count * 2; i++) {
+            JSValue skip = redis_value(ctx, r, rd, depth + 1, is_err);
+            if (JS_IsException(skip))
+                return skip;
+            JS_FreeValue(ctx, skip);
+        }
+        return redis_value(ctx, r, rd, depth + 1, is_err);
+    }
+    case DYN_RESP_MAP: {
+        JSValue obj;
+        int64_t i;
+        obj = JS_NewObject(ctx);
+        if (JS_IsException(obj))
+            return obj;
+        for (i = 0; i < it.count; i++) {
+            JSValue k, v, kstr;
+            const char* ks;
+            int saved = r->binary;
+            r->binary = 0;
+            k = redis_value(ctx, r, rd, depth + 1, is_err);
+            r->binary = saved;
+            if (JS_IsException(k)) {
+                JS_FreeValue(ctx, obj);
+                return k;
+            }
+            v = redis_value(ctx, r, rd, depth + 1, is_err);
+            if (JS_IsException(v)) {
+                JS_FreeValue(ctx, k);
+                JS_FreeValue(ctx, obj);
+                return v;
+            }
+            kstr = JS_ToString(ctx, k);
+            JS_FreeValue(ctx, k);
+            ks = JS_ToCString(ctx, kstr);
+            if (ks) {
+                JS_DefinePropertyValueStr(ctx, obj, ks, v, JS_PROP_C_W_E);
+                JS_FreeCString(ctx, ks);
+            } else {
+                JS_FreeValue(ctx, v);
+            }
+            JS_FreeValue(ctx, kstr);
+        }
+        return obj;
+    }
+    default:
+        return JS_ThrowInternalError(ctx, "Redis: unexpected type '%c'",
+            it.type);
+    }
+}
+
+static JSValue redis_flush_job(JSContext* ctx, int argc, JSValueConst* argv);
+
+static int redis_flush(dyn_redis_t* r)
+{
+    int rc;
+    if (r->olen == 0 || r->state == RD_ST_CONNECTING || r->state == RD_ST_DEAD)
+        return 0;
+    rc = dyn_aio_send(r->aio, r->fd, r->obuf, r->olen, 0, NULL, NULL);
+    if (rc < 0)
+        return rc;
+    r->olen = 0;
+    return 0;
+}
+
+static void redis_flush_soon(dyn_redis_t* r)
+{
+    if (r->flush_queued || r->olen == 0 || r->state != RD_ST_READY)
+        return;
+    if (net_n_flush >= RD_MAX_FLUSH) {
+        if (redis_flush(r) < 0)
+            redis_fail_all(r, "Redis: cannot write to the socket");
+        return;
+    }
+    if (JS_EnqueueJob(r->ctx, redis_flush_job, 0, NULL) < 0) {
+        if (redis_flush(r) < 0)
+            redis_fail_all(r, "Redis: cannot write to the socket");
+        return;
+    }
+    r->flush_queued = 1;
+    net_flush_pending[net_n_flush++] = r;
+}
+
+static int redis_write(dyn_redis_t* r, const uint8_t* b, size_t n)
+{
+    if (buf_reserve(&r->obuf, &r->ocap, r->olen + n) < 0)
+        return -1;
+    memcpy(r->obuf + r->olen, b, n);
+    r->olen += n;
+    return 0;
+}
+
+static void redis_flush_drop(dyn_redis_t* r)
+{
+    int i;
+    r->flush_queued = 0;
+    for (i = 0; i < net_n_flush; i++)
+        if (net_flush_pending[i] == r) {
+            net_flush_pending[i] = net_flush_pending[net_n_flush - 1];
+            net_n_flush--;
+            return;
+        }
+}
+
+static JSValue redis_flush_job(JSContext* ctx, int argc, JSValueConst* argv)
+{
+    (void)ctx;
+    (void)argc;
+    (void)argv;
+    while (net_n_flush > 0) {
+        dyn_redis_t* r = net_flush_pending[0];
+        r->cb_depth++;
+        redis_flush_drop(r);
+        if (r->state == RD_ST_READY && redis_flush(r) < 0)
+            redis_fail_all(r, "Redis: cannot write to the socket");
+        redis_cb_exit(r);
+    }
+    return JS_UNDEFINED;
+}
+
+static int redis_arm(dyn_redis_t* r, dyn_redis_pending_t* p)
+{
+    if (p->bytes) {
+        int wrc = redis_write(r, p->bytes, p->nbytes);
+        pend_wipe_bytes(p);
+        if (wrc < 0)
+            return -1;
+        free(p->bytes);
+        p->bytes = NULL;
+        p->nbytes = 0;
+    }
+    if (r->command_timeout_ms)
+        p->deadline_ms = dyn_timer_now_ms() + r->command_timeout_ms;
+    pend_push(&r->head, &r->tail, p);
+    r->npending++;
+    return 0;
+}
+
+static int redis_send_internal(dyn_redis_t* r, int kind, int argc,
+    const char* const* argv, const size_t* lens)
+{
+    dyn_redis_pending_t* p = pend_new(r->ctx);
+    size_t need = dyn_resp_cmd_size(argc, argv, lens);
+    uint8_t* b;
+
+    if (!p)
+        return -1;
+    b = (uint8_t*)malloc(need);
+    if (!b) {
+        pend_free(r->ctx, p);
+        return -1;
+    }
+    if (dyn_resp_cmd_encode(b, need, argc, argv, lens, NULL) < 0) {
+        free(b);
+        pend_free(r->ctx, p);
+        return -1;
+    }
+    p->internal = kind;
+    p->bytes = b;
+    p->nbytes = need;
+    return redis_arm(r, p);
+}
+
+static void redis_release_waitq(dyn_redis_t* r)
+{
+    dyn_redis_pending_t* p;
+    while ((p = pend_pop(&r->wq_head, &r->wq_tail)) != NULL) {
+        r->nwait--;
+        if (redis_arm(r, p) < 0) {
+            pend_push(&r->wq_head, &r->wq_tail, p);
+            r->nwait++;
+            redis_fail_all(r, "Redis: out of memory");
+            return;
+        }
+    }
+    if (redis_flush(r) < 0)
+        redis_fail_all(r, "Redis: cannot write to the socket");
+}
+
+static void redis_after_handshake(dyn_redis_t* r)
+{
+    r->state = RD_ST_READY;
+    r->connect_deadline_ms = 0;
+    if (r->pass) {
+        redis_secure_zero(r->pass, strlen(r->pass));
+        free(r->pass);
+        r->pass = NULL;
+    }
+    redis_release_waitq(r);
+}
+
+static int redis_send_select(dyn_redis_t* r)
+{
+    char dbs[16];
+    const char* argv[2];
+    int n = snprintf(dbs, sizeof(dbs), "%d", r->db);
+    if (n < 0 || (size_t)n >= sizeof(dbs))
+        return -1;
+    argv[0] = "SELECT";
+    argv[1] = dbs;
+    return redis_send_internal(r, RD_INT_SELECT, 2, argv, NULL);
+}
+
+static void redis_handle_hello(dyn_redis_t* r, int is_err)
+{
+    if (is_err) {
+        r->proto = 2;
+        if (r->pass) {
+            const char* argv[3];
+            int argc = 0;
+            argv[argc++] = "AUTH";
+            if (r->user)
+                argv[argc++] = r->user;
+            argv[argc++] = r->pass;
+            if (redis_send_internal(r, RD_INT_AUTH, argc, argv, NULL) < 0) {
+                redis_fail_all(r, "Redis: out of memory during handshake");
+                return;
+            }
+            if (r->db > 0 && redis_send_select(r) < 0) {
+                redis_fail_all(r, "Redis: out of memory during handshake");
+                return;
+            }
+            if (redis_flush(r) < 0)
+                redis_fail_all(r, "Redis: cannot write to the socket");
+            return;
+        }
+    } else {
+        r->proto = 3;
+    }
+    if (r->db > 0) {
+        if (redis_send_select(r) < 0) {
+            redis_fail_all(r, "Redis: out of memory during handshake");
+            return;
+        }
+        if (redis_flush(r) < 0)
+            redis_fail_all(r, "Redis: cannot write to the socket");
+        return;
+    }
+    redis_after_handshake(r);
+}
+
+static void redis_sub_recount(dyn_redis_t* r)
+{
+    if (r->sub_guess < 0)
+        r->sub_guess = 0;
+    r->subscribed = r->sub_cp + r->sub_shard + r->sub_guess;
+}
+
+static void redis_note_confirm(dyn_redis_t* r, dyn_redis_pending_t* p,
+    const uint8_t* msg, size_t len)
+{
+    dyn_resp_reader_t rd;
+    dyn_resp_item_t it;
+    static const char* const kinds[6] = { "subscribe", "psubscribe",
+        "ssubscribe", "unsubscribe", "punsubscribe", "sunsubscribe" };
+    int shard, unsub, kind;
+
+    dyn_resp_reader_init(&rd, msg, len);
+    if (dyn_resp_next(&rd, &it) != DYN_RESP_OK
+        || (it.type != DYN_RESP_ARRAY && it.type != DYN_RESP_PUSH)
+        || it.count != 3)
+        return;
+    if (dyn_resp_next(&rd, &it) != DYN_RESP_OK || it.type != DYN_RESP_BULK)
+        return;
+    for (kind = 0; kind < 6; kind++)
+        if (it.slen == strlen(kinds[kind])
+            && memcmp(it.str, kinds[kind], it.slen) == 0)
+            break;
+    if (kind == 6)
+        return;
+    shard = kind == 2 || kind == 5;
+    unsub = kind >= 3;
+    if (dyn_resp_next(&rd, &it) != DYN_RESP_OK)
+        return;
+    if (dyn_resp_next(&rd, &it) != DYN_RESP_OK || it.type != DYN_RESP_INT
+        || it.ival < 0 || it.ival > INT32_MAX)
+        return;
+    if (shard)
+        r->sub_shard = (int)it.ival;
+    else
+        r->sub_cp = (int)it.ival;
+    if (!unsub && p->sub_left > 0) {
+        p->sub_left--;
+        r->sub_guess--;
+    }
+    redis_sub_recount(r);
+}
+
+static int redis_push_is_delivery(const uint8_t* msg, size_t len)
+{
+    dyn_resp_reader_t rd;
+    dyn_resp_item_t it;
+    static const char* deliv[] = { "message", "pmessage", "smessage" };
+    size_t i;
+
+    dyn_resp_reader_init(&rd, msg, len);
+    if (dyn_resp_next(&rd, &it) != DYN_RESP_OK || it.type != DYN_RESP_ARRAY)
+        return 1;
+    if (it.count < 3)
+        return 0;
+    if (dyn_resp_next(&rd, &it) != DYN_RESP_OK || it.type != DYN_RESP_BULK)
+        return 1;
+    for (i = 0; i < countof(deliv); i++)
+        if (it.slen == strlen(deliv[i]) && memcmp(it.str, deliv[i], it.slen) == 0)
+            return 1;
+    return 0;
+}
+
+static void redis_deliver_push(dyn_redis_t* r, const uint8_t* msg, size_t len)
+{
+    JSContext* ctx = r->ctx;
+    dyn_resp_reader_t rd;
+    JSValue v;
+    int is_err = 0;
+
+    if (!JS_IsFunction(ctx, r->h_push))
+        return;
+    dyn_resp_reader_init(&rd, msg, len);
+    v = redis_value(ctx, r, &rd, 0, &is_err);
+    if (JS_IsException(v)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        return;
+    }
+    {
+        JSValueConst a[1] = { v };
+        JSValue res = JS_Call(ctx, r->h_push, JS_UNDEFINED, 1, a);
+        if (JS_IsException(res))
+            JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, res);
+    }
+    JS_FreeValue(ctx, v);
+}
+
+static void redis_one_reply(dyn_redis_t* r, const uint8_t* msg, size_t len)
+{
+    JSContext* ctx = r->ctx;
+    dyn_redis_pending_t* p;
+    dyn_resp_reader_t rd;
+    JSValue v;
+    int is_err = 0;
+
+    if (msg[0] == DYN_RESP_PUSH) {
+        if (!(r->head && !r->head->internal && r->head->is_sub_cmd)) {
+            redis_deliver_push(r, msg, len);
+            return;
+        }
+    } else if (r->subscribed > 0 && msg[0] == DYN_RESP_ARRAY
+        && redis_push_is_delivery(msg, len)
+        && (r->sub_cp + r->sub_shard > 0 || r->head == NULL
+            || r->head->internal || r->head->is_sub_cmd)) {
+        redis_deliver_push(r, msg, len);
+        return;
+    }
+
+    p = r->head;
+    if (!p) {
+        redis_fail_all(r, "Redis: reply with no command outstanding");
+        return;
+    }
+
+    if (p->internal) {
+        int kind = p->internal;
+        dyn_resp_reader_init(&rd, msg, len);
+        v = redis_value(ctx, r, &rd, 0, &is_err);
+        if (JS_IsException(v)) {
+            JS_FreeValue(ctx, JS_GetException(ctx));
+            redis_fail_all(r, "Redis: malformed handshake reply");
+            return;
+        }
+        JS_FreeValue(ctx, v);
+        pend_pop(&r->head, &r->tail);
+        r->npending--;
+        pend_free(ctx, p);
+        redis_release_if_idle(r);
+        if (kind == RD_INT_HELLO) {
+            redis_handle_hello(r, is_err);
+        } else if (kind == RD_INT_AUTH && is_err) {
+            redis_fail_all(r, "Redis: authentication rejected");
+        } else if (kind == RD_INT_SELECT && is_err) {
+            redis_fail_all(r, "Redis: SELECT rejected");
+        } else if (r->head == NULL || r->head->internal == RD_INT_NONE) {
+            if (r->state != RD_ST_READY)
+                redis_after_handshake(r);
+        }
+        return;
+    }
+
+    if (len > 8 && msg[0] == DYN_RESP_ERROR && memcmp(msg + 1, "NOAUTH ", 7) == 0) {
+        redis_fail_all(r, "Redis: the server requires authentication again");
+        return;
+    }
+
+    dyn_resp_reader_init(&rd, msg, len);
+    v = redis_value(ctx, r, &rd, 0, &is_err);
+    if (JS_IsException(v)) {
+        JS_FreeValue(ctx, JS_GetException(ctx));
+        redis_fail_all(r, "Redis: malformed reply");
+        return;
+    }
+
+    if (p->is_sub_cmd)
+        redis_note_confirm(r, p, msg, len);
+
+    if (p->want > 1) {
+        JS_DefinePropertyValueUint32(ctx, p->acc, (uint32_t)p->got, v,
+            JS_PROP_C_W_E);
+        p->got++;
+        if (p->got < p->want)
+            return;
+        pend_pop(&r->head, &r->tail);
+        r->npending--;
+        v = p->acc;
+        p->acc = JS_UNDEFINED;
+        redis_settle(r, p, 0, v);
+        return;
+    }
+    pend_pop(&r->head, &r->tail);
+    r->npending--;
+    redis_settle(r, p, is_err, v);
+}
+
+static int redis_gone(dyn_redis_t* r)
+{
+    return r->closing || r->state == RD_ST_DEAD;
+}
+
+static void redis_cb_exit(dyn_redis_t* r)
+{
+    if (r->cb_depth > 0)
+        r->cb_depth--;
+    if (r->cb_depth == 0 && r->closing)
+        dyn_redis_teardown(r);
+}
+
+static void redis_fail_all(dyn_redis_t* r, const char* msg)
+{
+    JSContext* ctx = r->ctx;
+    dyn_redis_pending_t* p;
+
+    if (r->state == RD_ST_DEAD)
+        return;
+    r->state = RD_ST_DEAD;
+    if (r->fd >= 0) {
+        dyn_aio_close(r->aio, r->fd);
+        r->fd = -1;
+    }
+    while ((p = pend_pop(&r->head, &r->tail)) != NULL) {
+        r->npending--;
+        if (p->internal)
+            pend_free(ctx, p);
+        else
+            redis_settle(r, p, 1, redis_conn_error(ctx, msg));
+    }
+    while ((p = pend_pop(&r->wq_head, &r->wq_tail)) != NULL) {
+        r->nwait--;
+        redis_settle(r, p, 1, redis_conn_error(ctx, msg));
+    }
+    redis_release_if_idle(r);
+    if (JS_IsFunction(ctx, r->h_error)) {
+        JSValue e = redis_conn_error(ctx, msg);
+        r->cb_depth++;
+        JSValueConst a[1] = { e };
+        JSValue res = JS_Call(ctx, r->h_error, JS_UNDEFINED, 1, a);
+        r->cb_depth--;
+        if (JS_IsException(res))
+            JS_FreeValue(ctx, JS_GetException(ctx));
+        JS_FreeValue(ctx, res);
+        JS_FreeValue(ctx, e);
+    }
+    if (r->hooked) {
+        dyn_net_off_drain(r);
+        r->hooked = 0;
+    }
+    if (r->aio && !r->released) {
+        r->released = 1;
+        dyn_net_reactor_release(r->ctx);
+    }
+}
+
+static void redis_on_recv_inner(dyn_aio_t* aio, int res, const uint8_t* buf,
+    unsigned len, void* ud)
+{
+    dyn_redis_t* r = (dyn_redis_t*)ud;
+    (void)aio;
+
+    if (redis_gone(r))
+        return;
+    if (res < 0) {
+        redis_fail_all(r, "Redis: connection error");
+        redis_gone(r);
+        return;
+    }
+    if (res == 0 && len == 0) {
+        redis_fail_all(r, "Redis: server closed the connection");
+        redis_gone(r);
+        return;
+    }
+
+    if (r->rlen - r->rpos + len > r->maxbulk + DYN_RESP_MAX_LINE) {
+        redis_fail_all(r, "Redis: reply exceeds maxReplyBytes");
+        return;
+    }
+    if (buf_reserve(&r->rbuf, &r->rcap, r->rlen + len) < 0) {
+        redis_fail_all(r, "Redis: out of memory");
+        return;
+    }
+    memcpy(r->rbuf + r->rlen, buf, len);
+    r->rlen += len;
+
+    if (r->rpos == 0 && r->rlen >= 3 && dyn_resp_looks_like_tls(r->rbuf, r->rlen)) {
+        redis_fail_all(r, "Redis: the endpoint answered with TLS; this client "
+                          "is plaintext only");
+        return;
+    }
+
+    for (;;) {
+        size_t used = 0;
+        int rc = dyn_resp_scan_resume(&r->rscan, r->rbuf + r->rpos,
+            r->rlen - r->rpos, r->maxbulk, &used);
+        if (rc == DYN_RESP_INCOMPLETE)
+            break;
+        if (rc != DYN_RESP_OK) {
+            redis_fail_all(r, dyn_resp_strerror(rc));
+            return;
+        }
+        redis_one_reply(r, r->rbuf + r->rpos, used);
+        if (redis_gone(r))
+            return;
+        r->rpos += used;
+    }
+    if (r->rpos) {
+        memmove(r->rbuf, r->rbuf + r->rpos, r->rlen - r->rpos);
+        r->rlen -= r->rpos;
+        r->rpos = 0;
+    }
+}
+
+static void redis_on_recv(dyn_aio_t* aio, int res, const uint8_t* buf,
+    unsigned len, void* ud)
+{
+    dyn_redis_t* r = (dyn_redis_t*)ud;
+
+    r->cb_depth++;
+    redis_on_recv_inner(aio, res, buf, len, ud);
+    redis_cb_exit(r);
+}
+
+static int redis_queue_hello(dyn_redis_t* r);
+
+#ifdef CONFIG_TLS
+static void redis_tls_done_inner(dyn_aio_t* aio, int res, const uint8_t* buf,
+    unsigned len, void* ud)
+{
+    dyn_redis_t* r = (dyn_redis_t*)ud;
+    (void)aio;
+    (void)buf;
+    (void)len;
+    if (r->state == RD_ST_DEAD)
+        return;
+    if (res < 0) {
+        redis_fail_all(r, "Redis: TLS handshake failed");
+        redis_gone(r);
+        return;
+    }
+    if (redis_queue_hello(r) < 0) {
+        redis_fail_all(r, "Redis: out of memory during handshake");
+        redis_gone(r);
+    }
+}
+
+static void redis_tls_done(dyn_aio_t* aio, int res, const uint8_t* buf,
+    unsigned len, void* ud)
+{
+    dyn_redis_t* r = (dyn_redis_t*)ud;
+
+    r->cb_depth++;
+    redis_tls_done_inner(aio, res, buf, len, ud);
+    redis_cb_exit(r);
+}
+#endif
+
+static int redis_queue_hello(dyn_redis_t* r)
+{
+    const char* argvh[2] = { "HELLO", "3" };
+    if (r->hello_queued)
+        return 0;
+    r->hello_queued = 1;
+    if (r->pass) {
+        const char* five[5] = { "HELLO", "3", "AUTH",
+            r->user ? r->user : "default", r->pass };
+        return redis_send_internal(r, RD_INT_HELLO, 5, five, NULL);
+    }
+    return redis_send_internal(r, RD_INT_HELLO, 2, argvh, NULL);
+}
+
+static void redis_on_connect_inner(dyn_aio_t* aio, int res, const uint8_t* buf,
+    unsigned len, void* ud)
+{
+    dyn_redis_t* r = (dyn_redis_t*)ud;
+    (void)aio;
+    (void)buf;
+    (void)len;
+
+    if (r->state == RD_ST_DEAD)
+        return;
+    if (res < 0) {
+        redis_fail_all(r, "Redis: connect failed");
+        redis_gone(r);
+        return;
+    }
+    r->state = RD_ST_HANDSHAKE;
+#ifdef CONFIG_TLS
+    if (r->use_tls) {
+        dyn_tls_opts_t to;
+        char terr[192];
+        memset(&to, 0, sizeof to);
+        to.ca_file = r->tls_ca;
+        if (!r->tls_ctx)
+            r->tls_ctx = dyn_tls_ctx_client(&to, terr, sizeof terr);
+        if (!r->tls_ctx) {
+            redis_fail_all(r, terr);
+            redis_gone(r);
+            return;
+        }
+        {
+            dyn_tls_conn_t* t = dyn_tls_conn_new(r->tls_ctx, r->host,
+                terr, sizeof terr);
+            if (!t) {
+                redis_fail_all(r, terr);
+                redis_gone(r);
+                return;
+            }
+            if (dyn_aio_tls_attach(r->aio, r->fd, t,
+                    redis_tls_done, r)
+                < 0) {
+                dyn_tls_conn_free(t);
+                redis_fail_all(r, "Redis: cannot attach TLS engine");
+                redis_gone(r);
+                return;
+            }
+            if (dyn_aio_recv(r->aio, r->fd, 0, 1,
+                    redis_on_recv, r)
+                    < 0
+                || dyn_aio_tls_start(r->aio, r->fd) < 0) {
+                redis_fail_all(r, "Redis: TLS handshake failed to start");
+                redis_gone(r);
+                return;
+            }
+        }
+        return;
+    }
+#endif
+    if (dyn_aio_recv(r->aio, r->fd, 0, 1, redis_on_recv, r) < 0) {
+        redis_fail_all(r, "Redis: cannot read from the socket");
+        redis_gone(r);
+        return;
+    }
+    redis_queue_hello(r);
+    if (redis_flush(r) < 0)
+        redis_fail_all(r, "Redis: cannot write to the socket");
+}
+
+static void redis_on_connect(dyn_aio_t* aio, int res, const uint8_t* buf,
+    unsigned len, void* ud)
+{
+    dyn_redis_t* r = (dyn_redis_t*)ud;
+
+    r->cb_depth++;
+    redis_on_connect_inner(aio, res, buf, len, ud);
+    redis_cb_exit(r);
+}
+
+static void redis_tick_inner(void* udata)
+{
+    dyn_redis_t* r = (dyn_redis_t*)udata;
+    uint64_t now;
+
+    if (redis_gone(r))
+        return;
+    now = dyn_timer_now_ms();
+    if (r->connect_deadline_ms && now >= r->connect_deadline_ms) {
+        redis_fail_all(r, "Redis: connect timed out");
+        return;
+    }
+    if (r->head && r->head->deadline_ms && now >= r->head->deadline_ms) {
+        redis_fail_all(r, "Redis: command timed out");
+        return;
+    }
+}
+
+static void redis_tick(void* udata)
+{
+    dyn_redis_t* r = (dyn_redis_t*)udata;
+
+    r->cb_depth++;
+    redis_tick_inner(udata);
+    redis_cb_exit(r);
+}
+
+typedef struct {
+    const char** argv;
+    size_t* lens;
+    uint8_t* is_cstr;
+    void* blk;
+    int n;
+} redis_args_t;
+
+static void args_free(JSContext* ctx, redis_args_t* a)
+{
+    int i;
+    for (i = 0; i < a->n; i++) {
+        if (!a->argv[i] || !a->is_cstr || !a->is_cstr[i])
+            continue;
+        if (a->is_cstr[i] == 1)
+            JS_FreeCString(ctx, a->argv[i]);
+        else
+            free((void*)(uintptr_t)a->argv[i]);
+    }
+    free(a->blk);
+    memset(a, 0, sizeof(*a));
+}
+
+static int args_build(JSContext* ctx, redis_args_t* a, int argc,
+    JSValueConst* argv)
+{
+    int i;
+    memset(a, 0, sizeof(*a));
+    a->blk = calloc(1, (size_t)argc * (sizeof(char*) + sizeof(size_t) + 1));
+    if (!a->blk) {
+        JS_ThrowOutOfMemory(ctx);
+        return -1;
+    }
+    a->argv = (const char**)a->blk;
+    a->lens = (size_t*)(a->argv + argc);
+    a->is_cstr = (uint8_t*)(a->lens + argc);
+    for (i = 0; i < argc; i++) {
+        size_t off = 0, blen = 0, bpe = 0;
+        if (JS_IsObject(argv[i])) {
+            JSValue ab = JS_GetArrayBufferView(ctx, argv[i], &off, &blen, &bpe);
+            uint8_t* base = NULL;
+            size_t total = 0;
+            if (JS_IsException(ab)) {
+                JS_FreeValue(ctx, JS_GetException(ctx));
+                base = JS_GetArrayBuffer(ctx, &total, argv[i]);
+                if (!base)
+                    JS_FreeValue(ctx, JS_GetException(ctx));
+                else
+                    off = 0, blen = total;
+            } else {
+                base = JS_GetArrayBuffer(ctx, &total, ab);
+                JS_FreeValue(ctx, ab);
+            }
+            if (base) {
+                uint8_t* snap;
+                if (off > total || blen > total - off) {
+                    JS_ThrowRangeError(ctx,
+                        "Redis: buffer argument view is out of bounds");
+                    args_free(ctx, a);
+                    return -1;
+                }
+                snap = (uint8_t*)malloc(blen ? blen : 1);
+                if (!snap) {
+                    JS_ThrowOutOfMemory(ctx);
+                    args_free(ctx, a);
+                    return -1;
+                }
+                memcpy(snap, base + off, blen);
+                a->argv[i] = (const char*)snap;
+                a->lens[i] = blen;
+                a->is_cstr[i] = 2;
+                a->n = i + 1;
+                continue;
+            }
+        }
+        {
+            size_t l = 0;
+            const char* s = JS_ToCStringLen(ctx, &l, argv[i]);
+            if (!s) {
+                args_free(ctx, a);
+                return -1;
+            }
+            a->argv[i] = s;
+            a->lens[i] = l;
+            a->is_cstr[i] = 1;
+            a->n = i + 1;
+        }
+    }
+    a->n = argc;
+    return 0;
+}
+
+static dyn_redis_t* redis_this(JSContext* ctx, JSValueConst this_val)
+{
+    return (dyn_redis_t*)dyn_res_native(ctx, this_val, dyn_redis_class_id);
+}
+
+static const char* const RD_SUB[] = { "SUBSCRIBE", "PSUBSCRIBE", "SSUBSCRIBE" };
+static const char* const RD_UNSUB[] = { "UNSUBSCRIBE", "PUNSUBSCRIBE",
+    "SUNSUBSCRIBE" };
+
+static int redis_verb_is(const char* cmd, size_t len, const char* const* tab,
+    size_t n)
+{
+    size_t i;
+    for (i = 0; i < n; i++)
+        if (len == strlen(tab[i]) && strncasecmp(cmd, tab[i], len) == 0)
+            return 1;
+    return 0;
+}
+
+static int redis_reply_count(const char* cmd, size_t len, int argc)
+{
+    int per_channel = redis_verb_is(cmd, len, RD_SUB, countof(RD_SUB)) || redis_verb_is(cmd, len, RD_UNSUB, countof(RD_UNSUB));
+    if (!per_channel)
+        return 1;
+    return argc > 1 ? argc - 1 : -1;
+}
+
+static int redis_changes_reply_stream(const redis_args_t* a)
+{
+    static const char* const hello[] = { "HELLO" };
+    static const char* const client[] = { "CLIENT" };
+    static const char* const reply[] = { "REPLY" };
+    if (a->n < 1)
+        return 0;
+    if (redis_verb_is(a->argv[0], a->lens[0], hello, 1))
+        return 1;
+    return a->n >= 2 && redis_verb_is(a->argv[0], a->lens[0], client, 1)
+        && redis_verb_is(a->argv[1], a->lens[1], reply, 1);
+}
+
+static int redis_allowed_while_subscribed(const char* cmd, size_t len)
+{
+    static const char* const ok[] = { "PING", "QUIT", "RESET" };
+    return redis_verb_is(cmd, len, ok, countof(ok)) || redis_verb_is(cmd, len, RD_SUB, countof(RD_SUB)) || redis_verb_is(cmd, len, RD_UNSUB, countof(RD_UNSUB));
+}
+
+static JSValue redis_enqueue(JSContext* ctx, dyn_redis_t* r, int argc,
+    const char* const* argv, const size_t* lens,
+    int want, JSValue acc)
+{
+    JSValue funcs[2], promise;
+    dyn_redis_pending_t* p;
+    size_t need;
+    uint8_t* b = NULL;
+
+    if (r->npending + r->nwait >= r->maxpending) {
+        JS_FreeValue(ctx, acc);
+        return JS_ThrowInternalError(ctx,
+            "Redis: %d commands already in flight (maxPending)", r->maxpending);
+    }
+    need = dyn_resp_cmd_size(argc, argv, lens);
+    p = pend_new(ctx);
+    if (!p) {
+        JS_FreeValue(ctx, acc);
+        return JS_ThrowOutOfMemory(ctx);
+    }
+
+    promise = JS_NewPromiseCapability(ctx, funcs);
+    if (JS_IsException(promise)) {
+        pend_free(ctx, p);
+        JS_FreeValue(ctx, acc);
+        return promise;
+    }
+    p->resolve = funcs[0];
+    p->reject = funcs[1];
+    p->want = want;
+    p->acc = acc;
+    p->is_sub_cmd = argc > 0
+        && (redis_verb_is(argv[0], lens[0], RD_SUB, countof(RD_SUB))
+            || redis_verb_is(argv[0], lens[0], RD_UNSUB, countof(RD_UNSUB)));
+    if (argc > 1 && redis_verb_is(argv[0], lens[0], RD_SUB, countof(RD_SUB))) {
+        p->sub_left = argc - 1;
+        r->sub_guess += p->sub_left;
+        redis_sub_recount(r);
+    }
+
+    if (r->state == RD_ST_READY) {
+        if (buf_reserve(&r->obuf, &r->ocap, r->olen + need) < 0 || dyn_resp_cmd_encode(r->obuf + r->olen, need, argc, argv, lens, NULL) < 0) {
+            pend_free(ctx, p);
+            JS_FreeValue(ctx, promise);
+            return JS_ThrowOutOfMemory(ctx);
+        }
+        r->olen += need;
+        redis_arm(r, p);
+        redis_flush_soon(r);
+    } else {
+        b = (uint8_t*)malloc(need);
+        if (!b || dyn_resp_cmd_encode(b, need, argc, argv, lens, NULL) < 0) {
+            free(b);
+            pend_free(ctx, p);
+            JS_FreeValue(ctx, promise);
+            return JS_ThrowOutOfMemory(ctx);
+        }
+        p->bytes = b;
+        p->nbytes = need;
+        pend_push(&r->wq_head, &r->wq_tail, p);
+        r->nwait++;
+    }
+    return promise;
+}
+
+static JSValue dyn_redis_command(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    redis_args_t a;
+    dyn_redis_t* r;
+    JSValue ret;
+    int want;
+
+    if (argc < 1)
+        return JS_ThrowTypeError(ctx, "command: a command name is required");
+    if (args_build(ctx, &a, argc, argv) < 0)
+        return JS_EXCEPTION;
+    r = redis_this(ctx, this_val);
+    if (!r) {
+        args_free(ctx, &a);
+        return JS_EXCEPTION;
+    }
+    if (r->state == RD_ST_DEAD) {
+        args_free(ctx, &a);
+        return JS_ThrowInternalError(ctx, "Redis: the connection is closed");
+    }
+    if (r->state == RD_ST_READY && r->proto == 2 && r->subscribed > 0 && !redis_allowed_while_subscribed(a.argv[0], a.lens[0])) {
+        JSValue e = JS_ThrowTypeError(ctx,
+            "Redis: '%s' is not allowed while subscribed on RESP2; only PING, "
+            "QUIT, RESET and the (un)subscribe commands are",
+            a.argv[0]);
+        args_free(ctx, &a);
+        return e;
+    }
+    if (redis_changes_reply_stream(&a)) {
+        args_free(ctx, &a);
+        return JS_ThrowTypeError(ctx,
+            "Redis: HELLO and CLIENT REPLY change how many replies the server "
+            "sends, so later replies could not be matched to their commands; "
+            "the client negotiates the protocol itself when it connects");
+    }
+    want = redis_reply_count(a.argv[0], a.lens[0], a.n);
+    if (want < 0) {
+        args_free(ctx, &a);
+        return JS_ThrowTypeError(ctx,
+            "Redis: unsubscribe by name -- with no channel the reply count "
+            "depends on server state and cannot be matched to this command");
+    }
+    ret = redis_enqueue(ctx, r, a.n, a.argv, a.lens, want,
+        want > 1 ? JS_NewArray(ctx) : JS_UNDEFINED);
+    if (!JS_IsException(ret))
+        redis_hold(ctx, this_val, r);
+    args_free(ctx, &a);
+    return ret;
+}
+
+static JSValue dyn_redis_pipeline(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    dyn_redis_t* r;
+    JSValue acc, ret;
+    uint32_t n, i;
+    uint8_t* all = NULL;
+    size_t alen = 0, acap = 0;
+    int replies = 0;
+    char* bad_cmd = NULL;
+    dyn_redis_pending_t* p;
+    JSValue funcs[2], promise;
+
+    if (argc < 1 || !JS_IsArray(ctx, argv[0]))
+        return JS_ThrowTypeError(ctx, "pipeline: expects an array of commands");
+    {
+        JSValue lv = JS_GetPropertyStr(ctx, argv[0], "length");
+        if (JS_ToUint32(ctx, &n, lv) < 0) {
+            JS_FreeValue(ctx, lv);
+            return JS_EXCEPTION;
+        }
+        JS_FreeValue(ctx, lv);
+    }
+    if (n == 0)
+        return JS_ThrowTypeError(ctx, "pipeline: at least one command");
+
+    for (i = 0; i < n; i++) {
+        JSValue cmd = JS_GetPropertyUint32(ctx, argv[0], i);
+        redis_args_t a;
+        uint32_t m, k;
+        JSValueConst* parts;
+        size_t need;
+        if (!JS_IsArray(ctx, cmd)) {
+            JS_FreeValue(ctx, cmd);
+            free(all);
+            free(bad_cmd);
+            return JS_ThrowTypeError(ctx, "pipeline: element %u is not an array", i);
+        }
+        {
+            JSValue lv = JS_GetPropertyStr(ctx, cmd, "length");
+            if (JS_ToUint32(ctx, &m, lv) < 0) {
+                JS_FreeValue(ctx, lv);
+                JS_FreeValue(ctx, cmd);
+                free(all);
+                free(bad_cmd);
+                return JS_EXCEPTION;
+            }
+            JS_FreeValue(ctx, lv);
+        }
+        if (m == 0) {
+            JS_FreeValue(ctx, cmd);
+            free(all);
+            free(bad_cmd);
+            return JS_ThrowTypeError(ctx, "pipeline: element %u is empty", i);
+        }
+        parts = (JSValueConst*)calloc(m, sizeof(*parts));
+        if (!parts) {
+            JS_FreeValue(ctx, cmd);
+            free(all);
+            free(bad_cmd);
+            return JS_ThrowOutOfMemory(ctx);
+        }
+        for (k = 0; k < m; k++)
+            parts[k] = JS_GetPropertyUint32(ctx, cmd, k);
+        if (args_build(ctx, &a, (int)m, parts) < 0) {
+            for (k = 0; k < m; k++)
+                JS_FreeValue(ctx, parts[k]);
+            free(parts);
+            JS_FreeValue(ctx, cmd);
+            free(all);
+            free(bad_cmd);
+            return JS_EXCEPTION;
+        }
+        if (!bad_cmd && a.n > 0
+            && !redis_allowed_while_subscribed(a.argv[0], a.lens[0])) {
+            bad_cmd = (char*)malloc(a.lens[0] + 1);
+            if (bad_cmd) {
+                memcpy(bad_cmd, a.argv[0], a.lens[0]);
+                bad_cmd[a.lens[0]] = '\0';
+            }
+        }
+        {
+            int rc1 = redis_changes_reply_stream(&a)
+                    || redis_verb_is(a.argv[0], a.lens[0], RD_SUB, countof(RD_SUB))
+                    || redis_verb_is(a.argv[0], a.lens[0], RD_UNSUB, countof(RD_UNSUB))
+                ? -1
+                : redis_reply_count(a.argv[0], a.lens[0], (int)m);
+            if (rc1 < 0) {
+                args_free(ctx, &a);
+                for (k = 0; k < m; k++)
+                    JS_FreeValue(ctx, parts[k]);
+                free(parts);
+                JS_FreeValue(ctx, cmd);
+                free(all);
+                free(bad_cmd);
+                return JS_ThrowTypeError(ctx,
+                    "Redis: pipeline element %u has a reply count that cannot "
+                    "be matched (subscribe verbs, HELLO, CLIENT REPLY); use "
+                    "command()", i);
+            }
+            replies += rc1;
+        }
+        need = dyn_resp_cmd_size((int)m, a.argv, a.lens);
+        if (buf_reserve(&all, &acap, alen + need) < 0 || dyn_resp_cmd_encode(all + alen, acap - alen, (int)m, a.argv, a.lens, NULL) < 0) {
+            args_free(ctx, &a);
+            for (k = 0; k < m; k++)
+                JS_FreeValue(ctx, parts[k]);
+            free(parts);
+            JS_FreeValue(ctx, cmd);
+            free(all);
+            free(bad_cmd);
+            return JS_ThrowOutOfMemory(ctx);
+        }
+        alen += need;
+        args_free(ctx, &a);
+        for (k = 0; k < m; k++)
+            JS_FreeValue(ctx, parts[k]);
+        free(parts);
+        JS_FreeValue(ctx, cmd);
+    }
+
+    r = redis_this(ctx, this_val);
+    if (!r) {
+        free(all);
+        free(bad_cmd);
+        return JS_EXCEPTION;
+    }
+    if (r->state == RD_ST_DEAD) {
+        free(all);
+        free(bad_cmd);
+        return JS_ThrowInternalError(ctx, "Redis: the connection is closed");
+    }
+    if (bad_cmd && r->state == RD_ST_READY && r->proto == 2 && r->subscribed > 0) {
+        JSValue e = JS_ThrowTypeError(ctx,
+            "Redis: '%s' is not allowed while subscribed on RESP2; only PING, "
+            "QUIT, RESET and the (un)subscribe commands are",
+            bad_cmd);
+        free(all);
+        free(bad_cmd);
+        return e;
+    }
+    free(bad_cmd);
+    if (r->npending + r->nwait >= r->maxpending) {
+        free(all);
+        return JS_ThrowInternalError(ctx, "Redis: too many commands in flight");
+    }
+    acc = JS_NewArray(ctx);
+    if (JS_IsException(acc)) {
+        free(all);
+        return acc;
+    }
+    p = pend_new(ctx);
+    if (!p) {
+        free(all);
+        JS_FreeValue(ctx, acc);
+        return JS_ThrowOutOfMemory(ctx);
+    }
+    promise = JS_NewPromiseCapability(ctx, funcs);
+    if (JS_IsException(promise)) {
+        free(all);
+        pend_free(ctx, p);
+        JS_FreeValue(ctx, acc);
+        return promise;
+    }
+    p->resolve = funcs[0];
+    p->reject = funcs[1];
+    p->bytes = all;
+    p->nbytes = alen;
+    p->want = replies;
+    p->acc = acc;
+    if (r->state == RD_ST_READY) {
+        if (redis_arm(r, p) < 0) {
+            pend_free(ctx, p);
+            JS_FreeValue(ctx, promise);
+            return JS_ThrowOutOfMemory(ctx);
+        }
+        redis_flush_soon(r);
+    } else {
+        pend_push(&r->wq_head, &r->wq_tail, p);
+        r->nwait++;
+    }
+    redis_hold(ctx, this_val, r);
+    ret = promise;
+    return ret;
+}
+
+static JSValue dyn_redis_get_protocol(JSContext* ctx, JSValueConst this_val)
+{
+    dyn_redis_t* r = redis_this(ctx, this_val);
+    return r ? JS_NewInt32(ctx, r->proto) : JS_EXCEPTION;
+}
+
+static JSValue dyn_redis_get_ready(JSContext* ctx, JSValueConst this_val)
+{
+    dyn_redis_t* r = redis_this(ctx, this_val);
+    return r ? JS_NewBool(ctx, r->state == RD_ST_READY) : JS_EXCEPTION;
+}
+
+static JSValue dyn_redis_get_pending(JSContext* ctx, JSValueConst this_val)
+{
+    dyn_redis_t* r = redis_this(ctx, this_val);
+    return r ? JS_NewInt32(ctx, r->npending + r->nwait) : JS_EXCEPTION;
+}
+
+static JSValue dyn_redis_on(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    dyn_redis_t* r;
+    const char* ev;
+
+    if (argc < 2)
+        return JS_ThrowTypeError(ctx, "on(event, handler)");
+    ev = JS_ToCString(ctx, argv[0]);
+    if (!ev)
+        return JS_EXCEPTION;
+    r = redis_this(ctx, this_val);
+    if (!r) {
+        JS_FreeCString(ctx, ev);
+        return JS_EXCEPTION;
+    }
+    if (strcmp(ev, "push") == 0 || strcmp(ev, "message") == 0) {
+        JS_FreeValue(ctx, r->h_push);
+        r->h_push = JS_DupValue(ctx, argv[1]);
+    } else if (strcmp(ev, "error") == 0) {
+        JS_FreeValue(ctx, r->h_error);
+        r->h_error = JS_DupValue(ctx, argv[1]);
+    } else {
+        JS_FreeCString(ctx, ev);
+        return JS_ThrowRangeError(ctx, "on: unknown event; want 'push' or 'error'");
+    }
+    JS_FreeCString(ctx, ev);
+    return JS_DupValue(ctx, this_val);
+}
+
+static void dyn_redis_dispose(void* native)
+{
+    dyn_redis_t* r = (dyn_redis_t*)native;
+
+    if (!r)
+        return;
+    if (r->cb_depth) {
+        r->closing = 1;
+        return;
+    }
+    dyn_redis_teardown(r);
+}
+
+static _Thread_local int redis_in_final;
+
+static void dyn_redis_finalizer(JSRuntime* rt, JSValue val)
+{
+    redis_in_final++;
+    dyn_res_finalizer(rt, val);
+    redis_in_final--;
+}
+
+static void dyn_redis_teardown(dyn_redis_t* r)
+{
+    dyn_redis_pending_t* p;
+    redis_flush_drop(r);
+    if (r->hooked)
+        dyn_net_off_drain(r);
+    if (r->state != RD_ST_DEAD) {
+        r->state = RD_ST_DEAD;
+        while ((p = pend_pop(&r->head, &r->tail)) != NULL) {
+            if (p->internal || redis_in_final)
+                pend_free_rt(r->rt, p);
+            else
+                redis_settle(r, p, 1,
+                    redis_conn_error(r->ctx, "Redis: client closed"));
+        }
+        while ((p = pend_pop(&r->wq_head, &r->wq_tail)) != NULL) {
+            if (redis_in_final)
+                pend_free_rt(r->rt, p);
+            else
+                redis_settle(r, p, 1,
+                    redis_conn_error(r->ctx, "Redis: client closed"));
+        }
+    }
+    if (r->self_held) {
+        JSValue s = r->self;
+        r->self = JS_UNDEFINED;
+        r->self_held = 0;
+        JS_RemoveShutdownSweep(r->rt, redis_client_sweep, r);
+        JS_FreeValueRT(r->rt, s);
+    }
+    if (r->aio && !r->released) {
+        if (r->fd >= 0)
+            dyn_aio_close(r->aio, r->fd);
+        dyn_net_reactor_release_rt(r->rt);
+    }
+    JS_FreeValueRT(r->rt, r->h_push);
+    JS_FreeValueRT(r->rt, r->h_error);
+#ifdef CONFIG_TLS
+    if (r->tls_ctx)
+        dyn_tls_ctx_free(r->tls_ctx);
+    free(r->tls_ca);
+#endif
+    free(r->host);
+    free(r->path);
+    free(r->user);
+    if (r->pass) {
+        memset(r->pass, 0, strlen(r->pass));
+        free(r->pass);
+    }
+    free(r->rbuf);
+    free(r->obuf);
+    free(r);
+}
+
+static char* opt_str(JSContext* ctx, JSValueConst o, const char* k)
+{
+    JSValue v = JS_GetPropertyStr(ctx, o, k);
+    const char* s;
+    size_t sl = 0;
+    char* out = NULL;
+    if (JS_IsUndefined(v) || JS_IsNull(v)) {
+        JS_FreeValue(ctx, v);
+        return NULL;
+    }
+    s = JS_ToCStringLen(ctx, &sl, v);
+    JS_FreeValue(ctx, v);
+    if (s) {
+        if (memchr(s, 0, sl))
+            JS_ThrowTypeError(ctx, "Redis: option '%s' contains a NUL character", k);
+        else
+            out = strdup(s);
+        JS_FreeCString(ctx, s);
+    }
+    return out;
+}
+
+static int opt_int(JSContext* ctx, JSValueConst o, const char* k, int dflt)
+{
+    JSValue v = JS_GetPropertyStr(ctx, o, k);
+    int32_t n;
+    if (JS_IsUndefined(v) || JS_IsNull(v)) {
+        JS_FreeValue(ctx, v);
+        return dflt;
+    }
+    if (JS_ToInt32(ctx, &n, v) < 0) {
+        JS_FreeValue(ctx, v);
+        return dflt;
+    }
+    JS_FreeValue(ctx, v);
+    return (int)n;
+}
+
+static int opt_bool(JSContext* ctx, JSValueConst o, const char* k)
+{
+    JSValue v = JS_GetPropertyStr(ctx, o, k);
+    int b = JS_ToBool(ctx, v);
+    JS_FreeValue(ctx, v);
+    return b;
+}
+
+static JSValue dyn_redis_ctor(JSContext* ctx, JSValueConst new_target,
+    int argc, JSValueConst* argv)
+{
+    dyn_redis_t* r;
+    JSValueConst opt = argc > 0 ? argv[0] : JS_UNDEFINED;
+    JSValue res;
+
+    if (argc > 0 && !JS_IsObject(opt))
+        return JS_ThrowTypeError(ctx, "Redis: expects an options object");
+
+    r = (dyn_redis_t*)calloc(1, sizeof(*r));
+    if (!r)
+        return JS_ThrowOutOfMemory(ctx);
+    r->ctx = ctx;
+    r->rt = JS_GetRuntime(ctx);
+    r->fd = -1;
+    r->proto = 2;
+    r->state = RD_ST_CONNECTING;
+    r->h_push = r->h_error = JS_UNDEFINED;
+    r->self = JS_UNDEFINED;
+    dyn_resp_scan_init(&r->rscan);
+    r->maxbulk = RD_DEFAULT_MAXBULK;
+    r->maxpending = RD_DEFAULT_PENDING;
+
+    if (JS_IsObject(opt)) {
+        int mb, mp, ct, cmdt, opt_bad;
+        if (dyn_opts_strict(ctx, opt, rd_ctor_keys, 14)) {
+            free(r);
+            return JS_EXCEPTION;
+        }
+#ifdef CONFIG_TLS
+        if (opt_bool(ctx, opt, "tls"))
+            r->use_tls = 1;
+        r->tls_ca = opt_str(ctx, opt, "ca");
+#else
+        if (opt_bool(ctx, opt, "tls")) {
+            free(r);
+            return JS_ThrowTypeError(ctx,
+                "Redis: TLS is not supported in this build");
+        }
+#endif
+        r->host = opt_str(ctx, opt, "host");
+        r->path = opt_str(ctx, opt, "path");
+        r->user = opt_str(ctx, opt, "username");
+        r->pass = opt_str(ctx, opt, "password");
+        r->port_i = opt_int(ctx, opt, "port", 6379);
+        if (r->port_i >= 0 && r->port_i <= 65535)
+            r->port = (uint16_t)r->port_i;
+        r->db = opt_int(ctx, opt, "db", 0);
+        r->binary = opt_bool(ctx, opt, "binary");
+        r->bigint = opt_bool(ctx, opt, "bigint");
+        mb = opt_int(ctx, opt, "maxReplyBytes", 0);
+        if (mb > 0)
+            r->maxbulk = (size_t)mb;
+        mp = opt_int(ctx, opt, "maxPending", 0);
+        if (mp > 0)
+            r->maxpending = mp;
+        ct = opt_int(ctx, opt, "connectTimeoutMs", RD_CONNECT_TIMEOUT);
+        cmdt = opt_int(ctx, opt, "commandTimeoutMs", 0);
+        if (cmdt > 0)
+            r->command_timeout_ms = (uint64_t)cmdt;
+        if (ct > 0)
+            r->connect_deadline_ms = dyn_timer_now_ms() + (uint64_t)ct;
+        opt_bad = JS_HasException(ctx);
+        if (opt_bad || r->db < 0 || r->db > 255) {
+#ifdef CONFIG_TLS
+            if (r->tls_ctx)
+                dyn_tls_ctx_free(r->tls_ctx);
+            free(r->tls_ca);
+#endif
+            free(r->host);
+            free(r->path);
+            free(r->user);
+            if (r->pass) {
+                memset(r->pass, 0, strlen(r->pass));
+                free(r->pass);
+            }
+            free(r);
+            return opt_bad ? JS_EXCEPTION
+                           : JS_ThrowRangeError(ctx, "Redis: db must be 0..255");
+        }
+        if ((r->port_i < 1 || r->port_i > 65535) && !r->path) {
+#ifdef CONFIG_TLS
+            if (r->tls_ctx)
+                dyn_tls_ctx_free(r->tls_ctx);
+            free(r->tls_ca);
+#endif
+            free(r->host);
+            free(r->path);
+            free(r->user);
+            if (r->pass) {
+                memset(r->pass, 0, strlen(r->pass));
+                free(r->pass);
+            }
+            free(r);
+            return JS_ThrowRangeError(ctx, "Redis: port must be 1..65535");
+        }
+        if (JS_HasException(ctx)) {
+#ifdef CONFIG_TLS
+            if (r->tls_ctx)
+                dyn_tls_ctx_free(r->tls_ctx);
+            free(r->tls_ca);
+#endif
+            free(r->host);
+            free(r->path);
+            free(r->user);
+            if (r->pass) {
+                memset(r->pass, 0, strlen(r->pass));
+                free(r->pass);
+            }
+            free(r);
+            return JS_EXCEPTION;
+        }
+    } else {
+        r->port = 6379;
+        r->connect_deadline_ms = dyn_timer_now_ms() + RD_CONNECT_TIMEOUT;
+    }
+
+    r->aio = dyn_net_reactor_acquire(ctx);
+    if (!r->aio) {
+#ifdef CONFIG_TLS
+        if (r->tls_ctx)
+            dyn_tls_ctx_free(r->tls_ctx);
+        free(r->tls_ca);
+#endif
+        free(r->host);
+        free(r->path);
+        free(r->user);
+        if (r->pass) {
+            memset(r->pass, 0, strlen(r->pass));
+            free(r->pass);
+        }
+        free(r);
+        return JS_ThrowInternalError(ctx, "Redis: cannot acquire the reactor");
+    }
+
+    r->fd = r->path
+        ? dyn_aio_unix_connect(r->aio, r->path, redis_on_connect, r)
+        : dyn_aio_connect(r->aio, r->host ? r->host : "127.0.0.1",
+              r->port, redis_on_connect, r);
+    if (r->fd < 0) {
+        JSValue e = JS_ThrowInternalError(ctx, "Redis: connect: %s",
+            strerror(errno));
+        dyn_redis_dispose(r);
+        return e;
+    }
+
+#ifdef CONFIG_TLS
+    if (r->use_tls)
+        goto after_hello;
+#endif
+    if (redis_queue_hello(r) < 0) {
+        dyn_redis_dispose(r);
+        return JS_ThrowOutOfMemory(ctx);
+    }
+#ifdef CONFIG_TLS
+after_hello:;
+#endif
+
+    if (dyn_net_on_drain(redis_tick, r) == 0)
+        r->hooked = 1;
+
+    res = dyn_res_wrap(ctx, new_target, dyn_redis_class_id, r, dyn_redis_dispose);
+    return res;
+}
+
+static const JSCFunctionListEntry dyn_redis_proto[] = {
+    JS_CFUNC_DEF("command", 1, dyn_redis_command),
+    JS_CFUNC_DEF("pipeline", 1, dyn_redis_pipeline),
+    JS_CFUNC_DEF("on", 2, dyn_redis_on),
+    JS_CGETSET_DEF("protocol", dyn_redis_get_protocol, NULL),
+    JS_CGETSET_DEF("ready", dyn_redis_get_ready, NULL),
+    JS_CGETSET_DEF("pending", dyn_redis_get_pending, NULL),
+};
+
+static void dyn_redis_gc_mark(JSRuntime* rt, JSValueConst val,
+    JS_MarkFunc* mark_func)
+{
+    DynResource* res = (DynResource*)JS_GetOpaque(val, dyn_redis_class_id);
+    dyn_redis_t* r;
+
+    if (!res || res->closed || !res->native)
+        return;
+    r = (dyn_redis_t*)res->native;
+    JS_MarkValue(rt, r->self, mark_func);
+    JS_MarkValue(rt, r->h_push, mark_func);
+    JS_MarkValue(rt, r->h_error, mark_func);
+}
+
+static const JSClassDef dyn_redis_class = {
+    "Redis",
+    .finalizer = dyn_redis_finalizer,
+    .gc_mark = dyn_redis_gc_mark,
+};
+
+int dyn_redis_register(JSContext* ctx, JSModuleDef* m)
+{
+    return dyn_register_class(ctx, m, &dyn_redis_class_id, &dyn_redis_class,
+        dyn_redis_proto, countof(dyn_redis_proto),
+        dyn_redis_ctor, "Redis");
+}
+
+void dyn_redis_add_exports(JSContext* ctx, JSModuleDef* m)
+{
+    JS_AddModuleExport(ctx, m, "Redis");
+}
+
+#endif

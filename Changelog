@@ -1,0 +1,1168 @@
+2026-10-08 (wave 4, batch 1):
+
+## Trimmed promise surface, cheaper value coercion, SIMD tiers proved on x86
+
+Regression tests: tests/test_audit_w4_native_1.js, tests/test_simd_tiers.c,
+tests/test_kit.js.
+
+- REMOVED (each had a blocking form that stays): dyna:file readFileAsync,
+  writeFileAsync, copyFileAsync, asyncStats and FileWriter.syncAsync;
+  HTTPClient getAsync, postAsync, requestAsync; Fetcher.getAsync;
+  Argon2id hashAsync, verifyAsync, asyncStats; os.sleepAsync (the global
+  `sleep(ms)` stays). The servers, PostgreSQL, Redis, DNS, streams, spawn,
+  the file watcher, fetch() and dyna:async are unchanged. For a request to a
+  server in the same process use fetch(); hash passwords on an os.Worker when
+  the event loop must keep serving. A Crawl still accepts a client object with
+  its own `requestAsync(method, url)`.
+- A value that is tested for "is this bytes?" no longer builds and discards
+  an exception to find out. TextDecoder.decode(Uint8Array) 1903 -> 201 ns per
+  call; ArrayBuffer arguments to the hashes, the codecs and dyna:bytes 1.8 us
+  -> 0.1 us; CBOR and MessagePack encoding of plain objects 7.7x faster
+  (20000 small objects 37 ms -> 2.8 ms) and structuredClone 8x;
+  conn.write("text") on a TCP connection and an App handler that returns an
+  object no longer raise two internal exceptions per call.
+- TextDecoder skips its byte-wise state machine when the whole input
+  validates as UTF-8: 4 MiB of ASCII 436 -> 6090 MB/s, a 200-byte message
+  540 -> 78 ns. Malformed input takes the old path and gives the same text.
+- dyna:bytes count(buf, byte) is one vectorised pass (502 MB/s -> memory
+  speed on text with a space every fifth byte).
+- dyna:simd: a value gives the same result at every position of an array on
+  every tier. `silu` used the fast exponential in the vector body and expf in
+  the last 1-3 elements (1.7% apart) and on the scalar tier; it is the fast
+  form everywhere, as documented. On x86 `sigmoid`, `tanhFast` and `vexp`
+  rounded differently in the vector body than in the tail and `sigmoid`
+  did not saturate to exactly 0 below -30. `relu6(-0)` is +0 like `relu(-0)`.
+- scrape: `new Extractor(spec)` released none of its field names (81 bytes
+  per field for the life of the process).
+- build.sh: `t SUITE... [--case=PAT]` runs named suites, and named cases of a
+  tests/kit.js suite, against the binary that is already built and refuses a
+  stale one. Every subcommand that builds or runs the binary holds one tree
+  lock; a second one fails at once naming the owner instead of running
+  underneath it. `test-simd-tiers` runs the element-wise kernels on this
+  CPU's tier and `test-simd-x86` runs every kernel harness on the SSE4.2 and
+  AVX2 tiers under Rosetta 2 on an Apple-silicon Mac.
+- tests/kit.js: named cases, a case filter, assertions that report what they
+  saw, loud skips, per-case timeouts.
+
+2026-10-07 (batch 10):
+
+## Audit hardening, wave 3 (batch 10: SIMD pre-scan, HTTP client, io_uring backend, installer)
+
+Regression tests: tests/test_audit_w3_native_10.js, tests/test_install_flow.sh.
+
+- HTTP client: response header lines with the same name are combined in
+  order ("a=1, b=2") instead of keeping only the last, so no Set-Cookie line
+  is lost. Over https a body with no declared length is delivered when the
+  peer ends with close_notify and is a "truncated body" error when the stream
+  is cut; it used to be the other way round (the clean close failed with
+  "receive failed", the cut returned 200 with a partial body).
+- dyna:simd: the NaN pre-scan of relu, clamp, sigmoid, vsqrt, max and min is
+  vectorisable (relu 0.49 -> 0.16 ns per element, max/min 0.54 -> 0.20);
+  `variance` is one pass with no temporary (0.375 -> 0.272, same bits).
+- x86 dispatch: the AVX2 kernels are selected only when FMA is present and
+  the AVX-512 kernels only when F, DQ and BW all are, which is what those
+  files are compiled for.
+- io_uring backend (Linux, CONFIG_IO_URING): a callback that grows the
+  descriptor table no longer leaves the completion handler with a stale slot;
+  a send buffer is kept until its completion arrives; sendfile closes the
+  source descriptor on every refused call; disarming the periodic tick is
+  silent. `dyna:uring` reads into zeroed memory and reaps outstanding block
+  reads before freeing after an error. CONFIG_IO_URING with CONFIG_TLS is
+  refused at configure time (it could not link).
+- Files are read into the heap unless a caller asks for a mapping; no module
+  asks.
+- install.sh: `--uninstall` removes only files that identify as DynaJS; an
+  unset HOME is refused with a message.
+- build.sh: CONFIG_NATIVE uses -march=native on x86; the hardening-flag
+  cache is keyed on compiler identity, target and the probe list. The
+  pre-push hook also gates changes to build.sh, tools/, install.sh and
+  dynajs.d.ts.
+
+BEHAVIOR CHANGES
+- `response.headers["Set-Cookie"]` (and any repeated header) is "v1, v2",
+  not the last value.
+- An https response with no Content-Length and no chunking from a server
+  that closes TCP without close_notify now fails as truncated.
+
+2026-10-07 (batch 9):
+
+## Audit hardening, wave 3 (batch 9: measured performance fixes)
+
+Regression test: tests/test_audit_w3_native_9.js.
+
+- Interpreter: `local += x` with one int and one double operand is inline
+  (`sum += i` once `sum` is fractional: 65 ms -> 31 ms per 3M iterations).
+  Conditional branches poll for interrupts only when they jump backward.
+  JetStream subset, interleaved best of 3: richards -3%, deltablue -2%,
+  raytrace, crypto, navier-stokes and splay within 1%.
+- `new Float64Array(array)` (any typed array from an array) no longer walks
+  the iterator protocol per element when the array iterator is the built-in
+  one: 120 ms -> 28 ms for 4M elements.
+- DataFrame: `FROM_RECORDS` matches keys by identity instead of comparing
+  names (952 ns -> 23 ns per cell at 800 columns, 104 -> 32 at 20);
+  `TO_RECORDS` binds each column once (-28%).
+- AESGCM / ChaCha20Poly1305 objects keep a keyed cipher context: seal/open of
+  a 64-byte message 614 ns -> 311 ns; 1 MiB unchanged.
+
+2026-10-07 (batch 8):
+
+## Audit hardening, wave 3 (batch 8: timers, reactor, Redis, os, files, logs)
+
+Regression test: tests/test_audit_w3_native_8.js.
+
+- Timers: `setTimeout`/`clearTimeout` are O(log n) (a binary heap with an id
+  table replaces the sorted list: 28 us -> 0.2 us per operation at 20,000 live
+  timers). An interval no longer consumes the live-timer cap each time it
+  fires (after 100,000 firings `setTimeout` threw "too many live timers").
+- Event loop: timers and I/O completions alternate; a burst of completions no
+  longer delays a due timer until all of them are delivered (measured gap
+  439 ms -> 24 ms), and a due timer still cannot starve I/O. A full thread
+  pool parks further work on the reactor instead of running blocking file
+  work on the loop thread (48 reads through one pool thread: 924 ms inside
+  the calls -> 1 ms).
+- Reactor: closing the last listener no longer stops the 250 ms tick that
+  idle sweeps and query deadlines run on; a cancelled write promotes the next
+  queued one; a callback that closes and reopens a descriptor cannot receive
+  the old occupant's event.
+- Redis: the subscription state follows the server's confirmations, so a
+  message after `UNSUBSCRIBE` of a channel that was never subscribed is
+  delivered to the push handler instead of resolving the next command;
+  subscribe verbs are refused inside `pipeline()`; RESP3 attributes are
+  accepted at any position; the password is wiped after the handshake; an
+  option containing U+0000 is refused.
+- PostgreSQL: `maxResultBytes` (default 1 GiB) bounds one result set.
+- `os.exec`: arguments, `file` and `cwd` containing U+0000 are refused;
+  children start with the default SIGPIPE disposition. `os.kill` refuses
+  pid 0 and -1 and out-of-range signal numbers.
+- `copyFile`: a source that is not a regular file is refused; a failed copy
+  removes the destination it created; `move` across filesystems syncs the
+  copy before removing the source.
+- Logger: files are created 0640; sinks shared between runtimes are
+  serialised.
+- Watcher (kqueue): descriptors of deleted entries are released; arming is a
+  hash lookup.
+- `dyna:bench`: samples are batches lasting at least 0.1 ms, so a
+  sub-microsecond body no longer reports a median of 0.
+- `dyna:async`: Semaphore/Queue/Channel/Pool hand-offs are O(1).
+- `App.rpc/static/upload/ws/sse/proxy` return the app. `App.proxy` always
+  sends an origin-form target upstream and closes the upstream connection
+  when its client goes away.
+- Spawn: reading a full pipe buffer in small pieces is linear.
+- dyna:ml: a persisted tree model whose hyper-parameters are out of range, or
+  whose family flags do not match the class, is refused; LinearRegression
+  takes at most 4096 features.
+- Raw-mode prompts restore the terminal on SIGTERM/SIGHUP/SIGQUIT and at exit.
+- A Worker's undelivered messages are capped at 256 MiB.
+
+BEHAVIOR CHANGES
+- `os.kill(0, sig)` and `os.kill(-1, sig)` throw a RangeError.
+- A child of `os.exec` that writes to a closed pipe dies of SIGPIPE, as it
+  would from a shell (it used to inherit SIG_IGN and see EPIPE).
+- `copyFile` from a device or FIFO throws a TypeError.
+- New log files are 0640 instead of 0644.
+- `redis.pipeline()` throws a TypeError for subscribe verbs.
+- `bench` p50Ms/p99Ms are per-batch means for bodies faster than 0.1 ms.
+
+2026-10-07 (batch 7):
+
+## Audit hardening, wave 3 (batch 7, small items)
+
+Regression test: tests/test_audit_w3_native_7.js.
+
+- SQLite: `exec()` reports 0 for statements that change no rows (it returned
+  the previous statement's count: `create table` after a 3-row insert gave
+  3); SQL containing U+0000 is refused (SQLite silently stopped reading
+  there); handles open in defensive mode with trusted_schema off.
+- PostgreSQL: SQL containing U+0000 is refused; an int8 text value that is
+  out of range or not in canonical form stays text instead of saturating; the
+  command-tag row count no longer overflows.
+- DNS: an encoded name is limited to 255 octets including the root label (256
+  was accepted); a TTL with the top bit set is 0 (RFC 2181).
+- HTTP server: a request line must end in HTTP/1.0 or HTTP/1.1 and its method
+  must be a token; anything else is a 400 (`GET /x HTTP/9.9` was served).
+- term Table/StyleText: at most 4096 columns / 256 styles, checked before
+  any allocation.
+- CSV file reads use read(2), like the other file readers.
+
+BEHAVIOR CHANGES
+- `db.exec("create table ...")` returns 0 where it could return a stale count.
+- Requests with an HTTP version other than 1.0/1.1 get a 400.
+
+2026-10-07 (batch 6):
+
+## Audit hardening, wave 3 (batch 6)
+
+- HTTPClient/fetch: a buffered exchange ends with a timeout error after
+  20 x the socket timeout in total (10 minutes at the 30 s default). The
+  timeout used to apply to each read only, so a server sending one byte at a
+  time could hold a request open indefinitely. getStream() is unchanged.
+  Test: tests/test_audit_w3_native_6.js.
+- App.ws(): new optional `upgrade(req)` handler, called before the 101
+  response with the handshake's Origin, Host, Cookie and subprotocol. A falsy
+  return or a throw answers 403. WebSocket routes had no way to see the
+  upgrade request, so a cookie-authenticated endpoint could not reject a
+  cross-site page (cross-site WebSocket hijacking).
+
+2026-10-07 (batch 5):
+
+## Audit hardening, wave 3 (batch 5)
+
+Regression test: tests/test_audit_w3_native_5.js (mock and live PostgreSQL 18).
+
+- PostgreSQL: `tls: true` now performs the protocol's SSLRequest step and
+  starts TLS only on the server's `S`. It used to open with a TLS ClientHello,
+  which no stock server accepts, so TLS could not be used at all. An `N`
+  answer, or any byte after `S`, ends the connection; there is no fallback to
+  plaintext.
+- dyna:simd: a window `offset`/`length`/`limit` beyond 2^53 is a RangeError
+  (2^64+1 wrapped to 0 and returned a sum). Fractions still truncate.
+- Workers: at most 256 live Workers; creating another is a RangeError.
+- Docs: Brotli `level` is ignored by the macOS system codec.
+
+2026-10-07 (batch 4):
+
+## Audit hardening, wave 3 (batch 4)
+
+Regression tests: tests/test_audit_w3_native_4.js, tests/test_install_flow.sh.
+
+- dyna:ml: `fit()` obeys `--timeout-ms` (LogisticRegression, KMeans,
+  GaussianMixture, SVC and every tree/forest/boosting estimator). A long fit
+  used to run until the hard stop killed the process (exit 113); it now ends
+  with the "interrupted" error.
+- Redis: `HELLO` and `CLIENT REPLY` are refused, alone or in a pipeline. They
+  change how many replies arrive, which silently attached later replies to
+  the wrong commands. Verified against the mock and a live Redis.
+- install.sh: the freshly built binary must run and pass the SHA-256 known
+  answer BEFORE it replaces the installed one; a wrong digest is fatal (it
+  was reported as a successful install); the binary is installed by rename,
+  so a failed run leaves the previous one intact.
+- Repository: `.obj-t262/` (a build directory already listed in .gitignore
+  but committed earlier) is no longer tracked.
+
+BEHAVIOR CHANGES
+- `redis.command("HELLO", ...)` and `redis.command("CLIENT", "REPLY", ...)` throw.
+
+2026-10-07 (later):
+
+## Audit hardening, wave 3 (batch 3): numeric correctness
+
+Regression tests: tests/test_audit_w3_simd.js, tests/test_audit_w3_mathx.js.
+Expected values are definitions evaluated in plain JS, DLMF identities and
+Abramowitz & Stegun table values.
+
+dyna:simd
+- sum, mean, dot, normL1, variance (and normalize's statistics) accumulate in
+  float64. They were summed in float32 lanes: `sum` of 2e7 copies of 0.1 was
+  4.3% low, 8e7 ones summed to 67108864. They are also about 2x faster on
+  large arrays (0.28 -> 0.14 ns per element for sum).
+- min/max of an all-infinite array returns that infinity (was +-FLT_MAX).
+- distCheb returns NaN for a NaN anywhere (short inputs dropped it).
+- topkIndices no longer stalls on a NaN; NaN ranks lowest.
+- argmax/argmin ignore NaN on every instruction set; cummax carries the
+  running maximum across a NaN.
+- silu gives one answer per input value whatever the array length (the last
+  n mod lanes elements used a different exponential).
+- x86: silu(x <= -89.42) returned x and vexp(x >= 89.42) returned 0.
+- arm64: vinv of a positive subnormal returned -Infinity; vsqrt, vinv and
+  vrsqrt are now correctly rounded (they were estimate + Newton steps).
+- gemv/gemvT/gemm refuse an output that overlaps an input (the result was
+  silently wrong).
+
+dyna:mathx
+- gammainc, gammaincinv, betainc: the series budget grows with the shape and
+  a series that still does not converge returns NaN. `gammainc(1e5, 1e5)` was
+  0.398 (true 0.5004); `betainc(0.5, 1e8, 1e8)` was 0.385 (true 0.5).
+- besseli/besseliScaled: correct for x > 20 with a moderate or large order.
+  `besseli(30, 21)` was -2.3e9 (true 0.4798).
+- scalbn/ldexp: exponents beyond int32 saturate instead of wrapping.
+- erfcinv: accurate down to 1e-300 (was Infinity below about 1e-16).
+- besselk of an order above 1e6 at x < 0.5 is +Infinity (was 0); bessely
+  refuses orders above 2^24 like besselj; legendreP no longer converts an
+  out-of-range order to int before rejecting it.
+
+BEHAVIOR CHANGES
+- float32 reductions return slightly different (more accurate) values for
+  long arrays.
+- argmax/argmin/topkIndices/cummax results change for inputs containing NaN.
+- besselk/besselkScaled of an order above 1e6 (or non-finite) return
+  +Infinity, the mathematical limit, where they returned 0. The guard against
+  an O(order) recurrence is unchanged.
+- gemv/gemvT/gemm with an aliased output now throw.
+- vsqrt/vinv/vrsqrt low bits change on arm64.
+
+2026-10-07:
+
+## Audit hardening, wave 3 (batch 2)
+
+Regression test: tests/test_audit_w3_native_3.js.
+
+- SQLite: a running statement is interrupted when `--timeout-ms` expires (it
+  used to run on until the hard stop killed the process), and the native
+  memory limit is SQLite's heap limit (400 MB was storable under a 16 MB
+  budget).
+- `os.exec` with `timeout`: the child runs in its own process group, the
+  whole group is signalled and the child is reaped. A timed-out command used
+  to leave a zombie and its own children running.
+- `readFile`/`readBytes` (sync and async) read with read(2). They used to map
+  files of 64 KiB and up, so another process truncating the file killed the
+  reader with SIGBUS.
+- dyna:log text format escapes C1 controls (U+0080..U+009F), DEL and
+  U+2028/U+2029, as the JSON format already did.
+- `makeTempFile`/`makeTempDir`: a prefix with `/`, `\`, a leading `.` or over
+  200 bytes is a RangeError (`"../../x"` created files outside the temp dir).
+- `sys.setUid`/`setGid`: a failing `setgroups` is an error instead of being
+  ignored.
+- Scrypt: `p` is part of both budgets (memory 128*r*(N+p+2) <= 1 GiB, work
+  N*r*p <= 2^26).
+- Argon2id is about 2.4x faster (65536 KiB, t=3: 264 ms -> 112 ms): the
+  per-block scratch wipe is one memset instead of 2048 volatile byte stores.
+  Output is unchanged.
+- Template: the 65536-tag compile cap is reported as such (was "out of
+  memory"); a section's output pre-reservation is clamped to 16 MiB.
+- Selector: the match budget is 2^24 unit tests (was 2^28) and the memoised
+  path is charged too.
+
+BEHAVIOR CHANGES
+- Temp-name prefixes containing a separator or starting with `.` now throw.
+- Scrypt with N*r*p above 2^26 now throws.
+- A selector that needed more than 2^24 unit tests now throws the budget error.
+
+2026-10-06 (later):
+
+## Audit hardening, wave 3 (batch 1)
+
+Regression tests: tests/test_audit_w3_native_1.js, tests/test_audit_w3_native_2.js.
+
+Sandbox budgets
+- `--native-memory-limit` / `sys.setNativeMemoryLimit` now count every
+  native-module allocation, not six files' worth: a 5 MB gzip bomb under a
+  1 MB native budget peaked at 861 MB of RSS and now stops at 13 MB. Counting
+  starts when a limit is first set; with no limit the cost is one flag test
+  per allocation. What is and is not counted is stated at setNativeMemoryLimit.
+- A timer that is always due (a `setTimeout(f, 0)` chain, an interval slower
+  than its body) no longer starves sockets, file completions and Workers:
+  I/O is polled at least every 2 ms of back-to-back timers.
+
+Process lifetime
+- `Spawn.wait()` and `Argon2id.hashAsync/verifyAsync` now take part in the
+  engine-shutdown sweep like every other parked operation: if the runtime is
+  torn down while one is pending (for example after an uncaught error) its
+  promise is rejected with "<op>: aborted at engine shutdown" and the process
+  exits with its normal status. It used to abort (SIGABRT, status 134) on an
+  engine assertion.
+
+Compression and archives
+- `maxOutputBytes` is exact for every decoder (was refused below 320 bytes of
+  slack for gunzip/inflate, 8 for lz4, 65536 for unzstd). A frame that
+  declares more than the cap is a RangeError like every other cap refusal
+  (unzstd and unsnappy threw TypeError).
+- `unzstd` decodes concatenated frames; `unzstd`, `unbrotli` and `lz4Unframe`
+  refuse bytes after the end of the stream instead of ignoring them.
+- `ZipExtractAll` writes nothing unless the whole archive validates and every
+  member passes its CRC; members that share archive bytes are refused; a
+  member cannot inflate past its declared size.
+- `ZipList` refuses a central directory longer than the declared count.
+- tar: `.` and `a/.` are accepted names; an over-long GNU long name is refused
+  instead of truncated.
+
+Network reactor
+- A listener whose accept fails for lack of descriptors or memory is paused
+  and retried from the 250 ms sweep instead of spinning a core (Linux; Darwin
+  drops the connection itself). At most 256 accepts per dispatch.
+- A DNS completion for a socket that was closed and whose descriptor number
+  was reused is discarded (it could connect the new socket to the old host).
+- Accepted sockets and Worker wake pipes are close-on-exec.
+- `sendfile` on a file that became shorter than the promised length ends with
+  an error instead of spinning (Darwin) or reporting success (Linux).
+- A send issued while a file body is still being sent is queued behind it.
+
+BEHAVIOR CHANGES
+- Trailing bytes after a zstd/brotli/lz4-frame stream now throw.
+- `unzstd(a ++ b)` returns both frames' contents.
+- zstd/snappy declared-size refusals are RangeError (were TypeError).
+- `ZipList` on an archive whose end record under-declares its entries throws.
+- Exit status for "uncaught error with a pending Spawn.wait or async Argon2"
+  is 1 (was 134).
+
+2026-10-06:
+
+## Audit hardening, wave 2
+
+Each item has a regression test (tests/test_audit_w2_*.js); bounds and refusal
+rules are stated in dynajs.d.ts.
+
+Sandbox budgets
+- `--timeout-ms` now holds for tail-call loops, for loops whose back-edge is a
+  fused compare-and-branch (`do {} while (x === 1)`), for `tryCatch` (which no
+  longer catches the interrupt), for `Object.equals`/`clone`/`mergeDeep`/`evolve`,
+  for the array-like forms of `with`/`toReversed`/`toSpliced`/`toSorted`, and for
+  an event loop that is only waiting. A script past its deadline exits non-zero.
+- Hard stop: if the script has not stopped within the deadline plus a grace of
+  timeout/4 (clamped to 250..2000 ms) the process is terminated with exit code
+  113. This is the bound for native loops that do not poll.
+- An `await` that can never settle (no timers, I/O or jobs left) is an
+  InternalError instead of a busy spin.
+- A Worker's native stack is 8 MiB on every platform; runaway recursion inside
+  a Worker is a RangeError, not a crash.
+
+Memory safety
+- A buffer handed to a native call cannot be detached, resized or transferred
+  until that call returns (see BEHAVIOR CHANGES).
+- Native modules build result objects and arrays with own properties only, so
+  an accessor on Object.prototype or Array.prototype can no longer run user
+  code in the middle of a native operation (URLSearchParams iteration, ML
+  fitted attributes and fold tables, and every other result builder).
+- structures: `X.deserialize()` constructs natively and never consults
+  `X.prototype.constructor` (heap overflow in every decoder).
+- matcher: `Levenshtein(a, b)` without `{max}` no longer overflows or returns a
+  wrong distance when the shorter string exceeds 64 code points.
+- decimal: an allocation failure under `--native-memory-limit` is an exception,
+  not a NULL dereference.
+- dataframe: a SharedArrayBuffer-backed column is snapshotted at construction;
+  a shared mask is refused. ml: shared Float64Array input is refused.
+- ml: fold indices are range-checked; a Pipeline cannot be closed by one of its
+  own stages mid-fit.
+- crypto: PEM text outlives the BIO that parses it; growable SharedArrayBuffer
+  allocation; TLS client connections keep their context alive.
+- file: `removeAll` no longer closes its directory descriptor twice.
+- `Object.assocPath`/`dissocPath`/`modifyPath` on a runaway path throw instead of
+  overflowing the native stack.
+
+Denial of service
+- Atom table and Map: a flooded hash chain switches that table to a keyed hash
+  (crafted equal-length keys no longer make interning quadratic).
+- String search (`indexOf`, `lastIndexOf`, `includes`, `split`, `count`, and
+  the byte search behind bytes/matcher/regexp prefilter/http) falls back to a
+  linear-time algorithm when a naive scan stops making progress.
+- URL: `pathname` setter is linear; an IDNA host over 4096 mapped code points
+  is refused. markdown: delimiter runs, backtick runs, link tails and
+  blockquotes are all inside the work budget. dataframe: one NaN no longer makes
+  ROLLING_VAR/ROLLING_STD quadratic. `Object.keysIn`/`valuesIn`/`omit` are
+  O(n log n).
+
+Hardening
+- crypto: keys and secrets must be a string or bytes (TypeError otherwise);
+  JWTVerify refuses a PEM key for HS*, an empty HMAC key, a `crit` header and a
+  non-canonical signature; ES256/384/512 require the exact curve; an encrypted
+  PEM is refused without prompting; X509.generateSelfSigned uses a random
+  serial and refuses SAN entries containing a comma or line break.
+- http: static routes refuse dot-segments per path segment, hide dotfiles
+  (except /.well-known/) and open files beneath the root without following
+  symlinks; client chunk sizes are strict hex; a header string needs a token name.
+- net: TCPProxy defaults to 8192 connections and a 10 s upstream connect
+  timeout, and takes a `host` option.
+- sys: spawned children close every inherited descriptor (close_range/closefrom
+  where available), drop supplementary groups before setgid/setuid, and the
+  uid/gid value 4294967295 is refused.
+- html: attributes past the 512 cap are discarded, not re-parsed as markup;
+  selector attribute tests read own attributes only; over-deep hand-built trees
+  are a RangeError.
+
+## BEHAVIOR CHANGES (wave 2)
+
+- ArrayBuffer `resize`/`transfer`/`transferToFixedLength` and
+  `Worker.postMessage` transfer throw TypeError ("in use by a running native
+  call") when invoked from a getter or callback while a native function still
+  holds that buffer. Do the transfer after the call returns.
+- `String.prototype.escapeHTML` also escapes `"` and `'` (as `&quot;`, `&#39;`).
+- `Object.set(obj, path, v)` creates and writes OWN properties only; a path
+  through `__proto__` or `constructor.prototype` creates plain own keys.
+- `String.prototype.format` reads own properties of its object argument only.
+- crypto key/secret arguments: `undefined`, `null`, numbers, booleans and plain
+  objects are a TypeError (they were stringified).
+- `X509.generateSelfSigned` serial numbers are random (was always 01).
+- `ml.KMeans(k, { seed })` now honours the seed (the object was read as seed 0).
+- dataframe `TO_CSV` prints numbers in shortest round-trip form (`0.1`, not
+  `0.10000000000000001`; `Infinity`, not `inf`) and puts the formula guard
+  inside the quotes.
+- `--timeout-ms`: exit code is non-zero once the deadline has passed, 113 on
+  the hard stop.
+- http static routes: dotfiles answer 404.
+
+2026-10-03:
+
+## Audit hardening
+
+Security fixes from the full-tree audit (each with its regression test; the
+exact bounds and refusal rules live in dynajs.d.ts and API.md):
+
+- PostgreSQL MD5 auth: a crafted server challenge overflowed the heap. MD5
+  and cleartext auth are now refused on a plaintext connection unless the
+  per-connection `insecureAuth: true` opt-in is set (`tls: true` accepts
+  them without the knob).
+- URL redaction overflow: Fetcher stats() echoed the stored proxy URL and CA
+  verbatim. Proxy userinfo is redacted to `***@` and a PEM `ca` is returned
+  as `<pem-redacted>`.
+- onConnect use-after-free: HTTPClient's connect hook could outlive a client
+  closed mid-request; the hook state is now ownership-tracked.
+- SpawnPipe detach use-after-free: detaching a Spawn stdin/stdout pipe
+  mid-operation no longer touches freed pipe state.
+- Decode-bomb budgets: structures deserialize (plus ASN.1 decode and the
+  record decoders) charges at most 512 MiB + 64x the record's payload bytes
+  of declared native allocation per record and refuses the rest instead of
+  allocating.
+- Verify caps: Argon2id.verify refuses PHC parameters over 16 iterations,
+  16 parallelism or 1 GiB memory (8*parallelism <= m KiB <= 1048576);
+  PBKDF2 caps iterations x output-blocks at 2^24.
+- DoS caps: regexp/selector compile and markdown render budgets, template
+  render 1048576 elements, IDNA labels 4096 mapped code points, punycode
+  decode 1024 octets, URL input 64 KiB, TOTP window 4096, bcrypt password
+  72 bytes, Metrics registry 256 series, Sitemap.list 1000 children /
+  50000 URLs.
+- CRLF request injection: Fetcher header names must be HTTP tokens and
+  values must not contain CR/LF/NUL, on every path (get/getAsync/robots/
+  Crawl/getStream).
+
+## BREAKING / BEHAVIOR CHANGES (0.9 -> 0.10)
+
+Before/after guidance for each item: API.md, section "0.9 -> 0.10 migration".
+
+- crypto.PBKDF2: `salt` is REQUIRED; a missing salt is a TypeError (the old
+  all-zero default was silently weak).
+- http.CookieSerialize: `opts` is typed `CookieOptions` (was
+  `Record<string, unknown>`); the bag is strict, so an unknown key throws.
+- http.RangeParse: declared `[{start,end},...] | "unsatisfiable" | null`
+  (was `unknown`); a header may carry several ranges, and "unsatisfiable"
+  is a distinct outcome from a malformed (null) one.
+- ml: SVC.decisionFunction, predictProba, PCA.fitTransform and the scalers'
+  transform/fitTransform may return a flat Float64Array when X is flat.
+- ml.PipelineStage: DBScan removed (it fits but cannot transform/predict, so
+  a Pipeline has no position for it).
+- xml.XMLStringify refuses raw NUL (XML 1.0 Char excludes U+0000).
+- config.TOML.stringify refuses null/undefined (TOML 1.0 has no null
+  literal).
+- time.Duration: every component is bounded at |value| <= 1e12; a larger
+  component is a RangeError (keeps the downstream int64 folds in range).
+- structures: serialized-record decode budget is 512 MiB + 64x the payload
+  per record; amplified encodings are additionally capped at their legitimate
+  scale (constants/UnionFind 2^23, arithmetic sorted/BitSet/Bloom/CMS words
+  2^22), so over-amplified records are refused, not allocated.
+- http.App.upload: a declared Content-Type outside a non-empty `allow` list
+  is now 415 (was 403); `.ext` entries never match an upload.
+- config.Env.load: a NUL value is a TypeError and an expansion above 1 MiB a
+  RangeError; the file is capped at 8 MiB and keys at 4096 bytes.
+- compress: every decompressor gained the optional `maxOutputBytes` cap
+  (integer 1..2^30; RangeError when exceeded, omitted = the 1 GiB default).
+- scrape.Sitemap.list: an index over 1000 child sitemaps and a flattened
+  result over 50000 URLs are RangeErrors.
+- matcher: the diff budget is widened to 2*(len_a+len_b)^2 diagonal steps
+  clamped to [2^28, 2^31], so wide dissimilar inputs now diff instead of
+  refusing early.
+- structures.IntervalTree: insert(lo, hi) refuses an inverted pair with
+  RangeError (0.9 clamped hi up to lo), and deserialize skips a forged
+  inverted interval the same way it skips a NaN row.
+
+2026-09-04:
+
+- dyn-ac (audit E10-11 redesign): MEASURED (bench/bench_ac.c, old build vs
+  new linked against the same harness, hits and text hashes asserted equal on
+  every row). The single dense table (1 KiB/state, 99.6% redundant slots --
+  fill = edges/(states*256) = 0.004 on every bench set) is now one of two
+  materializations of the same trie, chosen at build time by
+  DYN_AC_DENSE_MAX (2048 states, the measured cache crossover):
+    small sets stay dense  -- S10/A2/P1/L64 scan 0.97-1.05x = parity
+    large sets go compact (double-array, ~31 B/state, fail-walk scan)
+      M1000   6882 states:  6.8 MiB -> 180 KiB (38x), build 3.5x faster,
+                            scan 1.62x / 2.65x / 1.43x FASTER (many/none/near)
+      X10000 75364 states: 74.5 MiB -> 2.3 MiB (33x), build 4.4x faster,
+                            scan 3.16x / 2.63x / 2.95x FASTER
+    cap boundary (262144 states, the pinned 2^18 formula): 261 MiB -> 10.0 MiB
+    steady (26x), cap-scan 2.98 -> 1.12 ns/B; build 57.7 -> 55.8 ms.
+  Why the scan got FASTER with the memory cut: the dense table at 75k states
+  is 75 MiB and the scan is cache/TLB-bound on it (25-34 MB/s); the compact
+  table is ~2 MiB and the same text runs at ~100 MB/s. The root row stays
+  fully materialized in both layouts, which is what bounds the compact fail
+  walk (each step strictly decreases depth; total fail steps <= text length
+  on ANY input, adversarial included). The 2-symbol, single-char and 60-byte
+  shared-prefix adversarial sets are rows in the bench; the -1/OOM cap
+  contract and the exact state-count formula in test_ac_caps.c are untouched
+  and green. Differential: bench/bench_ac.c --diff (engine vs the pinned
+  reference implementation in bench/ac_cand.c) is 42/42 over the systematic
+  corpus, also green forced all-dense and all-compact, under ASan+UBSan;
+  bench_core --hash is identical old vs new (2012816943).
+
+2026-08-28:
+
+- dyna:log: MEASURED (tests/bench_log_ab.js, old build vs new, controls flat
+  at 26 ns empty-loop / 46 ns silent-gate). The honest table:
+    short msg     643 -> 633 ns   (-1.5%)
+    small fields  882 -> 894 ns   (+1.4%)
+    40 fields    3168 -> 3404 ns  (+7.4%)   <-- a real regression
+    err+fields    799 -> 1154 ns  (+44%)    <-- the Error-extras feature
+    inline 100b   689 -> 675 ns   (-2%)
+  The inline line buffer is a WASH, not the win the design assumed, and the
+  reason is measured: an emit is SYSCALL-BOUND. stderr costs 630 ns/op while
+  the same serialization into a buffered file costs 95 ns/op and the level
+  gate alone is 30 ns, so ~600 ns of every emit is write(2). THE LEVER IS
+  `buffer: true` (or a file dest), which is 6.6x. The 40-field regression is
+  NOT the reserved-key check: disabling it entirely (3404 ns) and removing
+  the branch (3381 ns) both leave ~7%, so it is code-layout/inlining in the
+  larger translation unit, left as a known cost rather than chased.
+- dyna:log: a truncated line is now CLOSED instead of severed. The cap cut
+  the line at exactly 64 KiB, which for a long payload stopped mid-string
+  with no closing quote, no closing brace and no newline -- emitting
+  malformed JSON that also corrupted the NEXT line's framing, since a
+  consumer could not find this one's end. The tail now reserves room and the
+  emit path writes `...` in-band before closing, so an oversized payload
+  yields one parseable line (property-tested). Fixed two JS_ToCString leaks
+  in the rollover option parsers (one per Logger built with a string
+  size/frequency). Verified clean under ASan+UBSan+LSan and warning-free.
+- dyna:log redesign around the pino/sonic-boom, zap/zerolog and logrotate
+  playbooks. Emit path is allocation-free for typical lines (512-byte inline
+  line builder, heap only past it); timestamps render without snprintf (i64
+  writer for epoch, cached-second ISO with manual millis); int64 round-trip
+  fast path for number fields. New file destination (dest/mkdir/buffer) with
+  sonic-boom-style line batching, a process-wide sink registry so Loggers on
+  one path share fd + rollover state (config mismatch refused), flush(), and
+  an atexit+finalizer flush belt. Rollover (size in bytes or k/m/g, frequency
+  daily/hourly/ms, count retention, symlink to the active file) is lazy per
+  emit, extension-last names (app.2026-08-28.1.log) that sort
+  chronologically, numbering continues from the highest existing file so
+  retention never causes number reuse, time-only rollover reuses the period's
+  file across restarts, failed rotation falls back to stderr with a 1/s retry.
+  Format integrity: caller fields colliding with frame keys (time, level,
+  name, pid, hostname, msg, err) are dropped -- log forgery by field name is
+  impossible; (err, fields, msg) shape added; Error extras (code, errno...)
+  ride inside err; pid/hostname enrichment folded into the pre-serialized
+  prefix. New human format: format:"text" renders aligned levels, name,
+  message and k=v fields in one control-escaped line. Debug: node-debug
+  matching (last match wins, '-' negation, '*' anywhere), multi-arg join.
+
+2026-08-27:
+
+- dyna:scrape modernization pass. Robots.txt (RFC 9309): group-based parser
+  with product-token agent matching -- exact full-agent match beats the
+  longest token match, which beats `*`; consecutive User-agent lines share
+  one group; groups capped at 64 with up to 8 UA lines. Fetcher: RFC 3986
+  redirect resolution (relative, dot-segment, protocol-relative, cross-host,
+  each hop re-gated by robots and the SSRF check); fragment-only Location
+  ends the chain instead of erroring; conditional GET against stored ETag /
+  Last-Modified validators (32 entries, 1 MiB/body, 4 MiB total, FIFO) --
+  a 304 returns status 304 with the cached body, fromCache and notModified
+  set, counted in stats.revalidated and stats.savedBytes; caller `headers`
+  merged under the crawler's identity, credential keys (Authorization,
+  Cookie, Proxy-Authorization, Set-Cookie) refused at construction because
+  they would leak to redirect targets; jittered exponential backoff whose
+  server-provided Retry-After is never jittered. Crawl: relative linkField
+  hrefs resolve against the emitting page; non-navigational schemes dropped;
+  pending frontier capped at 10000. Extractor: trim, per-field default
+  (satisfies optional required fields), source: true reading raw child
+  source for script/style/ld+json bodies HTMLText refuses to serve as text,
+  as: "url" resolving against run()'s base, as: "json" refusing invalid
+  input, and ANY unknown as: string refusing at construction.
+- Final honesty round: Retry-After delays BEYOND the 60s sleep cap are now
+  served as the final response instead of sleeping 60s and retrying anyway
+  (violating the server's instruction); the fuzz section's Fetcher forgot
+  minDelayMs:0 and ran at 1 exec/s under the default 1000ms per-host floor
+  (2000 runs = 33 min -- fixed, now ~90 exec/s and verified clean at 6000+
+  runs; RSS growth proven to be the pre-existing per-context harness
+  baseline, same or worse on fuzz_stdlib which has no scrape section);
+  cache content-type strdup failure now guarded like the validators.
+  New coverage: over-long Location served as final, robots redirect loop
+  fail-closed, maxPages:0, Retry-After beyond cap honored-by-refusal.
+- Seven-bug hardening round on dyna:scrape: (1) Retry-After HTTP-date
+  deltas compared epoch-to-monotonic -- every date-form retry slept a full
+  60s instead of the seconds asked; now compared against time(NULL), with a
+  dt<15s regression bound so a clock mix fails LOUD. (2) ex_node_source
+  leaked its chunks on the OOM path. (3) request-url fragments stripped
+  before robots, the wire, and dedup keys. (4) Crawl link-following gated to
+  2xx while VALUE extraction still runs on 403/500 pages -- bad pages stay
+  scrapable without being trusted to point anywhere. (5) robots.txt UTF-8
+  BOM no longer orphans the first group. (6) robots redirect comment/code
+  aligned (2 redirects, 3 requests). (7) verified non-bugs: Cache-Control
+  scan has no multi-char constants; canonical OOM-ignore is benign.
+- Deeper irregularity round on dyna:scrape: Retry-After honoured as an
+  IMF-fixdate HTTP-date, not just delay-seconds (the old strtod read dates
+  as 0 and silently ignored them); Cache-Control: no-store excluded from
+  the conditional-GET store; robots.txt redirects followed (<=3 hops, RFC
+  9309 2.3.1.2) with fail-closed treatment of unsafe hops -- canonical-host
+  301s no longer disallow whole sites; Crawl canonicalField (duplicate
+  canonical pages emit but queue no links; no phantom-seen marking) and
+  relField (nofollow skipping); Extractor default now also replaces an
+  EMPTY all-array. Refcount fixes found by exit-time leak dump: value
+  object leaked when a page emitted AT the depth cap (free sat inside the
+  depth gate), and the pre-existing as:"number" dup-never-freed string leak
+  -- both invisible to gates running ASan with detect_leaks=0; a boundary
+  regression case now covers the shape. SSRF doc honesty: dyn:http's
+  connect does no address-class check today, so DNS rebinding passes the
+  name-shape gate; docs now say so and point at egress allowlisting.
+- Page/protocol irregularity pass on dyna:scrape: https->http redirect
+  downgrades refused by default (allowInsecureDowngrade opts in); declared
+  Content-Length refused against maxBodyBytes BEFORE transfer (received-bytes
+  cap still enforced, so lying headers stay bounded); every response carries
+  the origin's Content-Type verbatim and a revalidation hit replays the
+  STORED type; Crawl baseField honors a page's <base href> declaration
+  (relative declarations resolve against the page; cross-host bases need
+  sameHost:false); documented source-only posture -- no JS evaluation, so
+  meta-refresh and SPA rendering are invisible by design.
+- New hostile-page coverage: tag-soup recovery through extractor fields,
+  duplicate-id multi-match, entity-encoded hrefs through as:"url", nesting
+  bombs refused at HTMLParse's bound, downgrade/CL refusals, cached-type
+  replay. fuzz_parsers drives Robots bodies + agents, a 30x Location and
+  Extractor option strings from fuzz input; its smoke runs now seed from
+  corpus_robots.
+- Pre-existing gate blockers fixed en route: dyna-oauth2.c compiled with
+  eight unused-variable warnings (native sanitizer builds are zero-warning
+  gated) and API.md's Crawl example dereferenced p.value without an
+  extractor (check-api executes all 291 blocks).
+
+2026-08-21:
+
+- HTTP hardening pass (dyna:net client, App, HTTPServer, HTTPServerAsync):
+  header/method CRLF injection refused; hostile status lines clamp instead
+  of overflowing; WS opening handshake enforces RFC 6455 4.2.1; route
+  status/contentType validated at registration; prefix routes end at a
+  path segment; static files served from an O_NOFOLLOW fd with HEAD and
+  single-range (206/416) support; upload holds its handler by value;
+  async RPC settles through a promise capability; JSON-RPC error bodies
+  are escaped and bounded; notifications (no id) get no response.
+- Connection lifetime: App honors Connection: close and the HTTP/1.0
+  default-close, closing on the response's own send completion; requests
+  pipelined behind a close go unanswered. Client rejects responses with
+  both Transfer-Encoding and Content-Length.
+- Resource bounds: App maxConns (default 8192); over-cap declared bodies
+  answer 413; HTTPServerAsync answers 431 at the header cap; ws/sse/ws-
+  client outbound queues bounded at 4 MB via dyn_aio_queued(); thread-pool
+  server gains an absolute requestTimeoutMs deadline (default 30s);
+  accept-error storms pause instead of spinning; io_uring SQE exhaustion
+  harvests completions instead of stalling connections.
+- IO: one writev per thread-pool response (+7-8% req/s vs prior tree at
+  c=64/256); client threads the chunked framing flag instead of rescanning
+  headers; connect poll timeout clamped; IPv6 literals bind dual-stack
+  (App grows a host option).
+- Tests: tests/test_http_hardening.js (94 assertions) added to the native
+  suite; pentest suite updated for notification semantics.
+
+2026-06-04:
+
+- added custom malloc for small blocks (11% faster on bench-v8)
+- micro optimizations (30% faster on bench-v8)
+- added resizable array buffers
+- added ArrayBuffer.prototype.transfer
+- added the Iterator object and methods
+- added set methods
+- added Atomics.pause
+- added added Map and WeakMap upsert methods
+- added Math.sumPrecise()
+- added regexp duplicate named groups
+- added base64 and hexadecimal encodings for Uint8Array
+- misc bug fixes
+
+2025-09-13:
+
+- added JSON modules and import attributes
+- added JS_PrintValue() API
+- dynajs: pretty print objects in print() and console.log()
+- dynajs: better promise rejection tracker heuristics
+- added RegExp v flag
+- added RegExp modifiers
+- added RegExp.escape
+- added Float16Array
+- added Promise.try
+- improved JSON parser spec conformance
+- dynajs: improved compatibility of std.parseExtJSON() with JSON5 and
+  accept JSON5 modules
+- added JS_FreePropertyEnum() and JS_AtomToCStringLen() API
+- added Error.isError()
+- misc bug fixes
+
+2025-04-26:
+
+- removed the bignum extensions and dynajscalc
+- new BigInt implementation optimized for small numbers
+- added WeakRef, FinalizationRegistry and symbols as weakrefs
+- added builtin float64 printing and parsing functions for more correctness
+- faster repeated string concatenation
+- dynajs: promise unhandled rejections are fatal errors by default
+- added column number in debug information
+- removed the "use strip" extension
+- dynajs: added -s and --strip-source options
+- dynajsc: added -s and --keep-source options
+- added JS_GetAnyOpaque()
+- added more callbacks for exotic objects in JSClassExoticMethods
+- misc bug fixes
+
+2024-01-13:
+
+- top-level-await support in modules
+- allow 'await' in the REPL
+- added Array.prototype.{with,toReversed,toSpliced,toSorted} and
+TypedArray.prototype.{with,toReversed,toSorted}
+- added String.prototype.isWellFormed and String.prototype.toWellFormed
+- added Object.groupBy and Map.groupBy
+- added Promise.withResolvers
+- class static block
+- 'in' operator support for private fields
+- optional chaining fixes
+- added RegExp 'd' flag
+- fixed RegExp zero length match logic
+- fixed RegExp case insensitive flag
+- added os.sleepAsync(), os.getpid() and os.now()
+- added cosmopolitan build
+- misc bug fixes
+
+2023-12-09:
+
+- added Object.hasOwn, {String|Array|TypedArray}.prototype.at,
+  {Array|TypedArray}.prototype.findLast{Index}
+- BigInt support is enabled even if CONFIG_BIGNUM disabled
+- updated to Unicode 15.0.0
+- misc bug fixes
+
+2021-03-27:
+
+- faster Array.prototype.push and Array.prototype.unshift
+- added JS_UpdateStackTop()
+- fixed Windows console
+- misc bug fixes
+
+2020-11-08:
+
+- improved function parameter initializers
+- added std.setenv(), std.unsetenv() and std.getenviron()
+- added JS_EvalThis()
+- misc bug fixes
+
+2020-09-06:
+
+- added logical assignment operators
+- added IsHTMLDDA support
+- faster for-of loops
+- os.Worker now takes a module filename as parameter
+- dynajsc: added -D option to compile dynamically loaded modules or workers
+- misc bug fixes
+
+2020-07-05:
+
+- modified JS_GetPrototype() to return a live value
+- REPL: support unicode characters larger than 16 bits
+- added os.Worker
+- improved object serialization
+- added std.parseExtJSON
+- misc bug fixes
+
+2020-04-12:
+
+- added cross realm support
+- added AggregateError and Promise.any
+- added env, uid and gid options in os.exec()
+- misc bug fixes
+
+2020-03-16:
+
+- reworked error handling in std and os libraries: suppressed I/O
+  exceptions in std FILE functions and return a positive errno value
+  when it is explicit
+- output exception messages to stderr
+- added std.loadFile(), std.strerror(), std.FILE.prototype.tello()
+- added JS_GetRuntimeOpaque(), JS_SetRuntimeOpaque(), JS_NewUint32()
+- updated to Unicode 13.0.0
+- misc bug fixes
+
+2020-01-19:
+
+- keep CONFIG_BIGNUM in the makefile
+- added os.chdir()
+- dynajs: added -I option
+- more memory checks in the bignum operations
+- modified operator overloading semantics to be closer to the TC39
+  proposal
+- suppressed "use bigint" mode. Simplified "use math" mode
+- BigDecimal: changed suffix from 'd' to 'm'
+- misc bug fixes
+
+2020-01-05:
+
+- always compile the bignum code. Added '--bignum' option to dynajs.
+- added BigDecimal
+- added String.prototype.replaceAll
+- misc bug fixes
+
+2019-12-21:
+
+- added nullish coalescing operator (ES2020)
+- added optional chaining (ES2020)
+- removed recursions in garbage collector
+- test stack overflow in the parser
+- improved backtrace logic
+- added JS_SetHostPromiseRejectionTracker()
+- allow exotic constructors
+- improved c++ compatibility
+- misc bug fixes
+
+2019-10-27:
+
+- added example of C class in a module (examples/test_point.js)
+- added JS_GetTypedArrayBuffer()
+- misc bug fixes
+
+2019-09-18:
+
+- added os.exec and other system calls
+- exported JS_ValueToAtom()
+- dynajsc: added 'dynajsc_' prefix to the generated C identifiers
+- added cross-compilation support
+- misc bug fixes
+
+2019-09-01:
+
+- added globalThis
+- documented JS_EVAL_FLAG_COMPILE_ONLY
+- added import.meta.url and import.meta.main
+- added 'debugger' statement
+- misc bug fixes
+
+2019-08-18:
+
+- added os.realpath, os.getcwd, os.mkdir, os.stat, os.lstat,
+  os.readlink, os.readdir, os.utimes, std.popen
+- module autodetection
+- added import.meta
+- misc bug fixes
+
+2019-08-10:
+
+- added public class fields and private class fields, methods and
+  accessors (TC39 proposal)
+- changed JS_ToCStringLen() prototype
+- dynajsc: handle '-' in module names and modules with the same filename
+- added std.urlGet
+- exported JS_GetOwnPropertyNames() and JS_GetOwnProperty()
+- exported some bigint C functions
+- added support for eshost in run-test262
+- misc bug fixes
+
+2019-07-28:
+
+- added dynamic import
+- added Promise.allSettled
+- added String.prototype.matchAll
+- added Object.fromEntries
+- reduced number of ticks in await
+- added BigInt support in Atomics
+- exported JS_NewPromiseCapability()
+- misc async function and async generator fixes
+- enabled hashbang support by default
+
+2019-07-21:
+
+- updated test262 tests
+- updated to Unicode version 12.1.0
+- fixed missing Date object in dynajsc
+- fixed multi-context creation
+- misc ES2020 related fixes
+- simplified power and division operators in bignum extension
+- fixed several crash conditions
+
+2019-07-09:
+
+- first public release
+2026-09-01 (audit branch):
+
+- dyna:json: an all-digit pointer index over 19 digits is a range error, not
+  "leading zero"; Pointer.has returns false for it. Patch.apply caps ops at
+  65536. The add/remove/replace parse ladder is one shared helper (every
+  message byte-identical). __proto__ pollution safety pinned by test.
+- dyna:csv: {strict} mode throws on garbage-after-quote and unterminated
+  quotes (default stays tolerant); BOM stripped; create/addRow check every
+  append and surface a throwing toString instead of writing "".
+- dyna:yaml: "..." no longer hangs ParseAll appending null documents;
+  Stringify emits .nan/.inf/-.inf and quotes literal-lookalike strings;
+  4M-line cap on the line table; BOM stripped; signed inf/nan parse.
+- dyna:config: __toml_header no longer leaks; -inf/+inf/-nan/+nan parse;
+  int64 bounds enforced; CRLF normalized in multiline strings; inline-table
+  and dotted-key redefinition refused; floats round-trip (5.0); BOM stripped.
+- dyna:xml: ]]> cannot slip past the guard on a chunk boundary; duplicate
+  attribute names refused; open-tag/DOCTYPE carry bounded.
+- dyna:encoding: JSON5 hex numbers cap at 2^53 (wrapped before); 64-char
+  number limit removed; RFC 8785 key sort 58x faster (byte-identical);
+  JSONPath first() early-exits.
+- dyna:oauth2: F1-F9 (authority parser refuses userinfo smuggle, frozen
+  crypto bridge, copy-before-coerce compare, quoted-string realms, strict
+  exp/skew/scope, constant-time PKCE, non-object token response refused,
+  WWW-Authenticate budget).
+- dyna:validate: email 63-char label cap; IBAN registry +13 (incl. RU);
+  dashes stripped; E164 8-digit minimum; IsJWT {algs}; delegate exceptions
+  propagate.
+- dyna:uuid: v7 implements the RFC 9562 same-ms counter (strictly
+  increasing within a process); NanoID/ULID size args range-checked;
+  entropy fork deleted.
+- dyna:random: getState/setState with all-zero guard; nextBounded rejects
+  non-integers and accepts full-u64 BigInt bounds; golden pins.
+- dyna:bytes: holder flags invalidated on mutation (were stale-forever);
+  bpe != 1 and detached views throw; utf8ToLatin1 names its two failure
+  causes; countUtf16 rejects odd lengths.
+- dyna:matcher: countIn/allIn scan budget (1e9 steps); MultiMatcher 16 MiB
+  pattern cap; empty-needle conventions pinned; indexOf differential.
+- dyna:semver: MAX_SAFE enforced on numeric identifiers and inc results;
+  errors carry the index/input; Range test table.
+- dyna:decimal: dec_div exponent overflow fixed (int32 wrap); mixed-scale
+  Money refused; INT64_MIN and 2^63 UB guards; precision must be an
+  integer; pow budget message.
+- dyna:mathx/expr: betaln sign-aware; Expression min/max propagate NaN;
+  depth-counter wrap fixed (uint32 wrap undersized the eval stack -- OOB
+  writes on hostile input); mxbits deduped.
+- dyna:time: date() and parseRFC3339 year-range guards; temporal boundary
+  pins; dead locals removed.
+- dyna:simd: AVX2/AVX-512 enabled only when OSXSAVE + XCR0 state bits say
+  the OS preserves YMM/ZMM (CPUID alone SIGILLs); avx2 argmax/argmin seed
+  the vector only when n >= 8 (was OOB reads); silu kernel called directly.
+- dyna:http: 256-per-block header count cap; proxy validates header-name
+  tokens; duplicate non-framing headers refused (400).
+- dyna:net: TCPProxy resolve-failure leak fixed, option failures throw; DNS
+  type range check, ID-collision fails the query, TXN IDs from OS entropy;
+  sqlite param-count error path fixed; pg bytea hex check explicit.
+- dyna:tls: server ALPN actually negotiates (select callback was never
+  installed); alpn_selected into a caller buffer; pre-handshake write sets
+  the error; SNI skipped for IP literals; best-effort close_notify.
+- dyna:url: WHATWG serialization sets + uppercase escape normalization;
+  file: origin is "null"; tab/LF/CR stripped anywhere in the input;
+  URLSearchParams.sort stable; form set aligned to WHATWG; ToString
+  coercion; two-argument delete.
+- dyna:schema: OOM cannot report valid:true (dropped errors counted);
+  getter-free equality; anyOf/oneOf keep branch errors; 64 KiB pattern cap.
+- dyna:structures: LRU/bloom hash basis fixed and seeded (was a corrupted
+  unseeded FNV -- deterministic flooding); LRU entries()/iterator;
+  SortedMap.entries().
+- dyna:serialize: CBOR negative ints beyond int64 degrade to double (was
+  UB wrap to 0); protobuf map-key errors name the key; ASN.1 SET OF is
+  DER-sorted; protobuf string fields validate UTF-8.
+- dyna:dataframe: masks must match nrows exactly; alloc overflow guard.
+- dyna:file: O_CLOEXEC on the sync opens; watcher paths heap-composed (a
+  deep tree truncated at 2048 bytes); one shared async error builder
+  carrying errno/code/op.
+- dyna:sys: Exec deadline saturates (no signed overflow -> instant SIGTERM);
+  Exec {uid,gid}; which checks execute bits (access(X_OK) is root-wrong);
+  setEnv NUL/=/empty refusals tested.
+- dyna:simd: OSXSAVE/xgetbv gate before AVX2/AVX-512.
+- stdlib: std.popen REMOVED (argv[0] went to /bin/sh -- command injection
+  by construction; use dyna:sys Exec). std.urlGet REMOVED (blocking curl
+  subprocess; use fetch). os.read/write fixed a detached-buffer UAF: the
+  pointer was captured before valueOf-runnable index coercion.
+- make: test_codec_zstd/test_xml_large wired into slim MODTESTS with
+  cross-module companions; test_validate_ext documented as full-binary-only.
+- tests: official corpora vendored (json-patch-tests, JSON-Schema-Test-Suite
+  draft2020-12, WPT urltestdata, toml-test); conformance runners, parametric
+  coverage grids for dataframe/mathx/ml, and a bounded adversarial sweep.
+
+---
+
+# CHANGELOG — ws-codeqlfix (CodeQL perf findings T-CODEQL-1..5)
+
+Tree: `.swarm/ws-codeqlfix` (base commit a49f18d "workspace base"). Config:
+`CONFIG_NATIVE_MODULES=y CONFIG_TLS=y`, `-j3`. Control: `dynajs.base`
+(snapshotted before the first source edit). Baseline gates on the control:
+dataframe 42456+152, mathx 356/308/418, ml 59/75/2414 (+343 selection),
+html 108+9, string 51159+63 — all green BEFORE any change.
+
+## T-CODEQL-1 — dataframe groupby-last ring `% cnt[g]` — KEPT
+
+- Sites: `src/dyna-dataframe.c` pass-2 ring fill (`head[g]+1 % cnt[g]`) and
+  unwrap (`(head[g]+j) % cnt[g]`, the cited line).
+- Fix: conditional subtract / moving index. Equivalence is provable: the ring
+  must hold EXACTLY cnt[g] arrivals (which rows survive), so power-of-two
+  sizing + mask is NOT applicable (it would change which arrivals a window
+  keeps); head[g] < cnt[g] and j < cnt[g] give a single-wrap bound.
+- A/B (4-way variant matrix, interleaved, 5 reps, `probe/bench_df_last.js`,
+  `scratch/ab_df_matrix.log`): dominant-group shape (3 groups, k=65536)
+  18.96 -> 14.68 ms median (-22.6%), reproduced in two independent builds
+  (fill-only v1 and both v3), 5/5 reps each. many-groups shape: 16.44 vs
+  16.38 ms (neutral). k=1 shape: 13.49 vs 13.84 ms (+2.6%) — PROVEN layout
+  artifact: v1-vs-v3 differ 0.43 ms on byte-identical C code for that shape,
+  and v2-vs-base (+2.9%) also differs with identical code.
+- Correctness: `probe/df_last_diff.js` differential vs a JS reference ring —
+  487/487 on base AND fixed (group sizes straddling k, k=1, exact multiples,
+  prime row counts, head on every residue class). Suites green post-change.
+
+## T-CODEQL-2 — pad `% plen` per char — REVERTED (negative result)
+
+- Audit correction first: the real `String.prototype.padStart/padEnd`
+  (`js_string_pad`, string.inc.c:1228) is ALREADY modulo-free (chunked
+  `string_buffer_concat`/`string_buffer_fill`, upstream QuickJS shape). The
+  cited lines 2345/2348 are the DynaJS `pad()` EXTENSION (center-pad). The
+  test262 surface was never touched; no test262 run needed.
+- Tried two equivalent rewrites (wrap cursor under the `have_pad` ternary;
+  then loops split on `have_pad`): 4.66 -> 4.75-4.77 ms on a 2e6-char pad
+  (+2%, 12/12 then 9/9 reps, four pad shapes). The loop is
+  `string_buffer_putc16`-bound; the per-char index math is not the cost.
+- Reverted; `probe/pad_diff.js` (1620 asserts vs a repeat+slice reference,
+  wide-char matrix) green on base and post-revert; string suites green.
+
+## T-CODEQL-3 — mathx factor `x / d` per candidate — KEPT (2.00x)
+
+- The cited loop pays TWO 64-bit divisions per odd candidate: the overflow-
+  safe condition `d <= x / d` AND the factor test `x % d` (the sketch in the
+  findings only promises removing the first). Fix: `limit = isqrt(x)`
+  recomputed only after a factor shrinks x (<= 53 times), then
+  `if (x % d == 0) do {...} while` — one division per candidate.
+- `d <= isqrt(x) <=> d*d <= x <=> d <= x/d` (floor) — exact, including the
+  d*d == x boundary. isqrt via sqrtl + correction loops (r <= 2^27 in the
+  <= 2^53 domain, no overflow).
+- A/B x3 interleaved (`probe/bench_factor.js`, worst cases: p*p at the
+  d*d==x boundary, prime near 2^53): 58.9 -> 29.4 ms median on EVERY input,
+  12/12 reps.
+- Correctness: `probe/factor_diff.js` — exhaustive [1, 200000] vs an
+  independent BigInt reference PLUS adversarial big values (semiprime
+  squares, primes near 2^53, prime powers) verified by product + ascending +
+  deterministic Miller-Rabin: 200037/200037 identical on base and fixed.
+  (First draft of the probe's own MR powmod was wrong — fixed the probe, not
+  the engine; the engine's outputs agreed with product/order checks
+  throughout.) mathx suites green.
+
+## T-CODEQL-4 — ml bootstrap `% rows` — KEPT (loop win, macro-neutral)
+
+- Rows CANNOT be rounded to a power of two (changes the sample). The
+  multiply-high construction was validated EXACT first: `probe/fastmod_probe.c`
+  ran 153.9M adversarial+random (n, d<2^32) checks. The from-memory Lemire
+  lowbits variant FAILED it (128.5M mismatches, first n=2^64-1 d=3) and was
+  rejected; the mulhi + conditional add-back form passed everything except
+  d == 1 (M overflows), which the caller special-cases (rows==1 keeps taking
+  the draws and maps to 0 — `probe/rows1_probe.js` behavior-identical to
+  base).
+- Helpers `dyn_fastmod_M`/`dyn_fastmod` live in `src/core/dyn-prng.h` (the
+  module whose determinism contract covers ml sampling), exactness documented.
+- Bootstrap draw loop is BIT-IDENTICAL: checksum over 100M draws matches
+  (`probe/bench_draws.c`). Loop micro: 2.42 -> 2.31 ns/draw (-5..-16% of the
+  loop; it is splitmix64-bound). JS-level: stump-heavy forest (10M draws)
+  -0.85% (5/5 reps ordered); full forest fits -0.15..-0.2% (tree fit
+  dominates). Chi-square over 1M draws (`probe/chi2_fastmod.c`): statistics
+  IDENTICAL to division at rows 1000/997/65536/40000, all uniform within
+  4sd of df.
+- Fold assignment `(cnt % k) + 1` -> wrap counter (k validated [2, n];
+  equal by induction). test_ml_selection 343 green (stratifiedKFold).
+- Judgment: kept because the finding's loop itself measures faster with
+  bit-identical output and proven exactness; macro numbers recorded honestly.
+
+## T-CODEQL-5 — sel_part_t 31% padding — KEPT (footprint; perf neutral)
+
+- 32 -> 24 bytes (a/b pointers first, sub+kind+op last; 2 tail bytes),
+  `_Static_assert` pins the layout (house style, cf san_t). No behavior
+  change: field access is by name; no serialization/memcmp of parts exists
+  (verified by grep; html suites below).
+- Correctness: test_html 108, test_html_text 9, test_html_large 24,
+  test_html_pentest 25 green; match results identical (acc 134250/140000 on
+  both binaries in every bench).
+- Perf: match-heavy (6 compound selectors x 80k nodes) 48-52 ms both;
+  parse-heavy 2.0 ms both; group-walk (1300 comma groups -> every node walks
+  the whole parts array) medians quantize to 1677/1727/1799 ms on BOTH
+  binaries — no reproducible delta. Reachable parts arrays are bounded by
+  the 4096-byte selector-string cap (~1365 minimal groups); 41.6 KB vs
+  31.2 KB are both L1-resident, so the cache benefit the finding projected
+  is not observable at reachable scales. Kept as the briefed layout fix with
+  its verification bar met (static_assert), zero risk, -25%/element.
+
+## Gates
+
+- `make test`: full battery, RC=0 (scratch/make_test.log).
+- ASan pass (CONFIG_ASAN=y) over all touched-module suites: see
+  scratch/asan_gates.log.
+- No commits made; deliverable = ws-codeqlfix.patch (git diff --binary HEAD).
+
+## Postponed / not done
+
+- test262 strings subtree: moot — the padStart/padEnd implementation was
+  never touched (T-CODEQL-2 fix reverted; audit misattribution documented).
+- kmeans++ `% rows` sites (dyna-ml.c:2633/2644): per-centroid, not per-draw
+  loops — out of the finding's scope; dyn_fastmod now exists if wanted.
+- Other `% (rows - i)` shuffle sites: divisor varies per iteration, so M
+  cannot be hoisted — correctly left alone.
