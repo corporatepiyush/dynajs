@@ -1,0 +1,4 @@
+tools/../test262/test/language/identifier-resolution/assign-to-global-undefined.js:20: strict mode: expected error
+tools/../test262/test/staging/sm/class/strictExecution.js:13: Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+tools/../test262/test/staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js:13: Test262Error: Expected SameValue(«"object"», «"function"») to be true
+tools/../test262/test/staging/sm/regress/regress-602621.js:13: Test262Error: function sub-statement must override arguments Expected SameValue(«"function"», «"object"») to be true
