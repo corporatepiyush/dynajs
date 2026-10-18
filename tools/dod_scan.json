@@ -1,0 +1,157 @@
+{
+    "roots": [
+        "src"
+    ],
+    "extensions": [
+        ".c",
+        ".h"
+    ],
+    "out": ".agent-work/dod/scan",
+    "compile_hook": "./build.sh __cc-lines CONFIG_NATIVE_MODULES=y CONFIG_TLS=y CONFIG_SDL3=y CONFIG_RAYLIB=y CONFIG_UI=y",
+    "harden": {
+        "cache_glob": ".obj*/.harden-flags",
+        "probe_file": "build.sh",
+        "probe_regex": "^\\s*probes=\"([^\"]+)\"",
+        "probe_extra_arm64": [
+            "-mbranch-protection=standard"
+        ],
+        "probe_extra_x86_64": [
+            "-fcf-protection=full"
+        ]
+    },
+    "alloc": [
+        "re:JS_New(?:String|Object|Array|Atom|ArrayBuffer|TypedArray|CFunction|Symbol|Error|Promise)\\w*",
+        "re:js_new_string\\w*",
+        "re:js_alloc_string\\w*"
+    ],
+    "free": [
+        "re:JS_Free\\w*"
+    ],
+    "managed_prefixes": [
+        "JS_",
+        "js_new_",
+        "js_alloc_string"
+    ],
+    "api_prefixes": [
+        "JS_"
+    ],
+    "type_sizes": {
+        "JSValue": 16,
+        "JSAtom": 4,
+        "BOOL": 4
+    },
+    "binary": "dynajs",
+    "binary_args": [
+        "--std"
+    ],
+    "workloads": [
+        {
+            "name": "jetstream-richards",
+            "cat": [
+                "bench/jetstream/richards.js",
+                "bench/jetstream/_run.js"
+            ]
+        },
+        {
+            "name": "jetstream-deltablue",
+            "cat": [
+                "bench/jetstream/deltablue.js",
+                "bench/jetstream/_run.js"
+            ]
+        },
+        {
+            "name": "jetstream-raytrace",
+            "cat": [
+                "bench/jetstream/raytrace.js",
+                "bench/jetstream/_run.js"
+            ]
+        },
+        {
+            "name": "jetstream-crypto",
+            "cat": [
+                "bench/jetstream/crypto.js",
+                "bench/jetstream/_run.js"
+            ]
+        },
+        {
+            "name": "jetstream-navier",
+            "cat": [
+                "bench/jetstream/navier-stokes.js",
+                "bench/jetstream/_run.js"
+            ]
+        },
+        {
+            "name": "jetstream-splay",
+            "cat": [
+                "bench/jetstream/splay.js",
+                "bench/jetstream/_run.js"
+            ]
+        },
+        {
+            "name": "collections",
+            "args": [
+                "bench/bench_collections.js"
+            ]
+        },
+        {
+            "name": "iterator",
+            "args": [
+                "bench/bench_iterator.js"
+            ]
+        },
+        {
+            "name": "xmlparse",
+            "args": [
+                "bench/bench_xmlparse.js"
+            ]
+        },
+        {
+            "name": "yaml",
+            "args": [
+                "bench/bench_yaml.js"
+            ]
+        },
+        {
+            "name": "html",
+            "args": [
+                "bench/bench_html_large.js"
+            ]
+        },
+        {
+            "name": "markdown",
+            "args": [
+                "bench/bench_markdown.js"
+            ]
+        },
+        {
+            "name": "strscan",
+            "args": [
+                "bench/bench_strscan.js"
+            ]
+        },
+        {
+            "name": "sort",
+            "args": [
+                "bench/sort_dense_100k.js"
+            ]
+        },
+        {
+            "name": "matvec",
+            "args": [
+                "bench/matvec.js"
+            ]
+        },
+        {
+            "name": "dataframe",
+            "args": [
+                "tests/dataframe/bench_dataframe_frames.js"
+            ]
+        },
+        {
+            "name": "stdio",
+            "args": [
+                "tests/core/bench_stdio.js"
+            ]
+        }
+    ]
+}

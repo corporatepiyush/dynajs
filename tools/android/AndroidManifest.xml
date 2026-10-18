@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.dynajs.app"
+    android:versionCode="1"
+    android:versionName="1.0">
+    <uses-feature android:glEsVersion="0x00020000" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <application
+        android:label="dynajs"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+        android:debuggable="true"
+        android:extractNativeLibs="true"
+        android:hasCode="true"
+        android:hardwareAccelerated="true">
+        <activity
+            android:name="org.dynajs.app.DynaActivity"
+            android:windowSoftInputMode="adjustNothing"
+            android:label="dynajs"
+            android:alwaysRetainTaskState="true"
+            android:launchMode="singleInstance"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
