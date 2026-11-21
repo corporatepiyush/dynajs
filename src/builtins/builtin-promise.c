@@ -1,0 +1,2436 @@
+#include "engine-shared.h"
+
+static inline void js_async_function_resolve_finalizer(JSRuntime* rt, JSValue val);
+
+static inline void js_async_function_resolve_mark(JSRuntime* rt, JSValueConst val,
+    JS_MarkFunc* mark_func);
+
+static inline void js_async_function_resolve_finalizer(JSRuntime* rt, JSValue val)
+{
+    JSObject* p = JS_VALUE_GET_OBJ(val);
+    JSAsyncFunctionState* s = p->u.async_function_data;
+    if (s) {
+        async_func_free(rt, s);
+    }
+}
+
+static inline void js_async_function_resolve_mark(JSRuntime* rt, JSValueConst val,
+    JS_MarkFunc* mark_func)
+{
+    JSObject* p = JS_VALUE_GET_OBJ(val);
+    JSAsyncFunctionState* s = p->u.async_function_data;
+    if (s) {
+        mark_func(rt, &s->header);
+    }
+}
+
+static inline void js_async_generator_finalizer(JSRuntime* rt, JSValue obj)
+{
+    JSAsyncGeneratorData* s = JS_GetOpaque(obj, JS_CLASS_ASYNC_GENERATOR);
+
+    if (s) {
+        js_async_generator_free(rt, s);
+    }
+}
+
+typedef struct JSPromiseData {
+    JSPromiseStateEnum promise_state;
+    struct list_head promise_reactions[2];
+    BOOL is_handled;
+    JSValue promise_result;
+} JSPromiseData;
+
+typedef struct JSPromiseFunctionDataResolved {
+    int ref_count;
+    BOOL already_resolved;
+} JSPromiseFunctionDataResolved;
+
+typedef struct JSPromiseFunctionData {
+    JSValue promise;
+    JSPromiseFunctionDataResolved* presolved;
+} JSPromiseFunctionData;
+
+typedef struct JSPromiseReactionData {
+    struct list_head link;
+    JSValue resolving_funcs[2];
+    JSValue handler;
+    int idx;
+} JSPromiseReactionData;
+
+typedef struct JSPromiseReactionPair {
+    JSPromiseReactionData r[2];
+    int live;
+} JSPromiseReactionPair;
+
+#define PROMISE_MAGIC_all 0
+#define PROMISE_MAGIC_allSettled 1
+#define PROMISE_MAGIC_any 2
+
+typedef struct JSAsyncFromSyncIteratorData {
+    JSValue sync_iter;
+    JSValue next_method;
+} JSAsyncFromSyncIteratorData;
+
+static void js_promise_finalizer(JSRuntime* rt, JSValue val);
+
+static void js_promise_mark(JSRuntime* rt, JSValueConst val,
+    JS_MarkFunc* mark_func);
+
+static void js_promise_resolve_function_finalizer(JSRuntime* rt, JSValue val);
+
+static void js_promise_resolve_function_mark(JSRuntime* rt, JSValueConst val,
+    JS_MarkFunc* mark_func);
+
+static JSValue js_new_promise_capability(JSContext* ctx,
+    JSValue* resolving_funcs,
+    JSValueConst ctor);
+
+JSPromiseStateEnum JS_PromiseState(JSContext* ctx, JSValue promise)
+{
+    JSPromiseData* s = JS_GetOpaque(promise, JS_CLASS_PROMISE);
+    if (!s)
+        return -1;
+    return s->promise_state;
+}
+
+JSValue JS_PromiseResult(JSContext* ctx, JSValue promise)
+{
+    JSPromiseData* s = JS_GetOpaque(promise, JS_CLASS_PROMISE);
+    if (!s)
+        return JS_UNDEFINED;
+    return JS_DupValue(ctx, s->promise_result);
+}
+
+static int js_create_resolving_functions(JSContext* ctx, JSValue* args,
+    JSValueConst promise);
+
+static void promise_reaction_data_free(JSRuntime* rt,
+    JSPromiseReactionData* rd)
+{
+    JS_FreeValueRT(rt, rd->resolving_funcs[0]);
+    JS_FreeValueRT(rt, rd->resolving_funcs[1]);
+    JSPromiseReactionPair* pr = (JSPromiseReactionPair*)(rd - rd->idx);
+    JS_FreeValueRT(rt, rd->handler);
+    if (--pr->live)
+        return;
+    if (rt->reaction_free_n < JS_JOB_FREE_MAX) {
+        *(void**)pr = rt->reaction_free;
+        rt->reaction_free = pr;
+        rt->reaction_free_n++;
+    } else {
+        js_free_rt(rt, pr);
+    }
+}
+
+static JSClassID js_promise_reaction_class_id;
+static JSValue js_promise_new_pending(JSContext* ctx);
+static int fulfill_or_reject_promise(JSContext* ctx, JSValueConst promise, JSValueConst value, BOOL is_reject);
+static int reject_promise(JSContext* ctx, JSValueConst promise, JSValueConst value);
+static JSValue js_promise_resolve_thenable_job(JSContext* ctx, int argc, JSValueConst* argv);
+
+typedef struct JSPromiseReactionObj {
+    JSPromiseReactionFunc* fn;
+    JSValue data;
+    int magic;
+} JSPromiseReactionObj;
+
+static void js_promise_reaction_finalizer(JSRuntime* rt, JSValue val)
+{
+    JSPromiseReactionObj* r = JS_GetOpaque(val, js_promise_reaction_class_id);
+    if (r) {
+        JS_FreeValueRT(rt, r->data);
+        js_free_rt(rt, r);
+    }
+}
+
+static void js_promise_reaction_mark(JSRuntime* rt, JSValueConst val, JS_MarkFunc* mark_func)
+{
+    JSPromiseReactionObj* r = JS_GetOpaque(val, js_promise_reaction_class_id);
+    if (r)
+        JS_MarkValue(rt, r->data, mark_func);
+}
+
+static const JSClassDef js_promise_reaction_class = {
+    "PromiseReaction",
+    .finalizer = js_promise_reaction_finalizer,
+    .gc_mark = js_promise_reaction_mark,
+};
+
+static inline BOOL js_promise_reaction_of(JSRuntime* rt, JSValueConst v)
+{
+    uint16_t id;
+    if (JS_VALUE_GET_TAG(v) != JS_TAG_OBJECT)
+        return FALSE;
+    id = JS_VALUE_GET_OBJ(v)->class_id;
+    return (js_promise_reaction_class_id && id == js_promise_reaction_class_id)
+        || (id < rt->class_count && rt->class_array[id].reaction);
+}
+
+static inline JSValueConst js_promise_handler(JSContext* ctx, JSValueConst h)
+{
+    JSObject* p;
+    if (JS_VALUE_GET_TAG(h) != JS_TAG_OBJECT)
+        return JS_UNDEFINED;
+    p = JS_VALUE_GET_OBJ(h);
+    if (p->class_id == JS_CLASS_BYTECODE_FUNCTION || JS_IsFunction(ctx, h) || js_promise_reaction_of(ctx->rt, h))
+        return h;
+    return JS_UNDEFINED;
+}
+
+static inline JSValueConst js_promise_js_handler(JSContext* ctx, JSValueConst h)
+{
+    if (JS_VALUE_GET_TAG(h) != JS_TAG_OBJECT)
+        return JS_UNDEFINED;
+    if (JS_VALUE_GET_OBJ(h)->class_id == JS_CLASS_BYTECODE_FUNCTION || JS_IsFunction(ctx, h))
+        return h;
+    return JS_UNDEFINED;
+}
+
+static JSValue js_promise_reaction_call(JSContext* ctx, JSValueConst v, BOOL is_reject, JSValueConst arg)
+{
+    JSObject* p = JS_VALUE_GET_OBJ(v);
+    JSPromiseReactionObj* r;
+    if (p->class_id == js_promise_reaction_class_id) {
+        r = p->u.opaque;
+        return r->fn(ctx, r->data, r->magic, is_reject, arg);
+    }
+    return ctx->rt->class_array[p->class_id].reaction(ctx, v, 0, is_reject, arg);
+}
+
+int JS_SetClassReaction(JSRuntime* rt, JSClassID class_id, JSPromiseReactionFunc* fn)
+{
+    if (class_id >= (JSClassID)rt->class_count || rt->class_array[class_id].class_id == 0)
+        return -1;
+    rt->class_array[class_id].reaction = fn;
+    return 0;
+}
+
+JSValue JS_NewPromiseReaction(JSContext* ctx, JSPromiseReactionFunc* fn, JSValueConst data, int magic)
+{
+    JSRuntime* rt = ctx->rt;
+    JSPromiseReactionObj* r;
+    JSValue obj;
+
+    JS_NewClassID(&js_promise_reaction_class_id);
+    if (!JS_IsRegisteredClass(rt, js_promise_reaction_class_id)
+        && JS_NewClass(rt, js_promise_reaction_class_id, &js_promise_reaction_class) < 0)
+        return JS_EXCEPTION;
+    obj = JS_NewObjectProtoClassBare(ctx, JS_NULL, js_promise_reaction_class_id);
+    if (JS_IsException(obj))
+        return obj;
+    r = js_malloc(ctx, sizeof(*r));
+    if (!r) {
+        JS_FreeValue(ctx, obj);
+        return JS_EXCEPTION;
+    }
+    r->fn = fn;
+    r->data = JS_DupValue(ctx, data);
+    r->magic = magic;
+    JS_SetOpaque(obj, r);
+    return obj;
+}
+
+JSValue JS_NewPromisePending(JSContext* ctx)
+{
+    return js_promise_new_pending(ctx);
+}
+
+int JS_PromiseSettle(JSContext* ctx, JSValueConst promise, JSValueConst value, int is_reject)
+{
+    JSValue then;
+    JSValueConst args[3];
+
+    if (!JS_GetOpaque(promise, JS_CLASS_PROMISE))
+        return -1;
+    if (is_reject || !JS_IsObject(value)) {
+        return fulfill_or_reject_promise(ctx, promise, value, is_reject);
+    }
+    if (js_same_value(ctx, value, promise)) {
+        JS_ThrowTypeError(ctx, "promise self resolution");
+        goto fail_reject;
+    }
+    then = JS_GetProperty(ctx, value, JS_ATOM_then);
+    if (JS_IsException(then)) {
+        JSValue error;
+    fail_reject:
+        if (js_exception_uncatchable(ctx))
+            return -1;
+        error = JS_GetException(ctx);
+        if (reject_promise(ctx, promise, error) < 0) {
+            JS_FreeValue(ctx, error);
+            return -1;
+        }
+        JS_FreeValue(ctx, error);
+    } else if (!JS_IsFunction(ctx, then)) {
+        JS_FreeValue(ctx, then);
+        if (fulfill_or_reject_promise(ctx, promise, value, FALSE) < 0)
+            return -1;
+    } else {
+        args[0] = promise;
+        args[1] = value;
+        args[2] = then;
+        if (JS_EnqueueJob(ctx, js_promise_resolve_thenable_job, 3, args) < 0) {
+            JS_FreeValue(ctx, then);
+            return -1;
+        }
+        JS_FreeValue(ctx, then);
+    }
+    return 0;
+}
+
+JSValue JS_PromiseResolveValue(JSContext* ctx, JSValueConst value)
+{
+    JSValue p;
+
+    if (JS_GetOpaque(value, JS_CLASS_PROMISE)) {
+        JSValue ctor = JS_GetProperty(ctx, value, JS_ATOM_constructor);
+        BOOL same;
+        if (JS_IsException(ctor))
+            return ctor;
+        same = js_same_value(ctx, ctor, ctx->promise_ctor);
+        JS_FreeValue(ctx, ctor);
+        if (same)
+            return JS_DupValue(ctx, value);
+    }
+    p = js_promise_new_pending(ctx);
+    if (!JS_IsException(p) && JS_PromiseSettle(ctx, p, value, FALSE) < 0 && js_exception_uncatchable(ctx)) {
+        JS_FreeValue(ctx, p);
+        return JS_EXCEPTION;
+    }
+    return p;
+}
+
+void JS_PromiseMarkHandled(JSContext* ctx, JSValueConst promise)
+{
+    JSPromiseData* s = JS_GetOpaque(promise, JS_CLASS_PROMISE);
+    JSRuntime* rt = ctx->rt;
+
+    if (!s || s->is_handled)
+        return;
+    if (s->promise_state == JS_PROMISE_REJECTED && rt->host_promise_rejection_tracker)
+        rt->host_promise_rejection_tracker(ctx, promise, s->promise_result, TRUE,
+            rt->host_promise_rejection_tracker_opaque);
+    s->is_handled = TRUE;
+}
+
+static JSValue promise_reaction_job(JSContext* ctx, int argc,
+    JSValueConst* argv)
+{
+    JSValueConst handler, arg, func;
+    JSValue res, res2;
+    BOOL is_reject;
+
+    assert(argc == 5);
+    handler = argv[2];
+    is_reject = JS_VALUE_GET_TAG(argv[3]) == JS_TAG_BOOL ? JS_VALUE_GET_INT(argv[3]) : JS_ToBool(ctx, argv[3]);
+    arg = argv[4];
+#ifdef DUMP_PROMISE
+    printf("promise_reaction_job: is_reject=%d\n", is_reject);
+#endif
+
+    if (JS_IsUndefined(handler)) {
+        if (is_reject) {
+            res = JS_Throw(ctx, JS_DupValue(ctx, arg));
+        } else {
+            res = JS_DupValue(ctx, arg);
+        }
+    } else if (JS_VALUE_GET_TAG(handler) == JS_TAG_OBJECT
+        && JS_VALUE_GET_OBJ(handler)->class_id == JS_CLASS_ASYNC_FUNCTION_RESOLVE) {
+        if (js_async_function_settle(ctx, handler, arg, is_reject) < 0)
+            return JS_EXCEPTION;
+        res = JS_UNDEFINED;
+    } else if (!(JS_VALUE_GET_TAG(handler) == JS_TAG_OBJECT && JS_VALUE_GET_OBJ(handler)->class_id == JS_CLASS_BYTECODE_FUNCTION)
+        && js_promise_reaction_of(ctx->rt, handler)) {
+        res = js_promise_reaction_call(ctx, handler, is_reject, arg);
+    } else {
+        res = JS_Call(ctx, handler, JS_UNDEFINED, 1, &arg);
+    }
+    is_reject = JS_IsException(res);
+    if (is_reject) {
+        if (js_exception_uncatchable(ctx))
+            return JS_EXCEPTION;
+        res = JS_GetException(ctx);
+    }
+    func = argv[is_reject];
+    if (is_reject && JS_IsUndefined(argv[0]) && JS_IsUndefined(argv[1]))
+        return JS_Throw(ctx, res);
+    if (!JS_IsUndefined(func)) {
+        res2 = JS_Call(ctx, func, JS_UNDEFINED,
+            1, (JSValueConst*)&res);
+    } else {
+        res2 = JS_UNDEFINED;
+    }
+    JS_FreeValue(ctx, res);
+
+    return res2;
+}
+
+void JS_SetHostPromiseRejectionTracker(JSRuntime* rt,
+    JSHostPromiseRejectionTracker* cb,
+    void* opaque)
+{
+    rt->host_promise_rejection_tracker = cb;
+    rt->host_promise_rejection_tracker_opaque = opaque;
+}
+
+static int fulfill_or_reject_promise(JSContext* ctx, JSValueConst promise,
+    JSValueConst value, BOOL is_reject)
+{
+    JSPromiseData* s = JS_GetOpaque(promise, JS_CLASS_PROMISE);
+    struct list_head *el, *el1;
+    JSPromiseReactionData* rd;
+    JSValueConst args[5];
+    int ret = 0;
+
+    if (!s || s->promise_state != JS_PROMISE_PENDING)
+        return 0;
+    set_value(ctx, &s->promise_result, JS_DupValue(ctx, value));
+    s->promise_state = JS_PROMISE_FULFILLED + is_reject;
+#ifdef DUMP_PROMISE
+    printf("fulfill_or_reject_promise: is_reject=%d\n", is_reject);
+#endif
+    if (s->promise_state == JS_PROMISE_REJECTED && !s->is_handled) {
+        JSRuntime* rt = ctx->rt;
+        if (rt->host_promise_rejection_tracker) {
+            rt->host_promise_rejection_tracker(ctx, promise, value, FALSE,
+                rt->host_promise_rejection_tracker_opaque);
+        }
+    }
+
+    list_for_each_safe(el, el1, &s->promise_reactions[is_reject])
+    {
+        rd = list_entry(el, JSPromiseReactionData, link);
+        args[0] = rd->resolving_funcs[0];
+        args[1] = rd->resolving_funcs[1];
+        args[2] = rd->handler;
+        args[3] = JS_NewBool(ctx, is_reject);
+        args[4] = value;
+        if (JS_EnqueueJob(ctx, promise_reaction_job, 5, args) < 0)
+            ret = -1;
+        list_del(&rd->link);
+        promise_reaction_data_free(ctx->rt, rd);
+    }
+
+    list_for_each_safe(el, el1, &s->promise_reactions[1 - is_reject])
+    {
+        rd = list_entry(el, JSPromiseReactionData, link);
+        list_del(&rd->link);
+        promise_reaction_data_free(ctx->rt, rd);
+    }
+    return ret;
+}
+
+static int reject_promise(JSContext* ctx, JSValueConst promise,
+    JSValueConst value)
+{
+    return fulfill_or_reject_promise(ctx, promise, value, TRUE);
+}
+
+static JSValue js_promise_resolve_thenable_job(JSContext* ctx,
+    int argc, JSValueConst* argv)
+{
+    JSValueConst promise, thenable, then;
+    JSValue args[2], res;
+
+#ifdef DUMP_PROMISE
+    printf("js_promise_resolve_thenable_job\n");
+#endif
+    assert(argc == 3);
+    promise = argv[0];
+    thenable = argv[1];
+    then = argv[2];
+    if (js_create_resolving_functions(ctx, args, promise) < 0)
+        return JS_EXCEPTION;
+    res = JS_Call(ctx, then, thenable, 2, (JSValueConst*)args);
+    if (JS_IsException(res) && !js_exception_uncatchable(ctx)) {
+        JSValue error = JS_GetException(ctx);
+        res = JS_Call(ctx, args[1], JS_UNDEFINED, 1, (JSValueConst*)&error);
+        JS_FreeValue(ctx, error);
+    }
+    JS_FreeValue(ctx, args[0]);
+    JS_FreeValue(ctx, args[1]);
+    return res;
+}
+
+static void js_promise_resolve_function_free_resolved(JSRuntime* rt,
+    JSPromiseFunctionDataResolved* sr)
+{
+    if (--sr->ref_count == 0) {
+        js_free_rt(rt, sr);
+    }
+}
+
+static int js_create_resolving_functions(JSContext* ctx,
+    JSValue* resolving_funcs,
+    JSValueConst promise)
+
+{
+    JSValue obj;
+    JSPromiseFunctionData* s;
+    JSPromiseFunctionDataResolved* sr;
+    int i, ret;
+
+    sr = js_malloc(ctx, sizeof(*sr));
+    if (!sr)
+        return -1;
+    sr->ref_count = 1;
+    sr->already_resolved = FALSE;
+    ret = 0;
+    for (i = 0; i < 2; i++) {
+        obj = js_new_anon_native_function(ctx,
+            JS_CLASS_PROMISE_RESOLVE_FUNCTION + i, 1);
+        if (JS_IsException(obj))
+            goto fail;
+        s = js_malloc(ctx, sizeof(*s));
+        if (!s) {
+            JS_FreeValue(ctx, obj);
+        fail:
+
+            if (i != 0)
+            {
+                JS_FreeValue(ctx, resolving_funcs[0]);
+                resolving_funcs[0] = JS_UNDEFINED;
+            }
+            ret = -1;
+            break;
+        }
+        sr->ref_count++;
+        s->presolved = sr;
+        s->promise = JS_DupValue(ctx, promise);
+        JS_SetOpaque(obj, s);
+        resolving_funcs[i] = obj;
+    }
+    js_promise_resolve_function_free_resolved(ctx->rt, sr);
+    return ret;
+}
+
+static void js_promise_resolve_function_finalizer(JSRuntime* rt, JSValue val)
+{
+    JSPromiseFunctionData* s = JS_VALUE_GET_OBJ(val)->u.promise_function_data;
+    if (s) {
+        js_promise_resolve_function_free_resolved(rt, s->presolved);
+        JS_FreeValueRT(rt, s->promise);
+        js_free_rt(rt, s);
+    }
+}
+
+static void js_promise_resolve_function_mark(JSRuntime* rt, JSValueConst val,
+    JS_MarkFunc* mark_func)
+{
+    JSPromiseFunctionData* s = JS_VALUE_GET_OBJ(val)->u.promise_function_data;
+    if (s) {
+        JS_MarkValue(rt, s->promise, mark_func);
+    }
+}
+
+static JSValue js_promise_resolve_function_call(JSContext* ctx,
+    JSValueConst func_obj,
+    JSValueConst this_val,
+    int argc, JSValueConst* argv,
+    int flags)
+{
+    JSObject* p = JS_VALUE_GET_OBJ(func_obj);
+    JSPromiseFunctionData* s;
+    JSValueConst resolution;
+    BOOL is_reject;
+
+    s = p->u.promise_function_data;
+    if (!s || s->presolved->already_resolved)
+        return JS_UNDEFINED;
+    s->presolved->already_resolved = TRUE;
+    is_reject = p->class_id - JS_CLASS_PROMISE_RESOLVE_FUNCTION;
+    if (argc > 0)
+        resolution = argv[0];
+    else
+        resolution = JS_UNDEFINED;
+    if (js_promise_resolve_with(ctx, s->promise, resolution, is_reject) < 0)
+        return JS_EXCEPTION;
+    return JS_UNDEFINED;
+}
+
+int js_promise_resolve_with(JSContext* ctx, JSValueConst promise, JSValueConst resolution, BOOL is_reject)
+{
+    JSValueConst args[3];
+    JSValue then;
+#ifdef DUMP_PROMISE
+    printf("js_promise_resolving_function_call: is_reject=%d ", is_reject);
+    JS_DumpValue(ctx, "resolution", resolution);
+    printf("\n");
+#endif
+    if (is_reject || !JS_IsObject(resolution)) {
+        goto done;
+    } else if (js_same_value(ctx, resolution, promise)) {
+        JS_ThrowTypeError(ctx, "promise self resolution");
+        goto fail_reject;
+    }
+    then = JS_GetProperty(ctx, resolution, JS_ATOM_then);
+    if (JS_IsException(then)) {
+        JSValue error;
+    fail_reject:
+        if (js_exception_uncatchable(ctx))
+            return -1;
+        error = JS_GetException(ctx);
+        if (reject_promise(ctx, promise, error) < 0) {
+            JS_FreeValue(ctx, error);
+            return -1;
+        }
+        JS_FreeValue(ctx, error);
+    } else if (!JS_IsFunction(ctx, then)) {
+        JS_FreeValue(ctx, then);
+    done:
+        if (fulfill_or_reject_promise(ctx, promise, resolution, is_reject) < 0)
+            return -1;
+    } else {
+        args[0] = promise;
+        args[1] = resolution;
+        args[2] = then;
+        if (JS_EnqueueJob(ctx, js_promise_resolve_thenable_job, 3, args) < 0) {
+            JS_FreeValue(ctx, then);
+            return -1;
+        }
+        JS_FreeValue(ctx, then);
+    }
+    return 0;
+}
+
+static void js_promise_finalizer(JSRuntime* rt, JSValue val)
+{
+    JSPromiseData* s = JS_GetOpaque(val, JS_CLASS_PROMISE);
+    struct list_head *el, *el1;
+    int i;
+
+    if (!s)
+        return;
+    for (i = 0; i < 2; i++) {
+        list_for_each_safe(el, el1, &s->promise_reactions[i])
+        {
+            JSPromiseReactionData* rd = list_entry(el, JSPromiseReactionData, link);
+            promise_reaction_data_free(rt, rd);
+        }
+    }
+    JS_FreeValueRT(rt, s->promise_result);
+    js_free_rt(rt, s);
+}
+
+static void js_promise_mark(JSRuntime* rt, JSValueConst val,
+    JS_MarkFunc* mark_func)
+{
+    JSPromiseData* s = JS_GetOpaque(val, JS_CLASS_PROMISE);
+    struct list_head* el;
+    int i;
+
+    if (!s)
+        return;
+    for (i = 0; i < 2; i++) {
+        list_for_each(el, &s->promise_reactions[i])
+        {
+            JSPromiseReactionData* rd = list_entry(el, JSPromiseReactionData, link);
+            JS_MarkValue(rt, rd->resolving_funcs[0], mark_func);
+            JS_MarkValue(rt, rd->resolving_funcs[1], mark_func);
+            JS_MarkValue(rt, rd->handler, mark_func);
+        }
+    }
+    JS_MarkValue(rt, s->promise_result, mark_func);
+}
+
+static JSValue js_promise_constructor(JSContext* ctx, JSValueConst new_target,
+    int argc, JSValueConst* argv)
+{
+    JSValueConst executor;
+    JSValue obj;
+    JSPromiseData* s;
+    JSValue args[2], ret;
+    int i;
+
+    executor = argv[0];
+    if (check_function(ctx, executor))
+        return JS_EXCEPTION;
+    obj = js_create_from_ctor(ctx, new_target, JS_CLASS_PROMISE);
+    if (JS_IsException(obj))
+        return JS_EXCEPTION;
+    s = js_mallocz(ctx, sizeof(*s));
+    if (!s)
+        goto fail;
+    s->promise_state = JS_PROMISE_PENDING;
+    s->is_handled = FALSE;
+    for (i = 0; i < 2; i++)
+        init_list_head(&s->promise_reactions[i]);
+    s->promise_result = JS_UNDEFINED;
+    JS_SetOpaque(obj, s);
+    if (js_create_resolving_functions(ctx, args, obj))
+        goto fail;
+    ret = JS_Call(ctx, executor, JS_UNDEFINED, 2, (JSValueConst*)args);
+    if (JS_IsException(ret)) {
+        JSValue ret2, error;
+        if (js_exception_uncatchable(ctx))
+            goto fail1;
+        error = JS_GetException(ctx);
+        ret2 = JS_Call(ctx, args[1], JS_UNDEFINED, 1, (JSValueConst*)&error);
+        JS_FreeValue(ctx, error);
+        if (JS_IsException(ret2))
+            goto fail1;
+        JS_FreeValue(ctx, ret2);
+    }
+    JS_FreeValue(ctx, ret);
+    JS_FreeValue(ctx, args[0]);
+    JS_FreeValue(ctx, args[1]);
+    return obj;
+fail1:
+    JS_FreeValue(ctx, args[0]);
+    JS_FreeValue(ctx, args[1]);
+fail:
+    JS_FreeValue(ctx, obj);
+    return JS_EXCEPTION;
+}
+
+static JSValue js_promise_new_pending(JSContext* ctx)
+{
+    JSValue obj;
+    JSPromiseData* s;
+    int i;
+
+    obj = JS_NewObjectProtoClassBare(ctx, ctx->class_proto[JS_CLASS_PROMISE],
+        JS_CLASS_PROMISE);
+    if (JS_IsException(obj))
+        return obj;
+    s = js_mallocz(ctx, sizeof(*s));
+    if (!s) {
+        JS_FreeValue(ctx, obj);
+        return JS_EXCEPTION;
+    }
+    s->promise_state = JS_PROMISE_PENDING;
+    s->is_handled = FALSE;
+    for (i = 0; i < 2; i++)
+        init_list_head(&s->promise_reactions[i]);
+    s->promise_result = JS_UNDEFINED;
+    JS_SetOpaque(obj, s);
+    return obj;
+}
+
+static JSValue js_promise_executor(JSContext* ctx,
+    JSValueConst this_val,
+    int argc, JSValueConst* argv,
+    int magic, JSValue* func_data)
+{
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        if (!JS_IsUndefined(func_data[i]))
+            return JS_ThrowTypeError(ctx, "resolving function already set");
+        func_data[i] = JS_DupValue(ctx, argv[i]);
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue js_promise_executor_new(JSContext* ctx)
+{
+    JSValueConst func_data[2];
+
+    func_data[0] = JS_UNDEFINED;
+    func_data[1] = JS_UNDEFINED;
+    return JS_NewCFunctionData(ctx, js_promise_executor, 2,
+        0, 2, func_data);
+}
+
+static JSValue js_new_promise_capability(JSContext* ctx,
+    JSValue* resolving_funcs,
+    JSValueConst ctor)
+{
+    JSValue executor, result_promise;
+    JSCFunctionDataRecord* s;
+    int i;
+
+    if (JS_IsUndefined(ctor)
+        || (JS_VALUE_GET_TAG(ctor) == JS_TAG_OBJECT
+            && JS_VALUE_GET_TAG(ctx->promise_ctor) == JS_TAG_OBJECT
+            && JS_VALUE_GET_OBJ(ctor) == JS_VALUE_GET_OBJ(ctx->promise_ctor))) {
+        result_promise = js_promise_new_pending(ctx);
+        if (JS_IsException(result_promise))
+            return result_promise;
+        if (js_create_resolving_functions(ctx, resolving_funcs, result_promise)) {
+            JS_FreeValue(ctx, result_promise);
+            return JS_EXCEPTION;
+        }
+        return result_promise;
+    }
+
+    executor = js_promise_executor_new(ctx);
+    if (JS_IsException(executor))
+        return executor;
+
+    if (JS_IsUndefined(ctor)) {
+        result_promise = js_promise_constructor(ctx, ctor, 1,
+            (JSValueConst*)&executor);
+    } else {
+        result_promise = JS_CallConstructor(ctx, ctor, 1,
+            (JSValueConst*)&executor);
+    }
+    if (JS_IsException(result_promise))
+        goto fail;
+    s = JS_GetOpaque(executor, JS_CLASS_C_FUNCTION_DATA);
+    for (i = 0; i < 2; i++) {
+        if (check_function(ctx, s->data[i]))
+            goto fail;
+    }
+    for (i = 0; i < 2; i++)
+        resolving_funcs[i] = JS_DupValue(ctx, s->data[i]);
+    JS_FreeValue(ctx, executor);
+    return result_promise;
+fail:
+    JS_FreeValue(ctx, executor);
+    JS_FreeValue(ctx, result_promise);
+    return JS_EXCEPTION;
+}
+
+static JSValue promise_native_reaction_run(JSContext* ctx, JSValueConst* argv, BOOL is_reject)
+{
+    JSValue res = js_promise_reaction_call(ctx, argv[0], is_reject, argv[1]);
+    if (JS_IsException(res)) {
+        if (js_exception_uncatchable(ctx))
+            return JS_EXCEPTION;
+        res = JS_GetException(ctx);
+    }
+    JS_FreeValue(ctx, res);
+    return JS_UNDEFINED;
+}
+
+static JSValue promise_native_fulfil_job(JSContext* ctx, int argc, JSValueConst* argv)
+{
+    (void)argc;
+    return promise_native_reaction_run(ctx, argv, FALSE);
+}
+
+static JSValue promise_native_reject_job(JSContext* ctx, int argc, JSValueConst* argv)
+{
+    (void)argc;
+    return promise_native_reaction_run(ctx, argv, TRUE);
+}
+
+int JS_EnqueueReaction(JSContext* ctx, JSValueConst reaction, JSValueConst value, int is_reject)
+{
+    JSValueConst args[5];
+    if (js_promise_reaction_of(ctx->rt, reaction)) {
+        args[0] = reaction;
+        args[1] = value;
+        return JS_EnqueueJob(ctx, is_reject ? promise_native_reject_job : promise_native_fulfil_job, 2, args);
+    }
+    args[0] = JS_UNDEFINED;
+    args[1] = JS_UNDEFINED;
+    args[2] = reaction;
+    args[3] = JS_NewBool(ctx, is_reject);
+    args[4] = value;
+    return JS_EnqueueJob(ctx, promise_reaction_job, 5, args);
+}
+
+int JS_ExecutePendingJobsUntil(JSRuntime* rt, JSValueConst promise, const int* stop)
+{
+    JSPromiseData* s = JS_GetOpaque(promise, JS_CLASS_PROMISE);
+    return js_run_jobs_until(rt, s ? (const int*)&s->promise_state : NULL, JS_PROMISE_PENDING, stop);
+}
+
+int JS_PromiseReact(JSContext* ctx, JSValueConst promise, JSValueConst reaction)
+{
+    JSValueConst rr[2], cap[2];
+
+    if (!JS_GetOpaque(promise, JS_CLASS_PROMISE)) {
+        JS_ThrowTypeError(ctx, "not a promise");
+        return -1;
+    }
+    rr[0] = reaction;
+    rr[1] = reaction;
+    cap[0] = JS_UNDEFINED;
+    cap[1] = JS_UNDEFINED;
+    return perform_promise_then(ctx, promise, rr, cap);
+}
+
+static BOOL js_promise_then_pristine(JSContext* ctx, JSObject* p, BOOL species)
+{
+    JSObject* proto;
+    JSProperty* pr;
+    JSShapeProperty* prs;
+
+    if (p->class_id != JS_CLASS_PROMISE || p->shape->prop_count != 0)
+        return FALSE;
+    proto = p->shape->proto;
+    if (!proto || JS_VALUE_GET_TAG(ctx->class_proto[JS_CLASS_PROMISE]) != JS_TAG_OBJECT
+        || proto != JS_VALUE_GET_OBJ(ctx->class_proto[JS_CLASS_PROMISE]))
+        return FALSE;
+    if (!species) {
+        prs = find_own_property(&pr, proto, JS_ATOM_then);
+        return prs && (prs->flags & JS_PROP_TMASK) == JS_PROP_NORMAL && JS_IsCFunction(ctx, pr->u.value, js_promise_then, 0);
+    }
+    prs = find_own_property(&pr, proto, JS_ATOM_constructor);
+    if (!prs || (prs->flags & JS_PROP_TMASK) != JS_PROP_NORMAL || JS_VALUE_GET_TAG(pr->u.value) != JS_TAG_OBJECT
+        || JS_VALUE_GET_TAG(ctx->promise_ctor) != JS_TAG_OBJECT
+        || JS_VALUE_GET_OBJ(pr->u.value) != JS_VALUE_GET_OBJ(ctx->promise_ctor))
+        return FALSE;
+    prs = find_own_property(&pr, JS_VALUE_GET_OBJ(ctx->promise_ctor), JS_ATOM_Symbol_species);
+    if (!prs || (prs->flags & JS_PROP_TMASK) != JS_PROP_GETSET || !pr->u.getset.getter)
+        return FALSE;
+    p = pr->u.getset.getter;
+    return p->class_id == JS_CLASS_C_FUNCTION && p->u.cfunc.c_function.getter == js_get_this;
+}
+
+static JSValue js_upon_hop_rx(JSContext* ctx, JSValueConst data, int magic, int is_reject, JSValueConst arg)
+{
+    JSValue q;
+
+    (void)magic;
+    if (is_reject || !JS_IsObject(arg)) {
+        JS_EnqueueReaction(ctx, data, arg, is_reject);
+        return JS_UNDEFINED;
+    }
+    q = js_promise_new_pending(ctx);
+    if (JS_IsException(q))
+        return q;
+    if (JS_PromiseReact(ctx, q, data) < 0 || JS_PromiseSettle(ctx, q, arg, 0) < 0) {
+        JS_FreeValue(ctx, q);
+        return JS_EXCEPTION;
+    }
+    JS_FreeValue(ctx, q);
+    return JS_UNDEFINED;
+}
+
+static JSValue js_upon_thenable_job(JSContext* ctx, int argc, JSValueConst* argv)
+{
+    JSValueConst v = argv[0], rx = argv[1], rr[2], cap[2];
+    JSValue hop, p, f[2], res;
+
+    (void)argc;
+    if (js_promise_then_pristine(ctx, JS_VALUE_GET_OBJ(v), TRUE)) {
+        hop = JS_NewPromiseReaction(ctx, js_upon_hop_rx, rx, 0);
+        if (JS_IsException(hop))
+            return hop;
+        rr[0] = hop;
+        rr[1] = hop;
+        cap[0] = JS_UNDEFINED;
+        cap[1] = JS_UNDEFINED;
+        if (perform_promise_then(ctx, v, rr, cap) < 0) {
+            JS_FreeValue(ctx, hop);
+            return JS_EXCEPTION;
+        }
+        JS_FreeValue(ctx, hop);
+        return JS_UNDEFINED;
+    }
+    p = js_promise_new_pending(ctx);
+    if (JS_IsException(p))
+        return p;
+    if (JS_PromiseReact(ctx, p, rx) < 0 || js_create_resolving_functions(ctx, f, p) < 0) {
+        JS_FreeValue(ctx, p);
+        return JS_EXCEPTION;
+    }
+    res = js_promise_then(ctx, v, 2, (JSValueConst*)f);
+    if (JS_IsException(res) && !js_exception_uncatchable(ctx)) {
+        JSValue error = JS_GetException(ctx);
+        res = JS_Call(ctx, f[1], JS_UNDEFINED, 1, (JSValueConst*)&error);
+        JS_FreeValue(ctx, error);
+    }
+    JS_FreeValue(ctx, f[0]);
+    JS_FreeValue(ctx, f[1]);
+    JS_FreeValue(ctx, p);
+    return res;
+}
+
+int JS_PromiseUponResolvedWith(JSContext* ctx, JSValueConst value, JSValueConst reaction)
+{
+    JSValueConst args[2];
+    JSValue p;
+    int ret;
+
+    if (!JS_IsObject(value))
+        return JS_EnqueueReaction(ctx, reaction, value, 0);
+    if (js_promise_then_pristine(ctx, JS_VALUE_GET_OBJ(value), FALSE)) {
+        args[0] = value;
+        args[1] = reaction;
+        return JS_EnqueueJob(ctx, js_upon_thenable_job, 2, args);
+    }
+    p = js_promise_new_pending(ctx);
+    if (JS_IsException(p))
+        return -1;
+    if (JS_PromiseSettle(ctx, p, value, 0) < 0) {
+        JS_FreeValue(ctx, p);
+        return -1;
+    }
+    ret = JS_PromiseReact(ctx, p, reaction);
+    JS_FreeValue(ctx, p);
+    return ret;
+}
+
+JSValue JS_NewPromiseCapability(JSContext* ctx, JSValue* resolving_funcs)
+{
+    return js_new_promise_capability(ctx, resolving_funcs, JS_UNDEFINED);
+}
+
+JSValue js_promise_resolve(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv, int magic)
+{
+    JSValue result_promise, resolving_funcs[2], ret;
+    BOOL is_reject = magic;
+
+    if (!JS_IsObject(this_val))
+        return JS_ThrowTypeErrorNotAnObject(ctx);
+    if (!is_reject && JS_GetOpaque(argv[0], JS_CLASS_PROMISE)) {
+        JSValue ctor;
+        BOOL is_same;
+        ctor = JS_GetProperty(ctx, argv[0], JS_ATOM_constructor);
+        if (JS_IsException(ctor))
+            return ctor;
+        is_same = js_same_value(ctx, ctor, this_val);
+        JS_FreeValue(ctx, ctor);
+        if (is_same)
+            return JS_DupValue(ctx, argv[0]);
+    }
+    result_promise = js_new_promise_capability(ctx, resolving_funcs, this_val);
+    if (JS_IsException(result_promise))
+        return result_promise;
+    ret = JS_Call(ctx, resolving_funcs[is_reject], JS_UNDEFINED, 1, argv);
+    JS_FreeValue(ctx, resolving_funcs[0]);
+    JS_FreeValue(ctx, resolving_funcs[1]);
+    if (JS_IsException(ret)) {
+        JS_FreeValue(ctx, result_promise);
+        return ret;
+    }
+    JS_FreeValue(ctx, ret);
+    return result_promise;
+}
+
+static JSValue js_promise_withResolvers(JSContext* ctx,
+    JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    JSValue result_promise, resolving_funcs[2], obj;
+    if (!JS_IsObject(this_val))
+        return JS_ThrowTypeErrorNotAnObject(ctx);
+    result_promise = js_new_promise_capability(ctx, resolving_funcs, this_val);
+    if (JS_IsException(result_promise))
+        return result_promise;
+    obj = JS_NewObject(ctx);
+    if (JS_IsException(obj))
+        goto exception;
+    if (JS_DefinePropertyValue(ctx, obj, JS_ATOM_promise, result_promise,
+            JS_PROP_C_W_E)
+        < 0) {
+        goto exception;
+    }
+    result_promise = JS_UNDEFINED;
+    if (JS_DefinePropertyValue(ctx, obj, JS_ATOM_resolve, resolving_funcs[0],
+            JS_PROP_C_W_E)
+        < 0) {
+        goto exception;
+    }
+    resolving_funcs[0] = JS_UNDEFINED;
+    if (JS_DefinePropertyValue(ctx, obj, JS_ATOM_reject, resolving_funcs[1],
+            JS_PROP_C_W_E)
+        < 0) {
+        goto exception;
+    }
+    return obj;
+exception:
+    JS_FreeValue(ctx, resolving_funcs[0]);
+    JS_FreeValue(ctx, resolving_funcs[1]);
+    JS_FreeValue(ctx, result_promise);
+    JS_FreeValue(ctx, obj);
+    return JS_EXCEPTION;
+}
+
+static JSValue js_promise_try(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    JSValue result_promise, resolving_funcs[2], ret, ret2;
+    BOOL is_reject = 0;
+    int nargs;
+
+    if (!JS_IsObject(this_val))
+        return JS_ThrowTypeErrorNotAnObject(ctx);
+    result_promise = js_new_promise_capability(ctx, resolving_funcs, this_val);
+    if (JS_IsException(result_promise))
+        return result_promise;
+    nargs = max_int(0, argc - 1);
+    ret = JS_Call(ctx, argv[0], JS_UNDEFINED, nargs, argv + 1);
+    if (JS_IsException(ret)) {
+        if (js_exception_uncatchable(ctx)) {
+            JS_FreeValue(ctx, resolving_funcs[0]);
+            JS_FreeValue(ctx, resolving_funcs[1]);
+            JS_FreeValue(ctx, result_promise);
+            return JS_EXCEPTION;
+        }
+        is_reject = 1;
+        ret = JS_GetException(ctx);
+    }
+    ret2 = JS_Call(ctx, resolving_funcs[is_reject], JS_UNDEFINED, 1, (JSValueConst*)&ret);
+    JS_FreeValue(ctx, resolving_funcs[0]);
+    JS_FreeValue(ctx, resolving_funcs[1]);
+    JS_FreeValue(ctx, ret);
+    if (JS_IsException(ret2)) {
+        JS_FreeValue(ctx, result_promise);
+        return ret2;
+    }
+    JS_FreeValue(ctx, ret2);
+    return result_promise;
+}
+
+static __exception int remainingElementsCount_add(JSContext* ctx,
+    JSValueConst resolve_element_env,
+    int addend)
+{
+    JSValue val;
+    int remainingElementsCount;
+
+    val = JS_GetPropertyUint32(ctx, resolve_element_env, 0);
+    if (JS_IsException(val))
+        return -1;
+    if (JS_ToInt32Free(ctx, &remainingElementsCount, val))
+        return -1;
+    remainingElementsCount += addend;
+    if (JS_SetPropertyUint32(ctx, resolve_element_env, 0,
+            JS_NewInt32(ctx, remainingElementsCount))
+        < 0)
+        return -1;
+    return (remainingElementsCount == 0);
+}
+
+static JSValue js_promise_keyed_result(JSContext* ctx, JSValueConst keys, JSValueConst values)
+{
+    JSValue obj;
+    uint32_t i, n;
+
+    if (js_get_length32(ctx, &n, keys))
+        return JS_EXCEPTION;
+    obj = JS_NewObjectProto(ctx, JS_NULL);
+    if (JS_IsException(obj))
+        return obj;
+    for (i = 0; i < n; i++) {
+        JSValue k = JS_GetPropertyUint32(ctx, keys, i);
+        JSValue v;
+        JSAtom a;
+        if (JS_IsException(k))
+            goto fail;
+        a = JS_ValueToAtom(ctx, k);
+        JS_FreeValue(ctx, k);
+        if (a == JS_ATOM_NULL)
+            goto fail;
+        v = JS_GetPropertyUint32(ctx, values, i);
+        if (JS_IsException(v) || JS_DefinePropertyValue(ctx, obj, a, v, JS_PROP_C_W_E | JS_PROP_THROW) < 0) {
+            JS_FreeAtom(ctx, a);
+            goto fail;
+        }
+        JS_FreeAtom(ctx, a);
+    }
+    return obj;
+fail:
+    JS_FreeValue(ctx, obj);
+    return JS_EXCEPTION;
+}
+
+static JSValue js_promise_all_resolve_element(JSContext* ctx,
+    JSValueConst this_val,
+    int argc, JSValueConst* argv,
+    int magic,
+    JSValue* func_data)
+{
+    int resolve_type = magic & 3;
+    int is_reject = magic & 4;
+    BOOL alreadyCalled = JS_ToBool(ctx, func_data[0]);
+    JSValueConst values = func_data[2];
+    JSValueConst resolve = func_data[3];
+    JSValueConst resolve_element_env = func_data[4];
+    JSValue ret, obj;
+    int is_zero, index;
+
+    if (JS_ToInt32(ctx, &index, func_data[1]))
+        return JS_EXCEPTION;
+    if (alreadyCalled)
+        return JS_UNDEFINED;
+    func_data[0] = JS_NewBool(ctx, TRUE);
+
+    if (resolve_type == PROMISE_MAGIC_allSettled) {
+        JSValue str;
+
+        obj = JS_NewObject(ctx);
+        if (JS_IsException(obj))
+            return JS_EXCEPTION;
+        str = js_new_string8(ctx, is_reject ? "rejected" : "fulfilled");
+        if (JS_IsException(str))
+            goto fail1;
+        if (JS_DefinePropertyValue(ctx, obj, JS_ATOM_status,
+                str,
+                JS_PROP_C_W_E)
+            < 0)
+            goto fail1;
+        if (JS_DefinePropertyValue(ctx, obj,
+                is_reject ? JS_ATOM_reason : JS_ATOM_value,
+                JS_DupValue(ctx, argv[0]),
+                JS_PROP_C_W_E)
+            < 0) {
+        fail1:
+            JS_FreeValue(ctx, obj);
+            return JS_EXCEPTION;
+        }
+    } else {
+        obj = JS_DupValue(ctx, argv[0]);
+    }
+    if (JS_DefinePropertyValueUint32(ctx, values, index,
+            obj, JS_PROP_C_W_E)
+        < 0)
+        return JS_EXCEPTION;
+
+    is_zero = remainingElementsCount_add(ctx, resolve_element_env, -1);
+    if (is_zero < 0)
+        return JS_EXCEPTION;
+    if (is_zero && (magic & 8)) {
+        JSValue res = js_promise_keyed_result(ctx, func_data[5], values);
+        if (JS_IsException(res))
+            return JS_EXCEPTION;
+        ret = JS_Call(ctx, resolve, JS_UNDEFINED, 1, (JSValueConst*)&res);
+        JS_FreeValue(ctx, res);
+        if (JS_IsException(ret))
+            return ret;
+        JS_FreeValue(ctx, ret);
+    } else if (is_zero) {
+        if (resolve_type == PROMISE_MAGIC_any) {
+            JSValue error;
+            error = js_aggregate_error_constructor(ctx, values);
+            if (JS_IsException(error))
+                return JS_EXCEPTION;
+            ret = JS_Call(ctx, resolve, JS_UNDEFINED, 1, (JSValueConst*)&error);
+            JS_FreeValue(ctx, error);
+        } else {
+            ret = JS_Call(ctx, resolve, JS_UNDEFINED, 1, (JSValueConst*)&values);
+        }
+        if (JS_IsException(ret))
+            return ret;
+        JS_FreeValue(ctx, ret);
+    }
+    return JS_UNDEFINED;
+}
+
+static JSValue js_promise_all(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv, int magic)
+{
+    JSValue result_promise, resolving_funcs[2], item, next_promise, ret;
+    JSValue next_method = JS_UNDEFINED, values = JS_UNDEFINED;
+    JSValue resolve_element_env = JS_UNDEFINED, resolve_element, reject_element;
+    JSValue promise_resolve = JS_UNDEFINED, iter = JS_UNDEFINED;
+    JSValueConst then_args[2], resolve_element_data[5];
+    BOOL done;
+    int index, is_zero, is_promise_any = (magic == PROMISE_MAGIC_any);
+
+    if (!JS_IsObject(this_val))
+        return JS_ThrowTypeErrorNotAnObject(ctx);
+    result_promise = js_new_promise_capability(ctx, resolving_funcs, this_val);
+    if (JS_IsException(result_promise))
+        return result_promise;
+    promise_resolve = JS_GetProperty(ctx, this_val, JS_ATOM_resolve);
+    if (JS_IsException(promise_resolve) || check_function(ctx, promise_resolve))
+        goto fail_reject;
+    iter = JS_GetIterator(ctx, argv[0], FALSE);
+    if (JS_IsException(iter)) {
+        JSValue error;
+    fail_reject:
+        if (js_exception_uncatchable(ctx))
+            goto fail;
+        error = JS_GetException(ctx);
+        ret = JS_Call(ctx, resolving_funcs[1], JS_UNDEFINED, 1,
+            (JSValueConst*)&error);
+        JS_FreeValue(ctx, error);
+        if (JS_IsException(ret))
+            goto fail;
+        JS_FreeValue(ctx, ret);
+    } else {
+        next_method = JS_GetProperty(ctx, iter, JS_ATOM_next);
+        if (JS_IsException(next_method))
+            goto fail_reject;
+        values = JS_NewArray(ctx);
+        if (JS_IsException(values))
+            goto fail_reject;
+        resolve_element_env = JS_NewArray(ctx);
+        if (JS_IsException(resolve_element_env))
+            goto fail_reject;
+        if (JS_DefinePropertyValueUint32(ctx, resolve_element_env, 0,
+                JS_NewInt32(ctx, 1),
+                JS_PROP_CONFIGURABLE | JS_PROP_ENUMERABLE | JS_PROP_WRITABLE)
+            < 0)
+            goto fail_reject;
+
+        index = 0;
+        for (;;) {
+            item = js_iterator_step(ctx, iter, next_method, &done);
+            if (JS_IsException(item))
+                goto fail_reject;
+            if (done)
+                break;
+            next_promise = JS_Call(ctx, promise_resolve,
+                this_val, 1, (JSValueConst*)&item);
+            JS_FreeValue(ctx, item);
+            if (JS_IsException(next_promise)) {
+            fail_reject1:
+                JS_IteratorClose(ctx, iter, TRUE);
+                goto fail_reject;
+            }
+            resolve_element_data[0] = JS_NewBool(ctx, FALSE);
+            resolve_element_data[1] = (JSValueConst)JS_NewInt32(ctx, index);
+            resolve_element_data[2] = values;
+            resolve_element_data[3] = resolving_funcs[is_promise_any];
+            resolve_element_data[4] = resolve_element_env;
+            resolve_element = JS_NewCFunctionData(ctx, js_promise_all_resolve_element, 1,
+                magic, 5, resolve_element_data);
+            if (JS_IsException(resolve_element)) {
+                JS_FreeValue(ctx, next_promise);
+                goto fail_reject1;
+            }
+
+            if (magic == PROMISE_MAGIC_allSettled) {
+                reject_element = JS_NewCFunctionData(ctx, js_promise_all_resolve_element, 1,
+                    magic | 4, 5, resolve_element_data);
+                if (JS_IsException(reject_element)) {
+                    JS_FreeValue(ctx, next_promise);
+                    goto fail_reject1;
+                }
+            } else if (magic == PROMISE_MAGIC_any) {
+                if (JS_DefinePropertyValueUint32(ctx, values, index,
+                        JS_UNDEFINED, JS_PROP_C_W_E)
+                    < 0) {
+                    JS_FreeValue(ctx, next_promise);
+                    goto fail_reject1;
+                }
+                reject_element = resolve_element;
+                resolve_element = JS_DupValue(ctx, resolving_funcs[0]);
+            } else {
+                reject_element = JS_DupValue(ctx, resolving_funcs[1]);
+            }
+
+            if (remainingElementsCount_add(ctx, resolve_element_env, 1) < 0) {
+                JS_FreeValue(ctx, next_promise);
+                JS_FreeValue(ctx, resolve_element);
+                JS_FreeValue(ctx, reject_element);
+                goto fail_reject1;
+            }
+
+            then_args[0] = resolve_element;
+            then_args[1] = reject_element;
+            ret = JS_InvokeFree(ctx, next_promise, JS_ATOM_then, 2, then_args);
+            JS_FreeValue(ctx, resolve_element);
+            JS_FreeValue(ctx, reject_element);
+            if (check_exception_free(ctx, ret))
+                goto fail_reject1;
+            index++;
+        }
+
+        is_zero = remainingElementsCount_add(ctx, resolve_element_env, -1);
+        if (is_zero < 0)
+            goto fail_reject;
+        if (is_zero) {
+            if (magic == PROMISE_MAGIC_any) {
+                JSValue error;
+                error = js_aggregate_error_constructor(ctx, values);
+                if (JS_IsException(error))
+                    goto fail_reject;
+                JS_FreeValue(ctx, values);
+                values = error;
+            }
+            ret = JS_Call(ctx, resolving_funcs[is_promise_any], JS_UNDEFINED,
+                1, (JSValueConst*)&values);
+            if (check_exception_free(ctx, ret))
+                goto fail_reject;
+        }
+    }
+done:
+    JS_FreeValue(ctx, promise_resolve);
+    JS_FreeValue(ctx, resolve_element_env);
+    JS_FreeValue(ctx, values);
+    JS_FreeValue(ctx, next_method);
+    JS_FreeValue(ctx, iter);
+    JS_FreeValue(ctx, resolving_funcs[0]);
+    JS_FreeValue(ctx, resolving_funcs[1]);
+    return result_promise;
+fail:
+    JS_FreeValue(ctx, result_promise);
+    result_promise = JS_EXCEPTION;
+    goto done;
+}
+
+static JSValue js_promise_all_keyed(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv, int magic)
+{
+    JSValue result_promise, resolving_funcs[2], next_promise, ret;
+    JSValue values = JS_UNDEFINED, keys = JS_UNDEFINED, env = JS_UNDEFINED;
+    JSValue promise_resolve = JS_UNDEFINED, resolve_element, reject_element;
+    JSValueConst then_args[2], data[6];
+    JSValueConst promises = argv[0];
+    JSPropertyEnum* tab = NULL;
+    uint32_t len = 0, k;
+    int index, is_zero;
+
+    if (!JS_IsObject(this_val))
+        return JS_ThrowTypeErrorNotAnObject(ctx);
+    result_promise = js_new_promise_capability(ctx, resolving_funcs, this_val);
+    if (JS_IsException(result_promise))
+        return result_promise;
+    promise_resolve = JS_GetProperty(ctx, this_val, JS_ATOM_resolve);
+    if (JS_IsException(promise_resolve) || check_function(ctx, promise_resolve))
+        goto fail_reject;
+    if (!JS_IsObject(promises)) {
+        JS_ThrowTypeError(ctx, "Promise.%s: argument must be an object",
+            magic == PROMISE_MAGIC_allSettled ? "allSettledKeyed" : "allKeyed");
+        goto fail_reject;
+    }
+    values = JS_NewArray(ctx);
+    keys = JS_NewArray(ctx);
+    env = JS_NewArray(ctx);
+    if (JS_IsException(values) || JS_IsException(keys) || JS_IsException(env))
+        goto fail_reject;
+    if (JS_DefinePropertyValueUint32(ctx, env, 0, JS_NewInt32(ctx, 1), JS_PROP_C_W_E) < 0)
+        goto fail_reject;
+    if (JS_GetOwnPropertyNames(ctx, &tab, &len, promises, JS_GPN_STRING_MASK | JS_GPN_SYMBOL_MASK) < 0)
+        goto fail_reject;
+    index = 0;
+    for (k = 0; k < len; k++) {
+        JSPropertyDescriptor desc;
+        JSValue item;
+        int r = JS_GetOwnProperty(ctx, &desc, promises, tab[k].atom);
+        if (r < 0)
+            goto fail_reject;
+        if (!r)
+            continue;
+        js_free_desc(ctx, &desc);
+        if (!(desc.flags & JS_PROP_ENUMERABLE))
+            continue;
+        item = JS_GetProperty(ctx, promises, tab[k].atom);
+        if (JS_IsException(item))
+            goto fail_reject;
+        if (JS_DefinePropertyValueUint32(ctx, keys, index, JS_AtomToValue(ctx, tab[k].atom), JS_PROP_C_W_E) < 0
+            || JS_DefinePropertyValueUint32(ctx, values, index, JS_UNDEFINED, JS_PROP_C_W_E) < 0) {
+            JS_FreeValue(ctx, item);
+            goto fail_reject;
+        }
+        next_promise = JS_Call(ctx, promise_resolve, this_val, 1, (JSValueConst*)&item);
+        JS_FreeValue(ctx, item);
+        if (JS_IsException(next_promise))
+            goto fail_reject;
+        data[0] = JS_NewBool(ctx, FALSE);
+        data[1] = (JSValueConst)JS_NewInt32(ctx, index);
+        data[2] = values;
+        data[3] = resolving_funcs[0];
+        data[4] = env;
+        data[5] = keys;
+        resolve_element = JS_NewCFunctionData(ctx, js_promise_all_resolve_element, 1, magic | 8, 6, data);
+        if (JS_IsException(resolve_element)) {
+            JS_FreeValue(ctx, next_promise);
+            goto fail_reject;
+        }
+        if (magic == PROMISE_MAGIC_allSettled) {
+            reject_element = JS_NewCFunctionData(ctx, js_promise_all_resolve_element, 1, magic | 4 | 8, 6, data);
+            if (JS_IsException(reject_element)) {
+                JS_FreeValue(ctx, next_promise);
+                JS_FreeValue(ctx, resolve_element);
+                goto fail_reject;
+            }
+        } else {
+            reject_element = JS_DupValue(ctx, resolving_funcs[1]);
+        }
+        if (remainingElementsCount_add(ctx, env, 1) < 0) {
+            JS_FreeValue(ctx, next_promise);
+            JS_FreeValue(ctx, resolve_element);
+            JS_FreeValue(ctx, reject_element);
+            goto fail_reject;
+        }
+        then_args[0] = resolve_element;
+        then_args[1] = reject_element;
+        ret = JS_InvokeFree(ctx, next_promise, JS_ATOM_then, 2, then_args);
+        JS_FreeValue(ctx, resolve_element);
+        JS_FreeValue(ctx, reject_element);
+        if (check_exception_free(ctx, ret))
+            goto fail_reject;
+        index++;
+    }
+    is_zero = remainingElementsCount_add(ctx, env, -1);
+    if (is_zero < 0)
+        goto fail_reject;
+    if (is_zero) {
+        JSValue res = js_promise_keyed_result(ctx, keys, values);
+        if (JS_IsException(res))
+            goto fail_reject;
+        ret = JS_Call(ctx, resolving_funcs[0], JS_UNDEFINED, 1, (JSValueConst*)&res);
+        JS_FreeValue(ctx, res);
+        if (check_exception_free(ctx, ret))
+            goto fail_reject;
+    }
+    goto done;
+fail_reject:
+    {
+        if (js_exception_uncatchable(ctx)) {
+            JS_FreeValue(ctx, result_promise);
+            result_promise = JS_EXCEPTION;
+            goto done;
+        }
+        JSValue error = JS_GetException(ctx);
+        ret = JS_Call(ctx, resolving_funcs[1], JS_UNDEFINED, 1, (JSValueConst*)&error);
+        JS_FreeValue(ctx, error);
+        if (JS_IsException(ret)) {
+            JS_FreeValue(ctx, result_promise);
+            result_promise = JS_EXCEPTION;
+        } else {
+            JS_FreeValue(ctx, ret);
+        }
+    }
+done:
+    if (tab)
+        JS_FreePropertyEnum(ctx, tab, len);
+    JS_FreeValue(ctx, promise_resolve);
+    JS_FreeValue(ctx, values);
+    JS_FreeValue(ctx, keys);
+    JS_FreeValue(ctx, env);
+    JS_FreeValue(ctx, resolving_funcs[0]);
+    JS_FreeValue(ctx, resolving_funcs[1]);
+    return result_promise;
+}
+
+static JSValue js_promise_race(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    JSValue result_promise, resolving_funcs[2], item, next_promise, ret;
+    JSValue next_method = JS_UNDEFINED, iter = JS_UNDEFINED;
+    JSValue promise_resolve = JS_UNDEFINED;
+    BOOL done;
+
+    if (!JS_IsObject(this_val))
+        return JS_ThrowTypeErrorNotAnObject(ctx);
+    result_promise = js_new_promise_capability(ctx, resolving_funcs, this_val);
+    if (JS_IsException(result_promise))
+        return result_promise;
+    promise_resolve = JS_GetProperty(ctx, this_val, JS_ATOM_resolve);
+    if (JS_IsException(promise_resolve) || check_function(ctx, promise_resolve))
+        goto fail_reject;
+    iter = JS_GetIterator(ctx, argv[0], FALSE);
+    if (JS_IsException(iter)) {
+        JSValue error;
+    fail_reject:
+        if (js_exception_uncatchable(ctx))
+            goto fail;
+        error = JS_GetException(ctx);
+        ret = JS_Call(ctx, resolving_funcs[1], JS_UNDEFINED, 1,
+            (JSValueConst*)&error);
+        JS_FreeValue(ctx, error);
+        if (JS_IsException(ret))
+            goto fail;
+        JS_FreeValue(ctx, ret);
+    } else {
+        next_method = JS_GetProperty(ctx, iter, JS_ATOM_next);
+        if (JS_IsException(next_method))
+            goto fail_reject;
+
+        for (;;) {
+            item = js_iterator_step(ctx, iter, next_method, &done);
+            if (JS_IsException(item))
+                goto fail_reject;
+            if (done)
+                break;
+            next_promise = JS_Call(ctx, promise_resolve,
+                this_val, 1, (JSValueConst*)&item);
+            JS_FreeValue(ctx, item);
+            if (JS_IsException(next_promise)) {
+            fail_reject1:
+                JS_IteratorClose(ctx, iter, TRUE);
+                goto fail_reject;
+            }
+            ret = JS_InvokeFree(ctx, next_promise, JS_ATOM_then, 2,
+                (JSValueConst*)resolving_funcs);
+            if (check_exception_free(ctx, ret))
+                goto fail_reject1;
+        }
+    }
+done:
+    JS_FreeValue(ctx, promise_resolve);
+    JS_FreeValue(ctx, next_method);
+    JS_FreeValue(ctx, iter);
+    JS_FreeValue(ctx, resolving_funcs[0]);
+    JS_FreeValue(ctx, resolving_funcs[1]);
+    return result_promise;
+fail:
+    JS_FreeValue(ctx, result_promise);
+    result_promise = JS_EXCEPTION;
+    goto done;
+}
+
+__exception int perform_promise_then(JSContext* ctx,
+    JSValueConst promise,
+    JSValueConst* resolve_reject,
+    JSValueConst* cap_resolving_funcs)
+{
+    JSPromiseData* s = JS_GetOpaque(promise, JS_CLASS_PROMISE);
+    JSPromiseReactionPair* pr;
+    JSRuntime* rt = ctx->rt;
+    int i, j;
+
+    if (s->promise_state != JS_PROMISE_PENDING) {
+        JSValueConst args[5], handler;
+        if (s->promise_state == JS_PROMISE_REJECTED && !s->is_handled) {
+            if (rt->host_promise_rejection_tracker) {
+                rt->host_promise_rejection_tracker(ctx, promise, s->promise_result,
+                    TRUE, rt->host_promise_rejection_tracker_opaque);
+            }
+        }
+        i = s->promise_state - JS_PROMISE_FULFILLED;
+        handler = js_promise_handler(ctx, resolve_reject[i]);
+        args[0] = cap_resolving_funcs[0];
+        args[1] = cap_resolving_funcs[1];
+        args[2] = handler;
+        args[3] = JS_NewBool(ctx, i);
+        args[4] = s->promise_result;
+        if (JS_EnqueueJob(ctx, promise_reaction_job, 5, args))
+            return -1;
+        s->is_handled = TRUE;
+        return 0;
+    }
+
+    pr = rt->reaction_free;
+    if (pr) {
+        rt->reaction_free = *(void**)pr;
+        rt->reaction_free_n--;
+    } else {
+        pr = js_malloc(ctx, sizeof(*pr));
+        if (!pr)
+            return -1;
+    }
+    pr->live = 2;
+    for (i = 0; i < 2; i++) {
+        JSPromiseReactionData* rd = &pr->r[i];
+        rd->idx = i;
+        for (j = 0; j < 2; j++)
+            rd->resolving_funcs[j] = JS_DupValue(ctx, cap_resolving_funcs[j]);
+        rd->handler = JS_DupValue(ctx, js_promise_handler(ctx, resolve_reject[i]));
+        list_add_tail(&rd->link, &s->promise_reactions[i]);
+    }
+    s->is_handled = TRUE;
+    return 0;
+}
+
+JSValue js_promise_then(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    JSValue ctor, result_promise, resolving_funcs[2];
+    JSValueConst handlers[2];
+    JSPromiseData* s;
+    int i, ret;
+
+    s = JS_GetOpaque2(ctx, this_val, JS_CLASS_PROMISE);
+    if (!s)
+        return JS_EXCEPTION;
+
+    ctor = JS_SpeciesConstructor(ctx, this_val, JS_UNDEFINED);
+    if (JS_IsException(ctor))
+        return ctor;
+    result_promise = js_new_promise_capability(ctx, resolving_funcs, ctor);
+    JS_FreeValue(ctx, ctor);
+    if (JS_IsException(result_promise))
+        return result_promise;
+    handlers[0] = js_promise_js_handler(ctx, argv[0]);
+    handlers[1] = js_promise_js_handler(ctx, argv[1]);
+    ret = perform_promise_then(ctx, this_val, handlers,
+        (JSValueConst*)resolving_funcs);
+    for (i = 0; i < 2; i++)
+        JS_FreeValue(ctx, resolving_funcs[i]);
+    if (ret) {
+        JS_FreeValue(ctx, result_promise);
+        return JS_EXCEPTION;
+    }
+    return result_promise;
+}
+
+static JSValue js_promise_catch(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    JSValueConst args[2];
+    args[0] = JS_UNDEFINED;
+    args[1] = argv[0];
+    return JS_Invoke(ctx, this_val, JS_ATOM_then, 2, args);
+}
+
+static JSValue js_promise_finally_value_thunk(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv,
+    int magic, JSValue* func_data)
+{
+    return JS_DupValue(ctx, func_data[0]);
+}
+
+static JSValue js_promise_finally_thrower(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv,
+    int magic, JSValue* func_data)
+{
+    return JS_Throw(ctx, JS_DupValue(ctx, func_data[0]));
+}
+
+static JSValue js_promise_then_finally_func(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv,
+    int magic, JSValue* func_data)
+{
+    JSValueConst ctor = func_data[0];
+    JSValueConst onFinally = func_data[1];
+    JSValue res, promise, ret, then_func;
+
+    res = JS_Call(ctx, onFinally, JS_UNDEFINED, 0, NULL);
+    if (JS_IsException(res))
+        return res;
+    promise = js_promise_resolve(ctx, ctor, 1, (JSValueConst*)&res, 0);
+    JS_FreeValue(ctx, res);
+    if (JS_IsException(promise))
+        return promise;
+    if (magic == 0) {
+        then_func = JS_NewCFunctionData(ctx, js_promise_finally_value_thunk, 0,
+            0, 1, argv);
+    } else {
+        then_func = JS_NewCFunctionData(ctx, js_promise_finally_thrower, 0,
+            0, 1, argv);
+    }
+    if (JS_IsException(then_func)) {
+        JS_FreeValue(ctx, promise);
+        return then_func;
+    }
+    ret = JS_InvokeFree(ctx, promise, JS_ATOM_then, 1, (JSValueConst*)&then_func);
+    JS_FreeValue(ctx, then_func);
+    return ret;
+}
+
+static JSValue js_promise_finally(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    JSValueConst onFinally = argv[0];
+    JSValue ctor, ret;
+    JSValue then_funcs[2];
+    JSValueConst func_data[2];
+    int i;
+
+    ctor = JS_SpeciesConstructor(ctx, this_val, JS_UNDEFINED);
+    if (JS_IsException(ctor))
+        return ctor;
+    if (!JS_IsFunction(ctx, onFinally)) {
+        then_funcs[0] = JS_DupValue(ctx, onFinally);
+        then_funcs[1] = JS_DupValue(ctx, onFinally);
+    } else {
+        func_data[0] = ctor;
+        func_data[1] = onFinally;
+        for (i = 0; i < 2; i++) {
+            then_funcs[i] = JS_NewCFunctionData(ctx, js_promise_then_finally_func, 1, i, 2, func_data);
+            if (JS_IsException(then_funcs[i])) {
+                if (i == 1)
+                    JS_FreeValue(ctx, then_funcs[0]);
+                JS_FreeValue(ctx, ctor);
+                return JS_EXCEPTION;
+            }
+        }
+    }
+    JS_FreeValue(ctx, ctor);
+    ret = JS_Invoke(ctx, this_val, JS_ATOM_then, 2, (JSValueConst*)then_funcs);
+    JS_FreeValue(ctx, then_funcs[0]);
+    JS_FreeValue(ctx, then_funcs[1]);
+    return ret;
+}
+
+static const JSCFunctionListEntry js_promise_funcs[] = {
+    JS_CFUNC_MAGIC_DEF("resolve", 1, js_promise_resolve, 0),
+    JS_CFUNC_MAGIC_DEF("reject", 1, js_promise_resolve, 1),
+    JS_CFUNC_MAGIC_DEF("all", 1, js_promise_all, PROMISE_MAGIC_all),
+    JS_CFUNC_MAGIC_DEF("allSettled", 1, js_promise_all, PROMISE_MAGIC_allSettled),
+    JS_CFUNC_MAGIC_DEF("allKeyed", 1, js_promise_all_keyed, PROMISE_MAGIC_all),
+    JS_CFUNC_MAGIC_DEF("allSettledKeyed", 1, js_promise_all_keyed, PROMISE_MAGIC_allSettled),
+    JS_CFUNC_MAGIC_DEF("any", 1, js_promise_all, PROMISE_MAGIC_any),
+    JS_CFUNC_DEF("try", 1, js_promise_try),
+    JS_CFUNC_DEF("race", 1, js_promise_race),
+    JS_CFUNC_DEF("withResolvers", 0, js_promise_withResolvers),
+    JS_CGETSET_DEF("[Symbol.species]", js_get_this, NULL),
+};
+
+static const JSCFunctionListEntry js_promise_proto_funcs[] = {
+    JS_CFUNC_DEF("then", 2, js_promise_then),
+    JS_CFUNC_DEF("catch", 1, js_promise_catch),
+    JS_CFUNC_DEF("finally", 1, js_promise_finally),
+    JS_PROP_STRING_DEF("[Symbol.toStringTag]", "Promise", JS_PROP_CONFIGURABLE),
+};
+
+static const JSCFunctionListEntry js_async_function_proto_funcs[] = {
+    JS_PROP_STRING_DEF("[Symbol.toStringTag]", "AsyncFunction", JS_PROP_CONFIGURABLE),
+};
+
+static JSValue js_async_iterator_dispose_unwrap(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    return JS_UNDEFINED;
+}
+
+static JSValue js_async_iterator_proto_async_dispose(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    JSValue promise, resolving_funcs[2], method, result, wrapper, err, ret;
+    JSValueConst handlers[2], arg = JS_UNDEFINED;
+    int res;
+
+    promise = JS_NewPromiseCapability(ctx, resolving_funcs);
+    if (JS_IsException(promise))
+        return promise;
+    method = JS_GetProperty(ctx, this_val, JS_ATOM_return);
+    if (JS_IsException(method))
+        goto reject;
+    if (JS_IsUndefined(method) || JS_IsNull(method)) {
+        ret = JS_Call(ctx, resolving_funcs[0], JS_UNDEFINED, 1, &arg);
+        goto done;
+    }
+    if (!JS_IsFunction(ctx, method)) {
+        JS_FreeValue(ctx, method);
+        JS_ThrowTypeError(ctx, "return is not a function");
+        goto reject;
+    }
+    result = JS_Call(ctx, method, this_val, 1, &arg);
+    JS_FreeValue(ctx, method);
+    if (JS_IsException(result))
+        goto reject;
+    wrapper = js_promise_resolve(ctx, ctx->promise_ctor, 1, (JSValueConst*)&result, 0);
+    JS_FreeValue(ctx, result);
+    if (JS_IsException(wrapper))
+        goto reject;
+    handlers[0] = JS_NewCFunction2(ctx, js_async_iterator_dispose_unwrap, "", 1, JS_CFUNC_generic, 0);
+    if (JS_IsException(handlers[0])) {
+        JS_FreeValue(ctx, wrapper);
+        goto fail;
+    }
+    handlers[1] = JS_UNDEFINED;
+    res = perform_promise_then(ctx, wrapper, handlers, (JSValueConst*)resolving_funcs);
+    JS_FreeValue(ctx, (JSValue)handlers[0]);
+    JS_FreeValue(ctx, wrapper);
+    if (res)
+        goto fail;
+    JS_FreeValue(ctx, resolving_funcs[0]);
+    JS_FreeValue(ctx, resolving_funcs[1]);
+    return promise;
+reject:
+    if (js_exception_uncatchable(ctx)) {
+        ret = JS_EXCEPTION;
+        goto done;
+    }
+    err = JS_GetException(ctx);
+    ret = JS_Call(ctx, resolving_funcs[1], JS_UNDEFINED, 1, (JSValueConst*)&err);
+    JS_FreeValue(ctx, err);
+done:
+    JS_FreeValue(ctx, resolving_funcs[0]);
+    JS_FreeValue(ctx, resolving_funcs[1]);
+    if (JS_IsException(ret)) {
+        JS_FreeValue(ctx, promise);
+        return ret;
+    }
+    JS_FreeValue(ctx, ret);
+    return promise;
+fail:
+    JS_FreeValue(ctx, resolving_funcs[0]);
+    JS_FreeValue(ctx, resolving_funcs[1]);
+    JS_FreeValue(ctx, promise);
+    return JS_EXCEPTION;
+}
+
+static const JSCFunctionListEntry js_async_iterator_proto_funcs[] = {
+    JS_CFUNC_DEF("[Symbol.asyncDispose]", 0, js_async_iterator_proto_async_dispose),
+    JS_CFUNC_DEF("[Symbol.asyncIterator]", 0, js_iterator_proto_iterator),
+};
+
+static void js_async_from_sync_iterator_finalizer(JSRuntime* rt, JSValue val)
+{
+    JSAsyncFromSyncIteratorData* s = JS_GetOpaque(val, JS_CLASS_ASYNC_FROM_SYNC_ITERATOR);
+    if (s) {
+        JS_FreeValueRT(rt, s->sync_iter);
+        JS_FreeValueRT(rt, s->next_method);
+        js_free_rt(rt, s);
+    }
+}
+
+static void js_async_from_sync_iterator_mark(JSRuntime* rt, JSValueConst val,
+    JS_MarkFunc* mark_func)
+{
+    JSAsyncFromSyncIteratorData* s = JS_GetOpaque(val, JS_CLASS_ASYNC_FROM_SYNC_ITERATOR);
+    if (s) {
+        JS_MarkValue(rt, s->sync_iter, mark_func);
+        JS_MarkValue(rt, s->next_method, mark_func);
+    }
+}
+
+JSValue JS_CreateAsyncFromSyncIterator(JSContext* ctx,
+    JSValueConst sync_iter)
+{
+    JSValue async_iter, next_method;
+    JSAsyncFromSyncIteratorData* s;
+
+    next_method = JS_GetProperty(ctx, sync_iter, JS_ATOM_next);
+    if (JS_IsException(next_method))
+        return JS_EXCEPTION;
+    async_iter = JS_NewObjectClass(ctx, JS_CLASS_ASYNC_FROM_SYNC_ITERATOR);
+    if (JS_IsException(async_iter)) {
+        JS_FreeValue(ctx, next_method);
+        return async_iter;
+    }
+    s = js_mallocz(ctx, sizeof(*s));
+    if (!s) {
+        JS_FreeValue(ctx, async_iter);
+        JS_FreeValue(ctx, next_method);
+        return JS_EXCEPTION;
+    }
+    s->sync_iter = JS_DupValue(ctx, sync_iter);
+    s->next_method = next_method;
+    JS_SetOpaque(async_iter, s);
+    return async_iter;
+}
+
+static JSValue js_async_from_sync_iterator_unwrap(JSContext* ctx,
+    JSValueConst this_val,
+    int argc, JSValueConst* argv,
+    int magic, JSValue* func_data)
+{
+    return js_create_iterator_result(ctx, JS_DupValue(ctx, argv[0]),
+        JS_ToBool(ctx, func_data[0]));
+}
+
+static JSValue js_async_from_sync_iterator_unwrap_func_create(JSContext* ctx,
+    BOOL done)
+{
+    JSValueConst func_data[1];
+
+    func_data[0] = (JSValueConst)JS_NewBool(ctx, done);
+    return JS_NewCFunctionData(ctx, js_async_from_sync_iterator_unwrap,
+        1, 0, 1, func_data);
+}
+
+static JSValue js_async_from_sync_iterator_close_wrap(JSContext* ctx,
+    JSValueConst this_val,
+    int argc, JSValueConst* argv,
+    int magic, JSValue* func_data)
+{
+    JSAsyncFromSyncIteratorData* s = JS_GetOpaque(func_data[0], JS_CLASS_ASYNC_FROM_SYNC_ITERATOR);
+    JS_Throw(ctx, JS_DupValue(ctx, argv[0]));
+    if (s && !JS_IsUndefined(s->sync_iter)) {
+        JS_IteratorClose(ctx, s->sync_iter, TRUE);
+        JS_FreeValue(ctx, s->sync_iter);
+        s->sync_iter = JS_UNDEFINED;
+    }
+    return JS_EXCEPTION;
+}
+
+static JSValue js_async_from_sync_iterator_close_wrap_func_create(JSContext* ctx, JSValueConst wrapper)
+{
+    return JS_NewCFunctionData(ctx, js_async_from_sync_iterator_close_wrap,
+        1, 0, 1, &wrapper);
+}
+
+static JSValue js_async_from_sync_iterator_next(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv,
+    int magic)
+{
+    JSValue promise, resolving_funcs[2], value, err, method;
+    JSAsyncFromSyncIteratorData* s;
+    int done;
+    int is_reject;
+
+    s = JS_GetOpaque(this_val, JS_CLASS_ASYNC_FROM_SYNC_ITERATOR);
+    if (!s)
+        return JS_ThrowTypeError(ctx, "not an Async-from-Sync Iterator");
+    promise = JS_NewPromiseCapability(ctx, resolving_funcs);
+    if (JS_IsException(promise))
+        return JS_EXCEPTION;
+
+    if (JS_IsUndefined(s->sync_iter)) {
+        err = js_create_iterator_result(ctx, JS_DupValue(ctx, JS_UNDEFINED), TRUE);
+        if (JS_IsException(err)) {
+            is_reject = 1;
+        } else {
+            is_reject = 0;
+        }
+        goto done_resolve;
+    }
+
+    if (magic == GEN_MAGIC_NEXT) {
+        method = JS_DupValue(ctx, s->next_method);
+    } else {
+        method = JS_GetProperty(ctx, s->sync_iter,
+            magic == GEN_MAGIC_RETURN ? JS_ATOM_return : JS_ATOM_throw);
+        if (JS_IsException(method))
+            goto reject;
+        if (JS_IsUndefined(method) || JS_IsNull(method)) {
+            if (magic == GEN_MAGIC_RETURN) {
+                err = js_create_iterator_result(ctx, JS_DupValue(ctx, argv[0]), TRUE);
+                is_reject = 0;
+                goto done_resolve;
+            } else {
+                if (JS_IteratorClose(ctx, s->sync_iter, FALSE))
+                    goto reject;
+                JS_ThrowTypeError(ctx, "throw is not a method");
+                goto reject;
+            }
+        }
+    }
+    value = JS_IteratorNext2(ctx, s->sync_iter, method,
+        argc >= 1 ? 1 : 0, argv, &done);
+    JS_FreeValue(ctx, method);
+    if (JS_IsException(value))
+        goto reject;
+    if (done == 2) {
+        JSValue obj = value;
+        value = JS_IteratorGetCompleteValue(ctx, obj, &done);
+        JS_FreeValue(ctx, obj);
+        if (JS_IsException(value))
+            goto reject;
+    }
+
+    if (JS_IsException(value))
+        goto reject;
+    {
+        JSValue value_wrapper_promise, resolve_reject[2];
+        int res;
+
+        value_wrapper_promise = js_promise_resolve(ctx, ctx->promise_ctor,
+            1, (JSValueConst*)&value, 0);
+        if (JS_IsException(value_wrapper_promise)) {
+            JSValue res2;
+            JS_FreeValue(ctx, value);
+            if (magic != GEN_MAGIC_RETURN && !done) {
+                JS_IteratorClose(ctx, s->sync_iter, TRUE);
+            }
+        reject:
+            if (js_exception_uncatchable(ctx)) {
+                JS_FreeValue(ctx, resolving_funcs[0]);
+                JS_FreeValue(ctx, resolving_funcs[1]);
+                JS_FreeValue(ctx, promise);
+                return JS_EXCEPTION;
+            }
+            err = JS_GetException(ctx);
+            is_reject = 1;
+        done_resolve:
+            res2 = JS_Call(ctx, resolving_funcs[is_reject], JS_UNDEFINED,
+                1, (JSValueConst*)&err);
+            JS_FreeValue(ctx, err);
+            JS_FreeValue(ctx, res2);
+            JS_FreeValue(ctx, resolving_funcs[0]);
+            JS_FreeValue(ctx, resolving_funcs[1]);
+            return promise;
+        }
+
+        resolve_reject[0] = js_async_from_sync_iterator_unwrap_func_create(ctx, done);
+        if (JS_IsException(resolve_reject[0])) {
+            JS_FreeValue(ctx, value_wrapper_promise);
+            goto fail;
+        }
+        if (done || magic == GEN_MAGIC_RETURN) {
+            resolve_reject[1] = JS_UNDEFINED;
+        } else {
+            resolve_reject[1] = js_async_from_sync_iterator_close_wrap_func_create(ctx, this_val);
+            if (JS_IsException(resolve_reject[1])) {
+                JS_FreeValue(ctx, value_wrapper_promise);
+                JS_FreeValue(ctx, resolve_reject[0]);
+                goto fail;
+            }
+        }
+        JS_FreeValue(ctx, value);
+        res = perform_promise_then(ctx, value_wrapper_promise,
+            (JSValueConst*)resolve_reject,
+            (JSValueConst*)resolving_funcs);
+        JS_FreeValue(ctx, resolve_reject[0]);
+        JS_FreeValue(ctx, resolve_reject[1]);
+        JS_FreeValue(ctx, value_wrapper_promise);
+        JS_FreeValue(ctx, resolving_funcs[0]);
+        JS_FreeValue(ctx, resolving_funcs[1]);
+        if (res) {
+            JS_FreeValue(ctx, promise);
+            return JS_EXCEPTION;
+        }
+    }
+    return promise;
+fail:
+    JS_FreeValue(ctx, value);
+    JS_FreeValue(ctx, resolving_funcs[0]);
+    JS_FreeValue(ctx, resolving_funcs[1]);
+    JS_FreeValue(ctx, promise);
+    return JS_EXCEPTION;
+}
+
+static const JSCFunctionListEntry js_async_from_sync_iterator_proto_funcs[] = {
+    JS_CFUNC_MAGIC_DEF("next", 1, js_async_from_sync_iterator_next, GEN_MAGIC_NEXT),
+    JS_CFUNC_MAGIC_DEF("return", 1, js_async_from_sync_iterator_next, GEN_MAGIC_RETURN),
+    JS_CFUNC_MAGIC_DEF("throw", 1, js_async_from_sync_iterator_next, GEN_MAGIC_THROW),
+};
+
+static const JSCFunctionListEntry js_async_generator_function_proto_funcs[] = {
+    JS_PROP_STRING_DEF("[Symbol.toStringTag]", "AsyncGeneratorFunction", JS_PROP_CONFIGURABLE),
+};
+
+static const JSCFunctionListEntry js_async_generator_proto_funcs[] = {
+    JS_CFUNC_MAGIC_DEF("next", 1, js_async_generator_next, GEN_MAGIC_NEXT),
+    JS_CFUNC_MAGIC_DEF("return", 1, js_async_generator_next, GEN_MAGIC_RETURN),
+    JS_CFUNC_MAGIC_DEF("throw", 1, js_async_generator_next, GEN_MAGIC_THROW),
+    JS_PROP_STRING_DEF("[Symbol.toStringTag]", "AsyncGenerator", JS_PROP_CONFIGURABLE),
+};
+
+static JSClassShortDef const js_async_class_def[] = {
+    { JS_ATOM_Promise, js_promise_finalizer, js_promise_mark },
+    { JS_ATOM_PromiseResolveFunction, js_promise_resolve_function_finalizer, js_promise_resolve_function_mark },
+    { JS_ATOM_PromiseRejectFunction, js_promise_resolve_function_finalizer, js_promise_resolve_function_mark },
+    { JS_ATOM_AsyncFunction, js_bytecode_function_finalizer, js_bytecode_function_mark },
+    { JS_ATOM_AsyncFunctionResolve, js_async_function_resolve_finalizer, js_async_function_resolve_mark },
+    { JS_ATOM_AsyncFunctionReject, js_async_function_resolve_finalizer, js_async_function_resolve_mark },
+    { JS_ATOM_empty_string, js_async_from_sync_iterator_finalizer, js_async_from_sync_iterator_mark },
+    { JS_ATOM_AsyncGeneratorFunction, js_bytecode_function_finalizer, js_bytecode_function_mark },
+    { JS_ATOM_AsyncGenerator, js_async_generator_finalizer, js_async_generator_mark },
+};
+
+int JS_AddIntrinsicPromise(JSContext* ctx)
+{
+    JSRuntime* rt = ctx->rt;
+    JSValue obj1;
+    JSCFunctionType ft;
+
+    if (!JS_IsRegisteredClass(rt, JS_CLASS_PROMISE)) {
+        if (init_class_range(rt, js_async_class_def, JS_CLASS_PROMISE,
+                countof(js_async_class_def)))
+            return -1;
+        rt->class_array[JS_CLASS_PROMISE_RESOLVE_FUNCTION].call = js_promise_resolve_function_call;
+        rt->class_array[JS_CLASS_PROMISE_REJECT_FUNCTION].call = js_promise_resolve_function_call;
+        rt->class_array[JS_CLASS_ASYNC_FUNCTION].call = js_async_function_call;
+        rt->class_array[JS_CLASS_ASYNC_FUNCTION_RESOLVE].call = js_async_function_resolve_call;
+        rt->class_array[JS_CLASS_ASYNC_FUNCTION_REJECT].call = js_async_function_resolve_call;
+        rt->class_array[JS_CLASS_ASYNC_GENERATOR_FUNCTION].call = js_async_generator_function_call;
+    }
+
+    obj1 = JS_NewCConstructor(ctx, JS_CLASS_PROMISE, "Promise",
+        js_promise_constructor, 1, JS_CFUNC_constructor, 0,
+        JS_UNDEFINED,
+        js_promise_funcs, countof(js_promise_funcs),
+        js_promise_proto_funcs, countof(js_promise_proto_funcs),
+        0);
+    if (JS_IsException(obj1))
+        return -1;
+    ctx->promise_ctor = obj1;
+
+    ft.generic_magic = js_function_constructor;
+    obj1 = JS_NewCConstructor(ctx, JS_CLASS_ASYNC_FUNCTION, "AsyncFunction",
+        ft.generic, 1, JS_CFUNC_constructor_or_func_magic, JS_FUNC_ASYNC,
+        ctx->function_ctor,
+        NULL, 0,
+        js_async_function_proto_funcs, countof(js_async_function_proto_funcs),
+        JS_NEW_CTOR_NO_GLOBAL | JS_NEW_CTOR_READONLY);
+    if (JS_IsException(obj1))
+        return -1;
+    JS_FreeValue(ctx, obj1);
+
+    ctx->async_iterator_proto = JS_NewObjectProtoList(ctx, ctx->class_proto[JS_CLASS_OBJECT],
+        js_async_iterator_proto_funcs,
+        countof(js_async_iterator_proto_funcs));
+    if (JS_IsException(ctx->async_iterator_proto))
+        return -1;
+
+    ctx->class_proto[JS_CLASS_ASYNC_FROM_SYNC_ITERATOR] = JS_NewObjectProtoList(ctx, ctx->async_iterator_proto,
+        js_async_from_sync_iterator_proto_funcs,
+        countof(js_async_from_sync_iterator_proto_funcs));
+    if (JS_IsException(ctx->class_proto[JS_CLASS_ASYNC_FROM_SYNC_ITERATOR]))
+        return -1;
+
+    ctx->class_proto[JS_CLASS_ASYNC_GENERATOR] = JS_NewObjectProtoList(ctx, ctx->async_iterator_proto,
+        js_async_generator_proto_funcs,
+        countof(js_async_generator_proto_funcs));
+    if (JS_IsException(ctx->class_proto[JS_CLASS_ASYNC_GENERATOR]))
+        return -1;
+
+    ft.generic_magic = js_function_constructor;
+    obj1 = JS_NewCConstructor(ctx, JS_CLASS_ASYNC_GENERATOR_FUNCTION, "AsyncGeneratorFunction",
+        ft.generic, 1, JS_CFUNC_constructor_or_func_magic, JS_FUNC_ASYNC_GENERATOR,
+        ctx->function_ctor,
+        NULL, 0,
+        js_async_generator_function_proto_funcs, countof(js_async_generator_function_proto_funcs),
+        JS_NEW_CTOR_NO_GLOBAL | JS_NEW_CTOR_READONLY);
+    if (JS_IsException(obj1))
+        return -1;
+    JS_FreeValue(ctx, obj1);
+
+    return JS_SetConstructor2(ctx, ctx->class_proto[JS_CLASS_ASYNC_GENERATOR_FUNCTION],
+        ctx->class_proto[JS_CLASS_ASYNC_GENERATOR],
+        JS_PROP_CONFIGURABLE, JS_PROP_CONFIGURABLE);
+}
+
+static int string_get_hex(JSString* p, int k, int n)
+{
+    int c = 0, h;
+    while (n-- > 0) {
+        if ((h = from_hex(string_get(p, k++))) < 0)
+            return -1;
+        c = (c << 4) | h;
+    }
+    return c;
+}
+
+static int isURIReserved(int c)
+{
+    return c < 0x100 && memchr(";/?:@&=+$,#", c, sizeof(";/?:@&=+$,#") - 1) != NULL;
+}
+
+static int __attribute__((format(printf, 2, 3))) js_throw_URIError(JSContext* ctx, const char* fmt, ...)
+{
+    va_list ap;
+
+    va_start(ap, fmt);
+    JS_ThrowError(ctx, JS_URI_ERROR, fmt, ap);
+    va_end(ap);
+    return -1;
+}
+
+static int hex_decode(JSContext* ctx, JSString* p, int k)
+{
+    int c;
+
+    if (k >= p->len || string_get(p, k) != '%')
+        return js_throw_URIError(ctx, "expecting %%");
+    if (k + 2 >= p->len || (c = string_get_hex(p, k + 1, 2)) < 0)
+        return js_throw_URIError(ctx, "expecting hex digit");
+
+    return c;
+}
+
+JSValue js_global_decodeURI(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv, int isComponent)
+{
+    JSValue str;
+    StringBuffer b_s, *b = &b_s;
+    JSString* p;
+    int k, c, c1, n, c_min;
+
+    str = JS_ToString(ctx, argv[0]);
+    if (JS_IsException(str))
+        return str;
+
+    string_buffer_init(ctx, b, 0);
+
+    p = JS_VALUE_GET_STRING(str);
+    for (k = 0; k < p->len;) {
+        c = string_get(p, k);
+        if (c == '%') {
+            c = hex_decode(ctx, p, k);
+            if (c < 0)
+                goto fail;
+            k += 3;
+            if (c < 0x80) {
+                if (!isComponent && isURIReserved(c)) {
+                    c = '%';
+                    k -= 2;
+                }
+            } else {
+                if (c >= 0xc0 && c <= 0xdf) {
+                    n = 1;
+                    c_min = 0x80;
+                    c &= 0x1f;
+                } else if (c >= 0xe0 && c <= 0xef) {
+                    n = 2;
+                    c_min = 0x800;
+                    c &= 0xf;
+                } else if (c >= 0xf0 && c <= 0xf7) {
+                    n = 3;
+                    c_min = 0x10000;
+                    c &= 0x7;
+                } else {
+                    n = 0;
+                    c_min = 1;
+                    c = 0;
+                }
+                while (n-- > 0) {
+                    c1 = hex_decode(ctx, p, k);
+                    if (c1 < 0)
+                        goto fail;
+                    k += 3;
+                    if ((c1 & 0xc0) != 0x80) {
+                        c = 0;
+                        break;
+                    }
+                    c = (c << 6) | (c1 & 0x3f);
+                }
+                if (c < c_min || c > 0x10FFFF || is_surrogate(c)) {
+                    js_throw_URIError(ctx, "malformed UTF-8");
+                    goto fail;
+                }
+            }
+        } else {
+            k++;
+        }
+        string_buffer_putc(b, c);
+    }
+    JS_FreeValue(ctx, str);
+    return string_buffer_end(b);
+
+fail:
+    JS_FreeValue(ctx, str);
+    string_buffer_free(b);
+    return JS_EXCEPTION;
+}
+
+static int isUnescaped(int c)
+{
+    static char const unescaped_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                          "abcdefghijklmnopqrstuvwxyz"
+                                          "0123456789"
+                                          "@*_+-./";
+    return c < 0x100 && memchr(unescaped_chars, c, sizeof(unescaped_chars) - 1);
+}
+
+static int isURIUnescaped(int c, int isComponent)
+{
+    return c < 0x100 && ((c >= 0x61 && c <= 0x7a) || (c >= 0x41 && c <= 0x5a) || (c >= 0x30 && c <= 0x39) || memchr("-_.!~*'()", c, sizeof("-_.!~*'()") - 1) != NULL || (!isComponent && isURIReserved(c)));
+}
+
+static int encodeURI_hex(StringBuffer* b, int c)
+{
+    uint8_t buf[6];
+    int n = 0;
+    const char* hex = "0123456789ABCDEF";
+
+    buf[n++] = '%';
+    if (c >= 256) {
+        buf[n++] = 'u';
+        buf[n++] = hex[(c >> 12) & 15];
+        buf[n++] = hex[(c >> 8) & 15];
+    }
+    buf[n++] = hex[(c >> 4) & 15];
+    buf[n++] = hex[(c >> 0) & 15];
+    return string_buffer_write8(b, buf, n);
+}
+
+JSValue js_global_encodeURI(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv,
+    int isComponent)
+{
+    JSValue str;
+    StringBuffer b_s, *b = &b_s;
+    JSString* p;
+    int k, c, c1;
+
+    str = JS_ToString(ctx, argv[0]);
+    if (JS_IsException(str))
+        return str;
+
+    p = JS_VALUE_GET_STRING(str);
+    string_buffer_init(ctx, b, p->len);
+    for (k = 0; k < p->len;) {
+        c = string_get(p, k);
+        k++;
+        if (isURIUnescaped(c, isComponent)) {
+            string_buffer_putc16(b, c);
+        } else {
+            if (is_lo_surrogate(c)) {
+                js_throw_URIError(ctx, "invalid character");
+                goto fail;
+            } else if (is_hi_surrogate(c)) {
+                if (k >= p->len) {
+                    js_throw_URIError(ctx, "expecting surrogate pair");
+                    goto fail;
+                }
+                c1 = string_get(p, k);
+                k++;
+                if (!is_lo_surrogate(c1)) {
+                    js_throw_URIError(ctx, "expecting surrogate pair");
+                    goto fail;
+                }
+                c = from_surrogate(c, c1);
+            }
+            if (c < 0x80) {
+                encodeURI_hex(b, c);
+            } else {
+                if (c < 0x800) {
+                    encodeURI_hex(b, (c >> 6) | 0xc0);
+                } else {
+                    if (c < 0x10000) {
+                        encodeURI_hex(b, (c >> 12) | 0xe0);
+                    } else {
+                        encodeURI_hex(b, (c >> 18) | 0xf0);
+                        encodeURI_hex(b, ((c >> 12) & 0x3f) | 0x80);
+                    }
+                    encodeURI_hex(b, ((c >> 6) & 0x3f) | 0x80);
+                }
+                encodeURI_hex(b, (c & 0x3f) | 0x80);
+            }
+        }
+    }
+    JS_FreeValue(ctx, str);
+    return string_buffer_end(b);
+
+fail:
+    JS_FreeValue(ctx, str);
+    string_buffer_free(b);
+    return JS_EXCEPTION;
+}
+
+static JSValue js_global_escape(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    JSValue str;
+    StringBuffer b_s, *b = &b_s;
+    JSString* p;
+    int i, len, c;
+
+    str = JS_ToString(ctx, argv[0]);
+    if (JS_IsException(str))
+        return str;
+
+    p = JS_VALUE_GET_STRING(str);
+    string_buffer_init(ctx, b, p->len);
+    for (i = 0, len = p->len; i < len; i++) {
+        c = string_get(p, i);
+        if (isUnescaped(c)) {
+            string_buffer_putc16(b, c);
+        } else {
+            encodeURI_hex(b, c);
+        }
+    }
+    JS_FreeValue(ctx, str);
+    return string_buffer_end(b);
+}
+
+static JSValue js_global_unescape(JSContext* ctx, JSValueConst this_val,
+    int argc, JSValueConst* argv)
+{
+    JSValue str;
+    StringBuffer b_s, *b = &b_s;
+    JSString* p;
+    int i, len, c, n;
+
+    str = JS_ToString(ctx, argv[0]);
+    if (JS_IsException(str))
+        return str;
+
+    string_buffer_init(ctx, b, 0);
+    p = JS_VALUE_GET_STRING(str);
+    for (i = 0, len = p->len; i < len; i++) {
+        c = string_get(p, i);
+        if (c == '%') {
+            if (i + 6 <= len
+                && string_get(p, i + 1) == 'u'
+                && (n = string_get_hex(p, i + 2, 4)) >= 0) {
+                c = n;
+                i += 6 - 1;
+            } else if (i + 3 <= len
+                && (n = string_get_hex(p, i + 1, 2)) >= 0) {
+                c = n;
+                i += 3 - 1;
+            }
+        }
+        string_buffer_putc16(b, c);
+    }
+    JS_FreeValue(ctx, str);
+    return string_buffer_end(b);
+}
+
+const JSCFunctionListEntry js_global_funcs[] = {
+    JS_CFUNC_DEF("parseInt", 2, js_parseInt),
+    JS_CFUNC_DEF("parseFloat", 1, js_parseFloat),
+    JS_CFUNC_DEF("isNaN", 1, js_global_isNaN),
+    JS_CFUNC_DEF("isFinite", 1, js_global_isFinite),
+
+    JS_CFUNC_MAGIC_DEF("decodeURI", 1, js_global_decodeURI, 0),
+    JS_CFUNC_MAGIC_DEF("decodeURIComponent", 1, js_global_decodeURI, 1),
+    JS_CFUNC_MAGIC_DEF("encodeURI", 1, js_global_encodeURI, 0),
+    JS_CFUNC_MAGIC_DEF("encodeURIComponent", 1, js_global_encodeURI, 1),
+    JS_CFUNC_DEF("escape", 1, js_global_escape),
+    JS_CFUNC_DEF("unescape", 1, js_global_unescape),
+    JS_PROP_DOUBLE_DEF("Infinity", 1.0 / 0.0, 0),
+    JS_PROP_DOUBLE_DEF("NaN", DYN_NAN, 0),
+    JS_PROP_UNDEFINED_DEF("undefined", 0),
+    JS_PROP_STRING_DEF("[Symbol.toStringTag]", "global", JS_PROP_CONFIGURABLE),
+    JS_CFUNC_DEF("eval", 1, js_global_eval),
+};

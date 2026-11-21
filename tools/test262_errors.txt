@@ -1,0 +1,1 @@
+tools/../test262/test/annexB/language/function-code/block-decl-func-skip-arguments.js:27: Test262Error: Expected SameValue(«"function arguments() {}"», «"[object Arguments]"») to be true

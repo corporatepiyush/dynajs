@@ -1,0 +1,23 @@
+# Structs in src/core that still link to their own type. One line each: path:Struct reason.
+# This list only shrinks: each M2 port deletes its line (repo-rules flags a stale line).
+src/core/docdb/dd-agg.c:ag_node docdb aggregation field tree, built once per pipeline; audit prio 3 (node array with u32 kids)
+src/core/docdb/dd-agg.c:rchunk docdb aggregation row arena (chunk list of byte buffers); audit prio 3 (one growable arena)
+src/core/docdb/dd-expr.c:dd_xn docdb compiled expression tree, built once per query; audit prio 3 (node array with u32 kids)
+src/core/docdb/dd-update.c:un docdb update-plan tree, built once per query; audit prio 3 (node array with u32 kids)
+src/core/docdb/dd.h:dd_chunk docdb chunk list; audit prio 3 (chunk array)
+src/core/docdb/dd.h:dd_fnode compiled filter tree; audit prio 3 (node array with u32 kids)
+src/core/docdb/dd.h:dd_projnode compiled projection tree; audit prio 3 (node array with u32 kids)
+src/core/ds/ds-btree.c:ds_btree_node M2 pending: B+tree on dyn_parr (track-m-m2-parr-btree.patch, held for sweep tables) removes this line
+src/core/ds/ds-interner.h:dyn_interner_chunk M2 pending: byte arena + offsets + index
+src/core/ds/ds-list.h:dyn_list_node M2 pending: ring buffer over parr partitions
+src/core/ds/ds-lru.h:dyn_lru_node M2 pending: parr with u32 prev/next + open-addressed index
+src/core/ds/ds-parking-lot.c:ds_parker kept: intrusive wait queue of stack-allocated waiters (no pool can own them)
+src/core/ds/ds-trie.h:dyn_trie_bytes M2 deferred 11-20: u32 node-array prototype cut 41.5 to 26.5 B/entry but has() ran 1.4-2.2x slower (sibling-chain hops through the chunk table); needs sorted-child arrays first
+src/core/ds/ds-trie.h:dyn_trie_chunk M2 deferred 11-20: same prototype as dyn_trie_bytes; chunk arena already avoids per-node malloc
+src/core/ds/ds-trie.h:dyn_trie_node M2 deferred 11-20: u32 children alone lose CPU (has 1.4-2.2x slower); next try sorted-child arrays / double array
+src/core/ds/ds-work-stealing-deque.c:ds_wsarray kept: retired-buffer list for lock-free reclamation, not a container
+src/core/ds/ds-zset-skiplist.h:dyn_zsl_node M2 pending: zset = hash index + B+tree
+src/core/dyn-pool.c:dyn_pool_chan audit prio 2: small channel list, port with the runtime owner
+src/core/sigk/sigk-fft.c:sg_plan kept: FFT plan with one Bluestein sub-plan, cached and refcounted; a few objects per size, not a container
+src/core/svg/svg-int.h:Node dyna:svg port of svg2img (2026-11-21): render tree built once per render on one worker and freed after it; port to a u32 node pool queued
+src/core/svg/svg-int.h:XMLNode dyna:svg port of svg2img (2026-11-21): parse DOM, built once per render and freed before rasterising; port to a u32 node pool queued

@@ -1,0 +1,9 @@
+# suite<TAB>why it is never run as a suite (a child or worker another suite drives, or a manual diagnostic)
+tests/core/test_atod_diff.js	diagnostic: prints a total, has no assertion and cannot fail
+tests/core/test_prop_hash_order.js	diagnostic: prints key order, has no assertion and cannot fail
+tests/scrape/test_scrape_concurrency_child.js	launched AS a child process by tests/scrape/test_scrape_concurrency.js (it is the polite-crawl peer); run standalone it has no driver.
+tests/html/test_html_large.js	large portfolio (bytes/KB/MB) manual bench, too heavy for prepush gate
+tests/html/test_html_template_large.js	large portfolio (bytes/KB/MB) manual bench, too heavy for prepush gate
+tests/scrape/test_scrape_close_lifetime_child.js	launched AS a child process by tests/scrape/test_scrape_close_lifetime.js (its exit code is the row verdict for the teardown shapes); run standalone it has no driver.
+tests/core/oracle_date_json.js	differential emitter: prints Date/JSON results for a diff against node run by hand; it has no expected values of its own.
+tests/json/oracle_json_parse.js	differential emitter: prints JSON.parse verdicts for a diff against node run by hand; it has no expected values of its own.

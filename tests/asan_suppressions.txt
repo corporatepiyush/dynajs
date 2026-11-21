@@ -1,0 +1,108 @@
+# tests/asan_suppressions.txt -- LSan suppressions for leak-checked runs of the ASan engine:
+#   LSAN_OPTIONS=suppressions=tests/asan_suppressions.txt ASAN_OPTIONS=detect_leaks=1 .obj-san/dynajs --std SUITE
+#
+# WHY THIS FILE EXISTS (classification of the reports it covers, with evidence)
+#
+# The old closing battery's ASan leg (the native suites under an ASan+TLS build, run
+# with ASAN_OPTIONS=detect_leaks=1) surfaced
+# LeakSanitizer reports whose allocation stacks live entirely inside the
+# macOS system runtime, one per worker thread the engine's os.Worker spawns.
+# These are not engine allocations and not reachable from engine state:
+#
+#   Direct leak of 5256 byte(s) in 1 object(s) allocated from:
+#       #0 malloc / calloc  (libclang_rt.asan_osx_dynamic.dylib)
+#       #1 _malloc_type_calloc_outlined  (libsystem_malloc.dylib)
+#       #2 dyld::ThreadLocalVariables::instantiateVariable(...)  (libdyld.dylib)
+#       #3 _tlv_get_addr  (libdyld.dylib)
+#       #4 js_std_init_handlers  dyna-libc.c:6272
+#       #5 worker_func  dyna-libc.c:4372
+#       #6 asan_thread_start(void*)  (libclang_rt.asan_osx_dynamic.dylib)
+#       #7 _pthread_start ... #8 thread_start
+#
+# Reasoning: _tlv_get_addr lazily allocates one block per THREAD for a
+# thread-local variable's storage (dyld's ThreadLocalVariables
+# instantiation). js_std_init_handlers merely *touches* a libc/dyld TLV
+# variable first on each worker thread (dyna-libc.c:6272 is inside the
+# handler-init path worker_func runs on its own thread). libdyld/libSystem
+# never frees a live thread's TLV block and keeps internal bookkeeping the
+# process cannot release; LSan attributes the block at exit because the
+# worker thread that owns it is gone. The byte count scales with worker
+# THREADS (one 5256-byte block per thread; a solo suite run shows 1
+# allocation where the parallel battery showed 7), which is the signature of
+# per-thread runtime bookkeeping, not a per-object engine leak. Two more
+# reports in the same leg are the same phenomenon inside Apple's
+# Security.framework (test_client_tls.js: its TLS fixtures make libSystem's
+# Keychain/Security stack do work on dispatch/pool threads, whose internals
+# allocate and are never freed by Apple's own destructors at exit):
+#   - 1128 bytes: CF thread-specific-data table allocated under
+#     Security::cached_realpath during Security::DbName::CanonicalizeName
+#     (KeychainImpl::~KeychainImpl <- CSSM_ModuleDetach <- _CFRelease);
+#   - 16 bytes: Security::ThreadNexus<...>::operator new during
+#     Security::SecurityServer::ClientSession::activate/releaseDb.
+# The objc/CF blocks hanging off those two (NSThread, NSDictionaryM,
+# class_createInstance) are their dependents and stop being reported once
+# the direct blocks are suppressed.
+#
+# The engine-side evidence that this is environmental: the same suites pass
+# with rc 0 on the non-ASan build (base-identical), the leaked blocks are
+# calloc'd/new'd by libdyld/libobjc/CoreFoundation/Security (never by js_*
+# frames), and the counts track thread count, not suite allocations.
+# Reproducing a REAL engine leak (tests/config/test_config_env_load_upgrade.js before the
+# dyn_env_load ownership fix) with this file active still fails with its
+# js_alloc_string <- JS_NewStringLen <- dyn_env_load report -- the entries
+# below do not swallow engine leaks.
+#
+# SCOPE: each entry names the narrowest system frame in its stack (LSan
+# suppression = substring/glob match against any frame's function name), so
+# an engine leak whose stack lacks these frames can never match.
+
+leak:dyld::ThreadLocalVariables::instantiateVariable
+leak:_fetchInitializingClassList
+leak:Security::cached_realpath
+leak:Security::ThreadNexus
+#
+# The examples runner (tools/check-apps.js) runs the WsClient URL
+# examples against "example.test", whose resolution is the first LIVE
+# getaddrinfo any battery performs before exit. macOS's resolver keeps
+# one-time per-process state for the process lifetime (Network.framework's
+# implicit context and path-evaluator caches, libsystem_info's si_addrinfo
+# tables, xpc dictionary scratch), and LSan reports all of it at exit:
+#   SUMMARY: AddressSanitizer: 2658 byte(s) leaked in 20 allocation(s)
+# -- 16 records, EVERY one rooted under the same system frame:
+#       #9 si_addrinfo  (libsystem_info.dylib)
+#       #10 getaddrinfo  (libsystem_info.dylib)
+#       #12 dyn_tcp_connect dyna-http.c:612   <- the engine's legitimate call
+# The engine frame is the caller of getaddrinfo, not an allocator of the
+# leaked blocks (every #1 is libsystem_malloc servicing an Apple frame);
+# the same suites pass rc 0 without detect_leaks, and the blocks are
+# process-lifetime caches no API offers to release. si_addrinfo is a
+# libsystem_info-internal symbol, so no engine allocation stack can ever
+# carry it: an engine leak stays reportable.
+leak:si_addrinfo
+#
+# F39 (darwin only; the symbol does not exist elsewhere): the first fork()
+# after Network.framework is in use runs its pthread_atfork prepare handler,
+# which builds the framework's process-lifetime path globals and context hash
+# table; LSan reports them at exit (tests/http/test_http_client_reactor.js,
+# Spawn after fetch):
+#   SUMMARY: AddressSanitizer: 488 byte(s) leaked in 2 allocation(s)
+#       #2-#4 nw_hash_table_create_internal / nw_path_get_globals
+#       #4/#7 nw_path_prepare_fork  (Network.framework)
+#       #8/#5 nw_settings_prepare_fork, #9/#6 _pthread_atfork_prepare_handlers
+#       #12/#9 dyn_spawn_ctor sys-spawn.c   <- the engine's fork() call
+# nw_path_prepare_fork is a Network.framework-internal atfork handler: only
+# Apple code runs beneath it, so no engine allocation stack can carry it.
+# Proof: a planted malloc leak in dyn_spawn_ctor beside that fork() is still
+# reported with this line in place.
+leak:nw_path_prepare_fork
+#
+# OpenSSL per-thread error state of a worker-pool thread still alive at std.exit (tests/ssh/test_ssh_ssh_agent.js,
+# teardown exit-live): the dyna:ssh agent signs and runs the lock KDF on the shared worker pool, and OpenSSL keeps
+# one ERR_STATE per thread that touched it, freed by its thread-exit destructor:
+#   Direct leak of 3616 byte(s) in 4 object(s): CRYPTO_zalloc / ossl_err_get_state_int / ERR_set_mark /
+#       ossl_prov_digest_load_from_params / kdf_pbkdf2_init / EVP_KDF_CTX_new / ossl_pkcs5_pbkdf2_hmac_ex
+# std.exit ends the process with the pool threads parked, so the destructor never runs and LSan cannot see the
+# thread-local root. One block per pool thread, never per operation: 60 lock/unlock round trips through the agent
+# followed by a normal runtime teardown (the threads exit) report nothing, and the same child ending without
+# std.exit (teardown close-busy) reports nothing. Only OpenSSL frames sit under this symbol.
+leak:ossl_err_get_state_int

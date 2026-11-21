@@ -1,0 +1,3 @@
+# tools/covers-legacy.txt -- suites written before the one-symbol rule (repo-rules: test-covers).
+# This list ONLY SHRINKS: a converted suite (// covers: header in its first 3 lines) leaves it,
+# and a new suite is never added. Moving assertions between suites: tools/check-assertions-preserved.js.

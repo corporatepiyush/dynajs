@@ -1,0 +1,1 @@
+# module max% reason; only shrinks (tools/repo-rules.js shipped-js-cap)

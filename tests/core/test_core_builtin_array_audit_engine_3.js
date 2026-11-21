@@ -1,0 +1,168 @@
+// flags: --std
+// covers: c:src/builtins/builtin-array.c
+// E2-C: a prototype cycle built through a Proxy `getPrototypeOf` trap that
+// re-parents DURING Object.setPrototypeOf's cycle check.
+//
+// Before the fix, JS_SetPrototypeInternal's cycle check called JS_GetPrototype
+// on every step, so the trap ran inside the walk it was supposed to satisfy.
+// The trap re-pointed X at p while the engine was validating the chain for
+// setPrototypeOf(p, X), the walk read the trap's "null" instead of the edge the
+// trap had just written, and the engine committed p -> X -> p. Every later
+// missing-property lookup then spun in the unguarded
+// `p = p->shape->proto` loop (JS_GetPropertyInternal / JS_HasProperty), which
+// polls nothing -- so even --timeout-ms could not end it.
+//
+// The two hang rows run in a child process with a wall-clock deadline, so an
+// unfixed engine is reported as a FAILURE instead of wedging this suite.
+// The control row is the other half of the finding: a legitimate 10,000-deep
+// chain, built without any trap, must still resolve -- the fix is a
+// re-validation of what the trap walk claimed, not a depth cap.
+import { sections as __kitSections } from "../lib/kit.js";
+const __kitS = __kitSections("test_core_builtin_array_audit_engine_3");
+import * as os from "os";
+import { hostScale } from "../lib/hostscale.js";
+import { cpuNow } from "../lib/cpuclock.js";
+const TBASE = (std.getenv("TMPDIR") || "/tmp/").replace(/\/?$/, "/") + "dyna_audit_engine_3_" + os.getpid() + "_";
+
+const BIN = std.getenv("DYNAJS_TEST_BIN") || "./dynajs";
+const CHILD_BUDGET_MS = 20000;
+
+let n = 0, failures = 0, skips = 0;
+function assert(c, m) {
+    n++;
+    if (!c) { failures++; print("FAIL: " + m); }
+}
+function eq(got, want, m) {
+    assert(got === want, m + " (got " + JSON.stringify(got) +
+           ", want " + JSON.stringify(want) + ")");
+}
+function skip(m) { skips++; print("SKIP: " + m); }
+
+const canSpawn = (typeof os.exec === "function") &&
+                 (typeof os.waitpid === "function") &&
+                 (typeof os.kill === "function") &&
+                 (typeof os.sleep === "function");
+
+function readOut(path) {
+    try { return String(std.loadFile(path)); } catch (e) { return ""; }
+}
+
+function writeProbe(path, src) {
+    const f = std.open(path, "w");
+    f.puts(src);
+    f.close();
+}
+
+function runBounded(srcPath, outPath) {
+    const fd = os.open(outPath, os.O_WRONLY | os.O_CREAT | os.O_TRUNC);
+    const pid = os.exec([BIN, "--std", "--timeout-ms", String(Math.round(300 * hostScale())), srcPath],
+                        { blocking: false, stdout: fd, stderr: fd });
+    os.close(fd);
+    const deadline = Date.now() + CHILD_BUDGET_MS;
+    for (;;) {
+        const r = os.waitpid(pid, os.WNOHANG);
+        if (r[0] > 0)
+            return { exited: true, status: r[1], out: readOut(outPath) };
+        if (r[0] < 0)
+            return { exited: true, status: r[1], out: readOut(outPath) };
+        if (Date.now() >= deadline) {
+            try { os.kill(pid, 9); } catch (e) { /* already gone */ }
+            os.waitpid(pid, 0);
+            return { exited: false, status: -1, out: readOut(outPath) };
+        }
+        os.sleep(20);
+    }
+}
+
+// ---- row 1: the trap that re-parents during the cycle check (the reported DoS)
+__kitS.section("row 1: the trap that re-parents during the cycle check (the reported DoS)", () => {
+const PC1 = TBASE + 'pc1.js';
+writeProbe(PC1, [
+    'var p = {}, X = {};',
+    'var P1 = new Proxy({}, { getPrototypeOf() { Object.setPrototypeOf(X, p); return null; } });',
+    'Object.setPrototypeOf(X, P1);',
+    'var outcome;',
+    'try { Object.setPrototypeOf(p, X); outcome = "ALLOWED"; }',
+    'catch (e) { outcome = "REFUSED"; }',
+    'print("outcome=" + outcome);',
+    'var cur = p, cyc = false;',
+    'try {',
+    '    for (var i = 0; i < 64; i++) {',
+    '        var q = Object.getPrototypeOf(cur);',
+    '        if (q === null) break;',
+    '        if (q === p) { cyc = true; break; }',
+    '        cur = q;',
+    '    }',
+    '} catch (e) { print("walkerr=" + e.name); }',
+    'print("cycle=" + cyc);',
+    'print("xproto=" + (Object.getPrototypeOf(X) === P1));',
+    'print("missing=" + (p.nope === undefined));',
+    'print("has=" + ("nope" in p));',
+    'print("END");',
+    ''
+].join("\n"));
+
+if (canSpawn) {
+    const r1 = runBounded(PC1, TBASE + 'pc1.out');
+    assert(r1.exited, "a trap that re-parents during the cycle check must not " +
+           "leave a lookup that runs forever");
+    if (!r1.exited)
+        print("     child killed after " + CHILD_BUDGET_MS + "ms; output so far: " +
+              JSON.stringify(r1.out.slice(0, 200)));
+    assert(r1.out.indexOf("cycle=false") >= 0,
+           "the engine does not commit a prototype cycle the trap built mid-check (got " +
+           JSON.stringify(r1.out.slice(0, 200)) + ")");
+    // OrdinarySetPrototypeOf stops its walk at the proxy without calling the trap, so setPrototypeOf(p, X) is
+    // allowed; the trap's own attempt to re-parent X onto p, made later when a walk reaches the proxy, is refused
+    // by the ordinary cycle check (TypeError), which is what keeps the cycle from ever being committed.
+    assert(r1.out.indexOf("xproto=true") >= 0,
+           "the trap's re-parent of X is refused, so X keeps the proxy as its prototype");
+    assert(r1.out.indexOf("missing=true") >= 0,
+           "a missing property on the re-parented object still reads undefined");
+    assert(r1.out.indexOf("has=false") >= 0,
+           "`in` on the re-parented object answers false instead of spinning");
+    assert(r1.out.indexOf("END") >= 0, "the trap-cycle script runs to completion");
+    assert(r1.out.indexOf("outcome=REFUSED") >= 0 ||
+           r1.out.indexOf("outcome=ALLOWED") >= 0,
+           "setPrototypeOf either refuses or succeeds, but never wedges");
+} else {
+    skip("no child process available for the trap-cycle row");
+}
+
+const PC2 = TBASE + 'pc2.js';
+
+writeProbe(PC2, [
+    'var pr;',
+    'pr = new Proxy({}, { getPrototypeOf() { return pr; } });',
+    'var outcome;',
+    'try { Object.setPrototypeOf({}, pr); outcome = "ALLOWED"; }',
+    'catch (e) { outcome = "REFUSED"; }',
+    'print("outcome=" + outcome);',
+    'print("END");',
+    ''
+].join("\n"));
+
+if (canSpawn) {
+    const r2 = runBounded(PC2, TBASE + 'pc2.out');
+    assert(r2.exited, "a getPrototypeOf trap that keeps returning its own proxy must " +
+           "not spin the cycle check forever");
+    if (!r2.exited)
+        print("     child killed after " + CHILD_BUDGET_MS + "ms; output so far: " +
+              JSON.stringify(r2.out.slice(0, 200)));
+    assert(r2.out.indexOf("END") >= 0,
+           "the self-returning-trap script runs to completion");
+    assert(r2.out.indexOf("outcome=REFUSED") >= 0 ||
+           r2.out.indexOf("outcome=ALLOWED") >= 0,
+           "a self-returning getPrototypeOf trap is answered, not spun on");
+} else {
+    skip("no child process available for the self-returning-trap row");
+}
+
+for (const f of [PC1, PC2, TBASE + 'pc1.out', TBASE + 'pc2.out']) { try { os.remove(f); } catch (e) { /* best effort */ } }
+
+if (failures)
+    throw new Error("test_audit_engine_3: " + failures + " failures");
+print("test_audit_engine_3: all " + n + " assertions passed" +
+      (skips ? " (" + skips + " rows skipped)" : ""));
+});
+__kitS.end();

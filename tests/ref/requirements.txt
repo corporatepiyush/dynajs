@@ -1,0 +1,24 @@
+# Pinned reference environment for the tests/ref generators (the gen: rows of
+# tests/test-data.tsv that run through tests/ref/py.sh). These are the versions
+# the vendored vectors were generated with; a different version may change
+# the sha256 the manifest pins. Python >= 3.14.
+#   python3 -m venv .venv-ref && .venv-ref/bin/pip install -r tests/ref/requirements.txt
+#   ./dynajs --std tools/test-data.js fetch
+# What each generator imports (fetch names the missing ones when a row fails):
+#   graph_vectors.js, graph_paths_vectors.js   networkx (nothing else: the graph rows need only networkx)
+#   geo, signal, stats                          numpy, scipy
+#   dataframe                                   numpy, pandas, scipy, mpmath
+#   mathx                                       numpy, scipy, mpmath
+#   decimal                                     the standard library only
+# The vectors record these pins, not the running versions, so a file's sha256 depends only on
+# the numbers; geo, signal and stats round their results so another machine's libm does not move
+# a byte (./dynajs --std tools/test-data.js repro checks that at +-1 ulp).
+# numpy stays 2.5.4: it is the version every numpy-stamped file records (dataframe and mathx were
+# generated under it). geo, signal and stats were re-pinned under 2.5.5 and record the 2.5.4 pin;
+# their rounding holds at +-1 ulp, but a 2.5.4 run has not been checked (repro under 2.5.4 once).
+mpmath==1.4.1
+networkx==3.7
+numpy==2.5.4
+pandas==3.0.6
+scikit-learn==1.9.1
+scipy==1.18.1

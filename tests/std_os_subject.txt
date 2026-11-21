@@ -1,0 +1,22 @@
+tests/async/test_async_api.js	 integration os.clearTimeout os.setTimeout -- engine async primitives a module relies on: globals present, microtask-bef
+tests/async/test_async_leak.js	 integration os.clearInterval os.clearTimeout os.close os.pipe os.setInterval os.setReadHandler os.setTimeout -- leak ch
+tests/blackbox/bb_std_os.js	 blackbox c:src/dyna-cli.c -- black-box contract suite: the public surface exercised end to end, as a user calls it
+tests/core/bench_stdio.js
+tests/core/test_core_libc_os_audit_engine_2.js	 c:src/modules/libc/libc-os.c
+tests/core/test_core_libc_os_audit_p1.js	 c:src/modules/libc/libc-os.c
+tests/core/test_core_libc_os_audit_w3_native_8.js	 c:src/modules/libc/libc-os.c
+tests/core/test_core_libc_std_file_audit_budget_3.js	 c:src/modules/libc/libc-std-file.c
+tests/core/test_core_p2_batch2.js	 c:src/modules/libc/libc-os.c
+tests/core/test_evloop_watch.js	 c:src/modules/libc/libc-os.c
+tests/core/test_fn_timers.js	 c:src/modules/libc/libc-os.c
+tests/core/test_os_open_as_blob_fd.js	 os.openAsBlob
+tests/core/test_os_open_as_blob_lazy.js	 os.openAsBlob
+tests/core/test_rw_handler.js	 c:src/modules/libc/libc-os.c
+tests/core/test_std.js	 c:src/modules/libc/libc-std-file.c
+tests/core/test_std_file_coerce.js	 c:src/modules/libc/libc-std-file.c
+tests/core/test_stdio_coalesce.js	 c:src/modules/libc/libc-stdout.c
+tests/core/test_stdio_streams.js	 c:src/modules/libc/libc-wst-adapt.c
+tests/core/test_stdout_idle_flush.js	 integration c:src/modules/libc/libc-stdout.c c:src/modules/libc/libc-event-loop.c c:src/modules/libc/libc-os.c -- one b
+tests/core/test_timer_lists.js	 integration c:src/modules/libc/libc-event-loop.c c:src/modules/libc/libc-os.c -- timer lists, no live-timer cap
+tests/core/test_timer_min_delay.js	 c:src/modules/libc/libc-os.c
+tests/core/test_timer_us_deadline.js	 integration c:src/modules/libc/libc-os.c c:src/modules/libc/libc-event-loop.c c:src/dyna-evloop.c -- microsecond deadli

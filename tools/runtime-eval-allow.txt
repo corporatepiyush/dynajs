@@ -1,0 +1,12 @@
+# path firstArg reason; only shrinks (tools/repo-rules.js no-runtime-eval)
+src/modules/libc/libc-fetch.c dyn_fetch_loop_src the fetch redirect/retry loop (owner-allowlisted until its C port)
+src/modules/libc/libc-global.c src two-line import stub that installs a dyna:* namespace as a global
+src/modules/libc/libc-module-loader.c <expr> the module loader evaluates user module source
+src/modules/libc/libc-module-loader.c str std.evalScript evaluates the caller's script by request
+src/modules/libc/libc-module.c <expr> loads and runs the user's script file
+src/modules/libc/libc-wst-rs.c <expr> reads %AsyncGeneratorPrototype%, which has no C accessor
+src/modules/oauth2/oauth2-verify.c src import stub that reaches dyna:jwt verify
+src/modules/scrape/scrape-fetcher.c src import stub that builds the default dyna:http HTTPClient
+src/modules/scrape/scrape-sitemap.c src import stub that builds the default dyna:scrape Fetcher
+src/modules/validate/validate-check.c src import stub that reaches a named validator export
+src/modules/xml/xml-module.c dyn_sax_iterate_gen_js SAXParser.iterate async generator (for await over the source)

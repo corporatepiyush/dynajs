@@ -1,0 +1,12 @@
+Fuzz corpora
+============
+
+Each corpus directory holds libFuzzer inputs: one file = one test case.
+
+Only hand-written seeds (descriptive names like hostile_*.bin, valid_*.bin)
+are version-controlled — they are intentional regression tests for known
+crash shapes. Auto-generated coverage artifacts (SHA-named files) are
+gitignored: they regenerate during any fuzzing run and are machine-specific.
+
+If a fuzzer finds a crash, promote the input: give it a descriptive name,
+add it to the corpus directory, and commit it as a regression seed.

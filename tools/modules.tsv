@@ -1,0 +1,63 @@
+module	kind	exports	src	kits	pkg	deps	tests	description
+ai	module	dyna:ai	src/modules/ai/	src/core/httpk/httpk-req.c src/core/httpk/httpk-retry.c src/core/httpk/httpk-sse.c		http	tests/ai	Anthropic and OpenAI API clients: messages, streaming, batches, tool use
+asn1	module	dyna:asn1	src/modules/asn1/				tests/asn1	ASN.1 DER: node builders, canonical encode and a bounded decoder for untrusted input
+async	module	dyna:async	src/dyna-async.c				tests/async	pmap, retry, withTimeout, Semaphore, Channel, Pool, debounce/throttle, offload
+bench	module	dyna:bench	src/dyna-bench.c				tests/bench	Adaptive timing harness with percentiles
+bytes	module	dyna:bytes	src/modules/bytes/				tests/bytes	Byte buffers, UTF-8 and legacy charset conversion, UTF-8-safe Text
+compress	module	dyna:compress	src/modules/compress/	src/core/arck/ src/core/dyn-ac.c src/core/dyn-dict.c src/core/dyn-snappy.c	libzstd libbrotlienc libbrotlidec		tests/compress	zstd, brotli, snappy, gzip, LZ4, tar, zip, with deterministic bomb rejection
+config	module	dyna:config	src/modules/config/	src/core/cfgscan/			tests/config	TOML 1.0, INI, .env, front matter
+crypto	module	dyna:crypto dyna:hash	src/modules/crypto/	src/core/cryptok/	openssl		tests/crypto	dyna:crypto: AES-GCM, ChaCha20-Poly1305, RSA/ECDSA/Ed25519 signatures, key exchange, Argon2id/scrypt/bcrypt, X.509, JWT; dyna:hash: SHA-1/2/3, BLAKE2/3, CRC32 (hardware-accelerated), xxHash
+csv	module	dyna:csv	src/modules/csv/	src/core/csvx/ src/core/dfk/dfk-csv.c			tests/csv	RFC 4180 CSV: streaming reads, type inference, a file-backed table, parse/stringify
+dataframe	module	dyna:dataframe	src/modules/dataframe/	src/core/dfk/ src/core/ds/ds-hyperloglog.c			tests/dataframe	Columnar frames over TypedArrays: filter, sort, group-by, join, window functions, quantiles
+decimal	module	dyna:decimal	src/modules/decimal/	src/core/decnum/			tests/decimal	Exact decimal128 and money arithmetic
+dns	module	dyna:dns	src/modules/dns/	src/core/dyn-dns.c			tests/dns	A UDP DNS client (resolver with cache) and server with an amplification cap
+docdb	module	dyna:docdb	src/modules/docdb/	src/core/bson/ src/core/docdb/ src/core/ds/ds-roaring-bitmap.c src/modules/vserialize/vserialize-bson.c src/modules/vserialize/vserialize-bson-types.c			tests/docdb	An in-memory document store written in C: MongoDB-style filters and updates, indexes, aggregation, snapshots
+encoding	module	dyna:encoding	src/modules/encoding/				tests/encoding	Charset detection, base64/base32/hex, varints, JSON5, JSONPath, QR codes
+file	module	dyna:file	src/modules/file/	src/core/fsops/ src/core/dyn-path.c			tests/file	Atomic writes, file locks, watchers, globs, temp files, platform directories
+graph	module	dyna:graph	src/modules/graph/	src/core/graphk/ src/core/dyn-persist.c src/core/dyn-serial.c src/dyna-serialize.c			tests/graph	Graphs with typed edges: traversals, shortest paths, PageRank and analytics on CSR snapshots; serialize and save/load
+html	module	dyna:html	src/modules/html/	src/core/htmlkit/ src/core/markdown/			tests/html	HTML5 tokenizer, CSS-selector queries, a sanitizer, Markdown, templating
+http	module	dyna:http	src/modules/http/	src/core/httpk/httpk-req.c src/core/httpk/httpk-chunk.c src/core/httpk/httpk-cookie.c src/core/httpk/httpk-date.c src/core/httpk/httpk-head.c src/core/httpk/httpk-url.c		metrics	tests/http	WHATWG fetch/Request/Response/Headers/FormData, HTTP servers, WebSockets, multipart
+json	module	dyna:json	src/modules/json/				tests/json	JSON Pointer (RFC 6901) and JSON Patch (RFC 6902)
+log	module	dyna:log	src/modules/log/	src/core/logk/			tests/log	Structured JSON-lines logging
+matcher	module	dyna:matcher	src/modules/matcher/	src/core/textdiff/ src/core/dyn-ac.c			tests/matcher	Aho-Corasick multi-pattern search and spans, Levenshtein, tries, Bloom filters, diffs
+mathx	module	dyna:mathx	src/modules/mathx/	src/core/exprk/ src/core/geok/ src/core/lak/ src/core/sigk/ src/core/statk/ src/core/dyn-mathx.c			tests/mathx	Statistics, combinatorics, number theory, special functions, NDArray, linear algebra
+metrics	module	dyna:metrics	src/modules/metrics/				tests/metrics	Counters, gauges and histograms with a Prometheus text scrape
+ml	module	dyna:ml	src/modules/ml/	src/core/mlk/ src/core/dyn-serial.c			tests/ml	Trees, forests, boosting, k-NN, k-means, DBSCAN, linear/logistic regression, SVMs, PCA, scalers; fits run off the event loop
+net	module	dyna:net	src/dyna-net.c src/dyna-net-ratelimit.c src/modules/net-tcp/	src/core/dyn-frame.c			tests/net	TCP/UDP/unix sockets with TLS, frame decoders, Happy Eyeballs connect, a token-bucket rate limiter
+netip	module	dyna:netip	src/modules/netip/	src/core/netipk/netipk-classify.c src/core/netipk/netipk-format.c			tests/netip	IP addresses and CIDR prefixes: parsing, canonical text, classification, containment
+oauth2	module	dyna:oauth2	src/modules/oauth2/				tests/oauth2	PKCE S256, state CSRF, bearer auth, WWW-Authenticate, scope and redirect_uri checks
+otp	module	dyna:otp	src/modules/otp/	src/core/cryptok/cryptok-wipe.c		encoding	tests/otp	HOTP/TOTP (RFC 4226/6238), otpauth:// key URIs, QR enrolment, look-ahead/drift windows, replay protection, throttling
+postgres	module	dyna:postgres	src/modules/postgres/	src/core/dyn-scram.c src/core/dyn-pgwire.c			tests/postgres	PostgreSQL client over the extended protocol: SCRAM-SHA-256/MD5 auth, TLS, pipelining, a prepared-statement cache
+protobuf	module	dyna:protobuf	src/modules/protobuf/				tests/protobuf	Protobuf wire codec driven by a plain-object schema; the decoder is hardened for hostile input
+proxy	module	dyna:proxy	src/modules/proxy/				tests/proxy	TCPProxy: an L4 byte reverse proxy with no JS on the data path
+random	module	dyna:random	src/modules/random/				tests/random	OS entropy plus a seedable PRNG with full-state checkpoints and common distributions
+redis	module	dyna:redis	src/modules/redis/	src/core/dyn-resp.c			tests/redis	Redis client over RESP2/RESP3: TLS, pub/sub, pipelined FIFO commands, bounded reply decoding
+schema	module	dyna:schema	src/modules/schema/	src/core/fmtcheck/ src/core/bson/bson-dec128.c src/core/bson/bson-iter.c src/core/bson/bson-oid.c src/core/bson/bson-validate.c src/core/bson/bson-write.c src/modules/vserialize/vserialize-encode.c			tests/schema	JSON Schema Draft 2020-12; schemas compile once
+scrape	module	dyna:scrape	src/modules/scrape/	src/core/crawlkit/ src/core/httpk/httpk-req.c src/core/httpk/httpk-retry.c		http	tests/scrape	Polite crawling: robots.txt, per-host pacing, jittered retries, conditional GETs, response caps
+semver	module	dyna:semver	src/modules/semver/	src/core/semverk/			tests/semver	Semver 2.0.0 parsing, ranges, comparison
+simd	module	dyna:simd	src/modules/simd/				tests/simd	Reductions, dot products, distances, matrix ops on the fastest kernel the CPU supports
+smtp	module	dyna:smtp	src/modules/smtp/	src/core/mailk/			tests/smtp	SMTP client and server: STARTTLS/implicit TLS, SCRAM/PLAIN/LOGIN/OAuth AUTH, PIPELINING, SMTPUTF8, BDAT/BINARYMIME, DSN, connection pool, per-message hooks
+dkim	module	dyna:dkim	src/modules/dkim/	src/core/dkim/	openssl		tests/dkim	DKIM signing and verification: rsa-sha256 and ed25519-sha256, simple/relaxed canonicalization, l=, oversigning, pluggable key lookup
+sqlite	module	dyna:sqlite	src/modules/sqlite/		sqlite3		tests/sqlite	Embedded SQLite in defensive mode: bound parameters, a prepared-statement cache, execMany; the only module that links libsqlite3
+sftp	module	dyna:sftp	src/modules/sftp/		openssl	ssh	tests/sftp	SFTP v3 client and server over dyna:ssh: pipelined streaming reads and writes, a chroot-safe server rooted in one directory (no symlink or .. escape) with a JS allow hook
+ssh	module	dyna:ssh	src/modules/ssh/	src/core/cryptok/cryptok-bcrypt.c src/core/cryptok/cryptok-wipe.c	openssl		tests/ssh	SSH-2 client and server: strict-KEX transport (mlkem768x25519, sntrup761x25519, curve25519), ChaCha20-Poly1305 and AES-256-GCM, ed25519 publickey and certificate auth, known_hosts with @cert-authority, channels and server sessions as web streams.
+stream	module	dyna:stream	src/modules/stream/	src/core/dyn-inflate-stream.c	libzstd		tests/stream	Web-stream helpers: file and byte streams, stdio streams, read(buf)/write(view) adapters, and chunk-safe lines()/ndjson() iterators. Codecs are CompressionStream/DecompressionStream.
+structures	module	dyna:structures	src/modules/structures/	src/core/ds/*.c !src/core/ds/ds-{alloc,common,mpmc-ring,parking-lot,parr,work-stealing-deque,xxhash}.c src/core/dyn-persist.c src/core/dyn-serial.c src/dyna-serialize.c			tests/structures	Heaps, B-trees, BKD trees (numeric, IP and geo), sorted maps, roaring bitmaps, k-d trees, a BM25 index, sketches, tries, LRU caches. Every one persists.
+svg	module	dyna:svg	src/modules/svg/	src/core/svg/			tests/svg	SVG to PNG or raw RGBA, off the event loop: shapes, paths, gradients, patterns, clips, masks, filters, text
+sys	module	dyna:sys	src/modules/sys/				tests/sys	Subprocesses, environment, arguments, CPU and memory facts
+term	module	dyna:cli	src/modules/term/				tests/term tests/cli	Argument parsing, ANSI styling, prompts, progress bars
+time	module	dyna:time	src/modules/time/	src/core/timek/			tests/time	RFC 5545 recurrence, Duration, civil dates and times, time zones
+tls	feature		src/dyna-tls.c		openssl		tests/tls	TLS 1.2/1.3 over OpenSSL (CONFIG_TLS): https, wss, TCP TLS, DTLS and the OpenSSL-backed crypto; optional, without it https/wss reject with a TypeError naming this module
+url	module	dyna:url	src/modules/url/				tests/url	IDNA 2008/UTS #46, Punycode, form encoding; re-exports the core URL and URLSearchParams globals
+uuid	module	dyna:uuid	src/modules/uuid/				tests/uuid	UUID v1–v8, NanoID, ULID
+validate	module	dyna:validate	src/modules/validate/	src/core/validk/			tests/validate	Boolean validators: email, URL, UUID, card, IBAN, JWT, IP, ports, MIME, timestamps, passwords
+vec	module	dyna:vec	src/modules/vec/	src/core/vec/ src/core/ds/ds-bitset.c src/core/ds/ds-roaring-bitmap.c		structures	tests/vec	Vector similarity search over f32 embeddings: HNSW and exact indexes, l2/cosine/inner product, bitmap filters
+vserialize	module	dyna:serialize	src/modules/vserialize/	src/core/bson/bson-dec128.c src/core/bson/bson-iter.c src/core/bson/bson-oid.c src/core/bson/bson-validate.c src/core/bson/bson-write.c			tests/serialize	MessagePack, CBOR, BSON, ValueHash, structuredClone
+webrtc	module	dyna:webrtc	src/modules/webrtc/	src/core/rtc/rtc-dcep.c src/core/rtc/rtc-ice.c src/core/rtc/rtc-jsep.c src/core/rtc/rtc-sctp.c src/core/rtc/rtc-sdp.c src/core/rtc/rtc-stun.c src/core/rtc/rtc-turn.c src/core/rtc/rtc-util.c src/dyna-udp.c		tls	tests/webrtc	W3C RTCPeerConnection, data channels, transceivers, tracks and streams over ICE, DTLS, SCTP and SRTP
+wireguard	module	dyna:wireguard	src/modules/wireguard/		openssl		tests/wireguard	WireGuard: Noise_IKpsk2 handshake, cookies, rekey and roaming on the pool, an embedded IPv4/IPv6, UDP and TCP (SACK, RFC 6528 ISN) stack with web streams, or a kernel tun; wg-quick parseConfig
+xml	module	dyna:xml	src/modules/xml/	src/core/xmlscan/			tests/xml	Streaming SAX, a tree, or a plain object, with size caps on by default
+yaml	module	dyna:yaml	src/modules/yaml/	src/core/yamlscalar/			tests/yaml	YAML 1.2; anchors and aliases are refused by name
+ui	ext	dyna:ui	src/modules/ui/ src/core/dyn-ui.c src/dyna-ui-sdl.c@sdl src/dyna-ui-raylib.c@raylib				tests/ui	An immediate-mode UI toolkit: layout, widgets, input (optional build)
+sdl	ext	dyna:sdl	src/modules/sdl/		sdl3		tests/sdl	SDL3 windows, 2D rendering, input events, audio (optional build)
+raylib	ext	dyna:raylib	src/modules/raylib/		raylib		tests/raylib	raylib 6 windows, drawing and input (optional build)
+uring	ext	dyna:uring	src/dyna-uring.c src/dyna-aio-uring.c		liburing		tests/uring	Linux io_uring batched disk reads (optional build)
